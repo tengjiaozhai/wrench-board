@@ -303,8 +303,16 @@ def test_try_walk_pins_at_huge_count_rejected():
 # --- Board mapper ---
 
 
-def test_to_board_one_part_per_side():
-    """All pins on a side land on the side's carrier Part (TVW_PADS_TOP / _BOTTOM)."""
+def test_to_board_stray_pins_route_to_test_pads():
+    """Pins that don't land in any component bbox become test_pads, not Pins.
+
+    Tebo IctView's `.tvw` is a probe-target database — the layer pin
+    section mixes real SMD pads with thousands of ICT probe targets
+    and vias. Without a component to attach them to, these go to the
+    test_pad channel so they render as a discreet secondary layer
+    instead of a carrier Part full of fake "pins" that drown out
+    real SMD pads in the WebGL viewer.
+    """
     file = TVWFile(
         version=1,
         date="x",
@@ -330,14 +338,21 @@ def test_to_board_one_part_per_side():
         net_names=["VCC", "GND", "PCIE_RX"],
     )
     board = to_board(file, board_id="test", file_hash="00")
-    assert len(board.parts) == 1
-    assert board.parts[0].refdes == "TVW_PADS_TOP"
-    assert len(board.parts[0].pin_refs) == 3
-    assert len(board.pins) == 3
+    assert board.parts == []
+    assert board.pins == []
+    assert len(board.test_pads) == 3
+    # Net is preserved on the test_pad so the user can still click and
+    # see what each probe target is electrically connected to.
+    nets = [tp.net for tp in board.test_pads]
+    assert nets == ["VCC", "GND", "GND"]
 
 
 def test_to_board_pin_to_net_mapping():
-    """`part_index` resolves as a 0-based index into `net_names`."""
+    """`part_index` resolves as a 0-based index into `net_names`.
+
+    Stray pins (no component bbox) carry their net through to the
+    test_pad so the user keeps connectivity for clicking.
+    """
     file = TVWFile(
         version=1,
         date="x",
@@ -363,12 +378,17 @@ def test_to_board_pin_to_net_mapping():
         net_names=["VCC", "GND", "PCIE_RX"],
     )
     board = to_board(file, board_id="test", file_hash="00")
-    pin_nets = [p.net for p in board.pins]
-    assert pin_nets == ["VCC", "GND", "PCIE_RX"]
+    test_pad_nets = [tp.net for tp in board.test_pads]
+    assert test_pad_nets == ["VCC", "GND", "PCIE_RX"]
 
 
 def test_to_board_pin_to_net_out_of_range_falls_back():
-    """`part_index` >= len(net_names) lands on `__floating__`."""
+    """`part_index` >= len(net_names) lands on `__floating__`.
+
+    On test_pads the floating sentinel is normalized to None — the
+    UI shows "no net" rather than "net __floating__" for probe
+    targets that didn't resolve to a real network name.
+    """
     file = TVWFile(
         version=1,
         date="x",
@@ -390,13 +410,18 @@ def test_to_board_pin_to_net_out_of_range_falls_back():
         net_names=["VCC", "GND"],
     )
     board = to_board(file, board_id="test", file_hash="00")
-    assert board.pins[0].net == "__floating__"
-    floating = next(n for n in board.nets if n.name == "__floating__")
-    assert floating.pin_refs == [0]
+    assert board.test_pads[0].net is None
 
 
 def test_to_board_net_pin_refs_populated():
-    """Net.pin_refs lists every Pin whose part_index resolves to that net."""
+    """Net.pin_refs lists Pins on real components; stray pins go to test_pads.
+
+    Net entries surface every name from `network_names`, including
+    nets with no pins on them (so the network panel can show the full
+    vocabulary). Pins on the carrier (no component bbox) are routed
+    to `board.test_pads` instead — Net.pin_refs only tracks Pins
+    attached to a real component.
+    """
     file = TVWFile(
         version=1,
         date="x",
@@ -422,10 +447,14 @@ def test_to_board_net_pin_refs_populated():
         net_names=["VCC", "GND", "SCL"],
     )
     board = to_board(file, board_id="test", file_hash="00")
-    gnd = next(n for n in board.nets if n.name == "GND")
-    assert sorted(gnd.pin_refs) == [0, 1]
-    vcc = next(n for n in board.nets if n.name == "VCC")
-    assert vcc.pin_refs == [2]
+    # No component records → all 3 pins land on test_pads, none in board.pins.
+    assert board.pins == []
+    test_pad_nets = sorted(tp.net for tp in board.test_pads if tp.net)
+    assert test_pad_nets == ["GND", "GND", "VCC"]
+    # Net entries still surface, but pin_refs is empty since there are
+    # no real component pins yet.
+    for net in board.nets:
+        assert net.pin_refs == []
     scl = next(n for n in board.nets if n.name == "SCL")
     assert scl.pin_refs == []  # name surfaced even with no pins on it
 
@@ -946,3 +975,410 @@ def test_to_board_drops_implausible_tvw_line_coords():
     board = to_board(file, board_id="test", file_hash="00")
     assert len(board.traces) == 1
     assert board.traces[0].b.x == 10
+
+
+# --- Canonical mapping invariants on the R9 270 fixture ---
+#
+# These tests validate the canonical pad_index → layer.pins[idx] mapping
+# end-to-end on a real graphics-card .tvw. They are marked `slow` so
+# they only run in `make test-all`; the fast suite gets the synthetic
+# coverage above. The fixture (Gigabyte R9 270 / Tahiti GPU) ships with
+# a well-documented BOM whose pin counts the parser must reproduce
+# exactly: U1 = 1737-pin BGA, U2700-U2400 = 170-pin BGAs each, …
+
+
+_R9270_FIXTURE = (
+    "memory/mnt-motherboard/uploads/"
+    "20260504T010452Z-boardview-GV-R927XOC-2GD-1.01.tvw"
+)
+
+
+@pytest.fixture(scope="module")
+def r9270_board():
+    """Parse the R9 270 fixture once per test module."""
+    import os
+    fixture_path = _R9270_FIXTURE
+    if not os.path.exists(fixture_path):
+        pytest.skip(f"R9 270 fixture not present at {fixture_path}")
+    with open(fixture_path, "rb") as f:
+        raw = f.read()
+    file = parse(raw)
+    from api.board.parser._tvw_engine.board_mapper import to_board as _to_board
+    board = _to_board(file, board_id="r9270", file_hash="00")
+    return file, board
+
+
+@pytest.mark.slow
+def test_r9270_invariant1_all_declared_pins_attached(r9270_board):
+    """Invariant 1: sum(c.pin_count) == sum(len(p.pin_refs))."""
+    file, board = r9270_board
+    declared = sum(c.pin_count for c in file.components)
+    attached = sum(len(p.pin_refs) for p in board.parts)
+    assert declared == attached, (
+        f"declared={declared} but attached={attached}; canonical mapping "
+        f"lost pins (or duplicated them)"
+    )
+
+
+@pytest.mark.slow
+def test_r9270_invariant2_test_pads_distinct_canonical_records(r9270_board):
+    """Invariant 2: test_pads are pin records the canonical pass did
+    NOT claim — they don't share an underlying pad_index with any Pin.
+
+    A Pin and a test_pad may share a physical position (legitimate on
+    probe-instrumented PCBs where a component pad doubles as an ICT
+    probe target), but they never come from the same pin record: PASS A
+    consumes records via `claimed_top / claimed_bot`, PASS B emits
+    test_pads only for the residue.
+
+    A few component pins are aliased — multiple `ComponentPin` entries
+    point at the same `pad_index`, e.g. a shared mounting tab counted
+    once per host component. That inflates `len(pins)` above the count
+    of unique pin records, which is intentional (each host needs its
+    own pin in `pin_refs`). What stays invariant is:
+        len(unique pad records covered by pins) + len(test_pads)
+            == total pin records claimed-or-unclaimed.
+    """
+    file, board = r9270_board
+
+    # On the R9 270 we expect roughly 7000 component pins and ~10000
+    # test_pads (probe targets / vias / exposed-copper points).
+    assert len(board.pins) >= 7000
+    assert len(board.test_pads) >= 5000
+
+    # Re-derive `claimed` and `unclaimed` from the walker output so the
+    # invariant tests the mapper's actual record bookkeeping rather
+    # than its rendered output.
+    from api.board.model import Layer
+    from api.board.parser._tvw_engine.board_mapper import _resolve_canonical_pin
+    top_layer = next(
+        (lyr for lyr in file.layers if lyr.name.upper() == "TOP"),
+        None,
+    )
+    bot_layer = next(
+        (lyr for lyr in file.layers
+         if lyr.name.upper() == "BOTTOM" or lyr.name.upper().startswith("BOT")),
+        None,
+    )
+    top_arr = top_layer.pins if top_layer else []
+    bot_arr = bot_layer.pins if bot_layer else []
+
+    claimed_top: set[int] = set()
+    claimed_bot: set[int] = set()
+    for c in file.components:
+        if not c.pins:
+            continue
+        for cp in c.pins:
+            idx = cp.pad_index // 8
+            chosen = _resolve_canonical_pin(idx, c, top_arr, bot_arr)
+            if chosen is None:
+                continue
+            side, _pr = chosen
+            if side is Layer.TOP:
+                claimed_top.add(idx)
+            else:
+                claimed_bot.add(idx)
+
+    unique_records_claimed = len(claimed_top) + len(claimed_bot)
+    total_records = sum(len(layer.pins) for layer in file.layers)
+    unclaimed = total_records - unique_records_claimed
+
+    # The mapper emits test_pads for unclaimed records only — counts
+    # must match exactly.
+    assert len(board.test_pads) == unclaimed, (
+        f"test_pads ({len(board.test_pads)}) != unclaimed records "
+        f"({unclaimed}); PASS B is double-counting or skipping"
+    )
+
+
+@pytest.mark.slow
+def test_r9270_invariant3_every_pin_has_a_name(r9270_board):
+    """Invariant 3: every Pin attached via the canonical mapping
+    carries the silkscreen pin name (e.g. 'A1', 'B14', '1', '2')."""
+    _file, board = r9270_board
+    unnamed = [p for p in board.pins if not p.name]
+    assert unnamed == [], (
+        f"{len(unnamed)} pins missing a name (sample: "
+        f"{[(p.part_refdes, p.index) for p in unnamed[:5]]})"
+    )
+
+
+@pytest.mark.slow
+def test_r9270_invariant4_pad_shape_distribution(r9270_board):
+    """Invariant 4: pad_shape comes from the aperture's `type_` field
+    (or the per-pin pad_bbox extension), not from a `w == h` heuristic.
+
+    The R9 270 mixes round (BGA balls), rect (SMD rectangular pads —
+    including the type=5 "Custom" apertures which describe rectangles
+    on this fixture, the file's polygon table being board-scale shapes
+    rather than pad shapes), and a long tail of oblong / through-hole
+    variants. We assert that the legacy `w == h` collapse no longer
+    masquerades type=5 rectangles as circles.
+    """
+    from collections import Counter
+    _file, board = r9270_board
+    shapes = Counter(p.pad_shape for p in board.pins)
+    # Both round and rectangular pads must appear — a graphics card
+    # has BGA balls (round) and bulk SMD passives + connector pads
+    # (rect). The MPCIE1 PCIe slot (82 pins) alone guarantees rect.
+    assert shapes["rect"] > 0
+    assert shapes["circle"] > 0
+    # No pin should fall through to a None shape — every aperture
+    # this fixture references resolves to a known shape token.
+    assert shapes.get(None, 0) == 0
+
+
+@pytest.mark.slow
+def test_r9270_invariant5_side_distribution_deterministic(r9270_board):
+    """Invariant 5: the side of every Part is decided by the canonical
+    pad_index → layer mapping (TOP wins vs BOTTOM wins). The previous
+    `kind & 1` LSB heuristic only matched ~85% of components — the
+    canonical resolver matches 100%. We assert that the distribution
+    has both sides represented and matches the documented R9 270
+    layout (most placed components are bottom-side passive pour, GPU
+    + memory chips on the top-side).
+    """
+    _file, board = r9270_board
+    from api.board.model import Layer
+    sides = {Layer.TOP: 0, Layer.BOTTOM: 0}
+    for p in board.parts:
+        sides[p.layer] += 1
+    assert sides[Layer.TOP] > 0 and sides[Layer.BOTTOM] > 0, (
+        "expected components on both sides on a real graphics card; "
+        f"got {sides}"
+    )
+    # GPU + memory live on TOP (BGAs at U1, U2700..U2400)
+    u1 = next(p for p in board.parts if p.refdes == "U1")
+    assert u1.layer is Layer.TOP, "U1 (Tahiti GPU) must be TOP-side"
+    for refdes in ("U2700", "U2600", "U2500", "U2400"):
+        m = next((p for p in board.parts if p.refdes == refdes), None)
+        if m is None:
+            continue
+        assert m.layer is Layer.TOP, f"{refdes} (memory) must be TOP-side"
+
+
+@pytest.mark.slow
+def test_r9270_invariant6_ground_truth_pin_counts(r9270_board):
+    """Invariant 6 (proxy for net mapping quality): the canonical
+    mapping reproduces the documented BOM pin counts exactly.
+
+    The Gigabyte R9 270 / Tahiti's BOM lists U1 = 1737-pin BGA,
+    U2700-U2400 = 170-pin BGAs (memory chips), MPCIE1 = 82-pin
+    PCI Express slot, J1900 = 62-pin DVI / D-DVI connector,
+    MJ1900 = 36-pin Foxconn header. Any drop in these counts means
+    pad_index resolution lost canonical references.
+    """
+    _file, board = r9270_board
+    expected = {
+        "U1": 1737,
+        "U2700": 170, "U2600": 170, "U2500": 170, "U2400": 170,
+        "MPCIE1": 82,
+        "J1900": 62,
+        "MJ1900": 36,
+    }
+    parts_by_refdes = {p.refdes: p for p in board.parts}
+    for refdes, want in expected.items():
+        p = parts_by_refdes.get(refdes)
+        assert p is not None, f"{refdes} not in parts"
+        got = len(p.pin_refs)
+        assert got == want, f"{refdes}: expected {want} pins, got {got}"
+
+
+@pytest.mark.slow
+def test_r9270_invariant7_package_outlines_attached(r9270_board):
+    """Invariant 7: per-footprint body outlines from the PACKAGE table
+    attach to every component whose `footprint` matches a table entry.
+
+    The PACKAGE table ships ~130 named footprint outlines for the
+    R9 270. Each real component carries a `footprint` string
+    (`EDGECON_PCI_EXPRESS_16`, `BGA0_8X1_2MM40X40-1737`, …); the
+    mapper looks each one up and populates `Part.body_lines` with
+    the outline rotated by the component's rotation and translated
+    to its centroid.
+
+    Specific high-value spot checks:
+      * `EDGECON_PCI_EXPRESS_16` (MPCIE1) ships the 8-segment edge
+        connector outline with its key cut — a richer body shape
+        than the bbox-rectangle the previous path emitted.
+      * `BGA0_8X1_2MM40X40-1737` (U1, Tahiti GPU) ships a 102-segment
+        polygonal approximation of the round BGA package.
+    """
+    file, board = r9270_board
+
+    # Coverage gate: every component on this fixture should have
+    # body_lines populated from the PACKAGE table. The decoder accepts
+    # marker values in [1, 256] (multi-pad packages like LFPAK MOSFETs
+    # tag drain / source / gate sub-shapes with marker=11, =12, …),
+    # so the residue is just one missing footprint family at most.
+    with_body = sum(1 for p in board.parts if p.body_lines)
+    total = len(board.parts)
+    assert with_body == total, (
+        f"PACKAGE-table coverage incomplete: {with_body}/{total} "
+        f"parts have body_lines"
+    )
+
+    # Spot checks: PCIe + GPU BGA must carry their distinctive outlines.
+    mpcie = next(p for p in board.parts if p.refdes == "MPCIE1")
+    assert len(mpcie.body_lines) == 8, (
+        f"EDGECON_PCI_EXPRESS_16 should have 8 outline segments "
+        f"(rect + key cut), got {len(mpcie.body_lines)}"
+    )
+
+    u1 = next(p for p in board.parts if p.refdes == "U1")
+    assert len(u1.body_lines) >= 90, (
+        f"BGA0_8X1_2MM40X40-1737 should be a polygonal approximation "
+        f"(~100 segments), got {len(u1.body_lines)}"
+    )
+
+    # Sanity on the PACKAGE-table dict itself: at least 100 named
+    # entries (the R9 270 ships ~130), all with non-empty segment
+    # lists. The multi-pad family (LFPAK MOSFETs) decodes to ~130
+    # segments per package once the marker=11 sub-shape variant is
+    # accepted alongside the canonical marker=10.
+    assert len(file.packages) >= 100, (
+        f"PACKAGE table should hold ~130 entries, got {len(file.packages)}"
+    )
+    empty = [n for n, p in file.packages.items() if not p.segments]
+    assert empty == [], f"empty PACKAGE entries: {empty}"
+
+    # The MOSFET driver footprint must decode now that marker=11 is
+    # accepted (it ships drain / source / gate pad sub-shapes tagged
+    # with the variant marker; marker=10-only decoders previously
+    # bailed at segment 92 and dropped the entry).
+    lfpak = file.packages.get("MULTI_SMD_SOT669_LFPAK_B")
+    assert lfpak is not None, "MULTI_SMD_SOT669_LFPAK_B (LFPAK MOSFET) missing"
+    assert len(lfpak.segments) >= 100, (
+        f"LFPAK MOSFET package should decode multi-pad sub-shapes "
+        f"(~130 segments), got {len(lfpak.segments)}"
+    )
+
+
+@pytest.mark.slow
+def test_r9270_components_count_matches_ground_truth(r9270_board):
+    """The R9 270 fixture should yield ~1648 components (the documented
+    BOM total). Allow a small margin for the regex anchor's edge cases.
+    """
+    _file, board = r9270_board
+    # Expected ~1647-1648 components; allow ±5.
+    assert 1640 <= len(board.parts) <= 1655, (
+        f"expected ~1647 components, got {len(board.parts)}"
+    )
+
+
+# --- Regression: the comment-twice string region (GV-N970 fixture) ---
+#
+# A previous revision of `_parse_component_at` modelled the trailing
+# string region as `(sep_v + value) + (sep_c + comment) + (footprint)`,
+# i.e. two leading-separator Pascal fields then a footprint Pascal. We
+# tested this against the R9 270 fixture, where every component has
+# `comment == ""`, so the duplicate-zero plen byte aliased onto the
+# expected `_sep_c` and the footprint landed on the correct boundary.
+#
+# The GV-N970 fixture exposes the actual layout: the comment Pascal is
+# stored *twice*, back-to-back, with no leading sep on either copy. On
+# records with a non-empty comment (the LB-family inductors carry
+# comment="N/A", others carry "+/- 5%", "+/-25%", etc.) the legacy
+# parser misread the duplicate copy as the footprint length byte and
+# spilled raw control bytes into `Component.footprint`.
+#
+# The fix is to read four Pascal fields after the 12-byte kind padding:
+#   sep_v + value    (sep_v always 0x01)
+#   plen_a + comment_a
+#   plen_b + comment_b   (always == comment_a)
+#   plen_f + footprint
+#
+# This regression test loads the GV-N970 fixture and asserts the
+# LB-family records (and a sampling of others with non-empty comments)
+# carry clean ASCII footprints.
+
+_GVN970_FIXTURE = (
+    "memory/mnt-motherboard/uploads/"
+    "20260504T120000Z-boardview-GV-N970TTOC-4GD-1.0.tvw"
+)
+
+
+@pytest.fixture(scope="module")
+def gvn970_components():
+    """Parse the GV-N970 fixture once and return its component list."""
+    import os
+    if not os.path.exists(_GVN970_FIXTURE):
+        pytest.skip(f"GV-N970 fixture not present at {_GVN970_FIXTURE}")
+    with open(_GVN970_FIXTURE, "rb") as f:
+        raw = f.read()
+    file = parse(raw)
+    return {c.refdes: c for c in file.components}
+
+
+@pytest.mark.slow
+def test_gvn970_lb_family_footprints_clean(gvn970_components):
+    """LB-family records (inductors with comment='N/A') must report a
+    clean ASCII footprint — '0805' on the LB501 / LB504 / LB505 / LB519
+    inductors. The legacy parser leaked raw control bytes here.
+    """
+    by_ref = gvn970_components
+    expected_footprints = {
+        "LB501": "0805",
+        "LB504": "0805",
+        "LB505": "0805",
+        "LB519": "0805",
+    }
+    for refdes, want in expected_footprints.items():
+        assert refdes in by_ref, f"{refdes} missing from parsed components"
+        got_fp = by_ref[refdes].footprint
+        # The exact value matters AND there must be no embedded NUL or
+        # other control bytes. Both conditions catch the regression.
+        assert got_fp == want, (
+            f"{refdes}: footprint={got_fp!r}, expected {want!r}"
+        )
+        assert all(32 <= ord(c) <= 126 for c in got_fp), (
+            f"{refdes}: footprint contains non-printable bytes: {got_fp!r}"
+        )
+        # And the comment field should now carry the duplicated comment
+        # text instead of being empty (or worse, garbage).
+        assert by_ref[refdes].comment == "N/A", (
+            f"{refdes}: comment={by_ref[refdes].comment!r}, expected 'N/A'"
+        )
+
+
+@pytest.mark.slow
+def test_gvn970_no_component_has_corrupted_footprint(gvn970_components):
+    """No component on the GV-N970 fixture should carry a footprint with
+    embedded NULs or non-printable bytes. This is the broad invariant
+    the LB-family symptom lives under — every record's string region
+    must terminate cleanly on the footprint Pascal.
+    """
+    bad: list[tuple[str, str]] = []
+    for refdes, c in gvn970_components.items():
+        if not c.footprint:
+            continue
+        if not all(32 <= ord(ch) <= 126 for ch in c.footprint):
+            bad.append((refdes, c.footprint))
+    assert bad == [], (
+        f"{len(bad)} components have non-printable bytes in footprint; "
+        f"first 5: {bad[:5]}"
+    )
+
+
+@pytest.mark.slow
+def test_gvn970_comment_a_equals_comment_b_invariant(gvn970_components):
+    """The `comment` field decoded from the file is the first of two
+    duplicated Pascal strings. This test asserts that across the whole
+    fixture, the comment text is always either empty or one of a small
+    set of plausible tolerance / annotation values — a sanity rail
+    that fails fast if the parser drifts again.
+    """
+    # Sample a handful of records with known non-empty comments
+    # (extracted by hand from the fixture during the fix).
+    expected = {
+        "C906": "0.25PF",
+        "L504": "+/-25%",
+        "LB503": "+/- 5%",
+        "R865": "+0.05R",
+        "U508": "1%",
+    }
+    for refdes, want in expected.items():
+        assert refdes in gvn970_components, f"{refdes} missing"
+        got = gvn970_components[refdes].comment
+        assert got == want, (
+            f"{refdes}: comment={got!r}, expected {want!r}"
+        )

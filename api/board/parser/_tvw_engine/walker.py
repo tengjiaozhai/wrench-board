@@ -19,7 +19,7 @@ Section sequence (per the format):
 Per-pin record (variable, 19 base bytes + optional 3..47 byte extension):
 
     uint32  part_index
-    uint32  pin_local_index   (used as 1/10 in display paths we surveyed)
+    uint32  pin_local_index   (used as 1/10 in display paths we tested)
     int32   x                 (centi-mils)
     int32   y                 (centi-mils)
     uint8   flag1             (purpose unclear)
@@ -85,7 +85,7 @@ class LineRecord:
 class ArcRecord:
     """Drawing primitive — arc with centre, radius, start/end coords.
 
-    Per the format we surveyed, an arc record is 28 bytes:
+    Per the format we tested, an arc record is 28 bytes:
         i32 + u32 (header) + 5 × u32 (centre, radius, endpoints).
     """
     cx: int          # centi-mils — centre X
@@ -135,7 +135,7 @@ class PolygonRecord:
     """Custom polygon — used for the board outline, ground-plane shapes,
     and other non-rectangular copper / silkscreen primitives.
 
-    Per the format we surveyed, each polygon record opens with a
+    Per the format we tested, each polygon record opens with a
     fixed `\\x05\\x00\\x00\\x00\\x00\\x00\\x00\\x00` signature followed
     by a Pascal-prefixed name (typically `Custom` or `Custom_NN`),
     then a 4 × i32 bbox, two u32 flags, three u32 padding fields,
@@ -185,12 +185,35 @@ class OutlineGroup:
 
 
 @dataclass(slots=True)
+class ComponentPin:
+    """One per-component pin sub-record — canonical pin → component link.
+
+    Per `fileformat-tvw.txt` (https://github.com/inflex/teboviewformat),
+    each PART entry's PINS array carries fixed-shape sub-records:
+      uint32  pad_index_number   — increments by 8 per pin in the file;
+                                   matches the `part_index` (first u32)
+                                   in the layer's PAD list, so this is
+                                   the canonical key joining pin-list
+                                   to component-list.
+      uint32  unknown (0)
+      uint32  pin_index_in_part  — 1-based, e.g. 1, 2, … N
+      string  pin_name           — Pascal-prefixed; "1", "A1", "B24"
+      uint32  unknown (0)
+
+    Total record size: 17 + len(pin_name) bytes.
+    """
+    pad_index: int           # canonical key into PinRecord.part_index
+    pin_index: int           # 1-based pin number within the part
+    name: str                # silkscreen pin name
+
+
+@dataclass(slots=True)
 class ComponentRecord:
     """A real schematic component — refdes + value + footprint + position.
 
     Found in trailing component sections (after all layer bodies). Not
     every fixture has them, but on the multi-layer graphics-card boards
-    we surveyed they carry the canonical 'C134', 'R242', 'U7' style
+    we tested they carry the canonical 'C134', 'R242', 'U7' style
     refdes plus the silkscreened value ('10u/6/x5r/6.3v/m') and
     package footprint ('C0805_0603-1', 'CAP_SMD_7343', 'SOT23', …).
     """
@@ -205,8 +228,14 @@ class ComponentRecord:
     bbox_x2: int
     bbox_y2: int
     rotation: int    # raw u32 from the file (0/90/180/270 typically)
-    kind: int        # raw u32 — type / category code from the source CAD
+    kind: int        # raw u32 — `part_type` per fileformat-tvw.txt
+                     # (0=IC, 1=DIODE, 2=TRANSISTOR, 3=RESISTOR, …).
+                     # NOT a side flag — side comes from layer membership.
     pin_count: int
+    # Per-component pin list. Empty when the component record body
+    # didn't decode (e.g. truncated). Populated for every part where
+    # the trailing PINS array is parseable.
+    pins: list[ComponentPin] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -226,6 +255,35 @@ class Layer:
 
 
 @dataclass(slots=True)
+class PackageRecord:
+    """A package (footprint) outline definition from the PACKAGE table.
+
+    The TVW production binary ships, after the per-component records, a
+    table of named package definitions. Each entry pairs a footprint
+    name (e.g. `EDGECON_PCI_EXPRESS_16`, `BGA0_8X1_2MM40X40-1737`,
+    `R0402`) with the outline geometry of the package's silkscreen
+    body, encoded as a sequence of straight segments centred on
+    (0, 0). Segment count varies by package shape:
+      *  4 segments → simple rectangle (passives like 0402, 0603, 0805)
+      *  8 segments → rectangle with a chamfer / key cut (PCIe edge
+                      connector, polarised connectors)
+      * 30+ segments → polygonal approximation of a rounded body
+                      (BGAs, capsule connectors, …)
+
+    Coordinates are centi-mils. To project a package onto the board,
+    rotate by `component.rotation` then translate by
+    `(component.cx, component.cy)`.
+
+    The mapper attaches matching package outlines to each `Part` via
+    the component's `footprint` string — replacing the bbox-rectangle
+    silkscreen we used to draw with the package's true shape.
+    """
+    name: str
+    segments: list[tuple[int, int, int, int]] = field(default_factory=list)
+    file_offset: int = 0
+
+
+@dataclass(slots=True)
 class TVWFile:
     version: int
     date: str               # decoded build date (e.g. "April 27, 2017")
@@ -237,6 +295,7 @@ class TVWFile:
     components: list[ComponentRecord] = field(default_factory=list)
     polygons: list[PolygonRecord] = field(default_factory=list)
     outlines: list[OutlineGroup] = field(default_factory=list)
+    packages: dict[str, PackageRecord] = field(default_factory=dict)
 
 
 # === Primitive readers ===========================================================
@@ -418,7 +477,7 @@ def _read_dcodes(buf: bytes, off: int, region_end: int) -> tuple[list[Aperture],
             break
         # Bail on the first record that looks like the Custom-polygon
         # entry or anything else with a non-aperture type. The fixtures
-        # we surveyed all have regular records (type ∈ {0, 1, 3}) up to
+        # we tested all have regular records (type ∈ {0, 1, 3}) up to
         # the first non-regular one, after which the polygon section
         # begins. The polygon record layout is variable-length and not
         # yet fully decoded — `_read_pins` forward-scans past whatever
@@ -432,7 +491,7 @@ def _read_dcodes(buf: bytes, off: int, region_end: int) -> tuple[list[Aperture],
             pin_start = None
             best_pin_count = 0
             # The pin header follows the final Custom aperture body
-            # closely on surveyed TVWs. Bound this local search so a
+            # closely on tested TVWs. Bound this local search so a
             # late false layer marker does not make dcode parsing scan
             # the rest of a multi-MB layer byte by byte.
             scan_limit = min(region_end, last_poly_end + 262_144)
@@ -641,7 +700,7 @@ def _looks_like_pin_section_header(
 
     Pin section: u32 first_count + u32 pin_count + u32 gap + records.
     For a real pin section:
-      * pin_count is usually in [50, 60_000] on the fixtures we surveyed
+      * pin_count is usually in [50, 60_000] on the fixtures we tested
       * the first hypothetical pin record's X / Y are plausible
       * the first part_index is in [0, 200_000]
     """
@@ -1274,22 +1333,45 @@ def _try_read_network_names(buf: bytes, after_layers: int) -> list[str]:
 #     i32 cx, cy                           (placement centre)
 #     u32 rotation                         (degrees: 0 / 90 / 180 / 270)
 #     u32 kind                             (CAD-tool type code)
-#     12 bytes zero-padding (3 × u32)
-#     u8 sep + u8 plen + plen bytes value
-#     u8 sep + u8 plen + plen bytes comment    (typically empty)
-#     u8 plen + plen bytes footprint            (no leading sep)
+#     12 bytes (3 × u32 — usually zero, occasionally carries kind-specific
+#                metadata; we don't decode it here)
+#     u8 sep_v (always 0x01)
+#     u8 plen_v + plen_v bytes value       (silkscreened value text)
+#     u8 plen_a + plen_a bytes comment_a   (tolerance / comment, e.g.
+#                                            "+/- 5%", "N/A", or "")
+#     u8 plen_b + plen_b bytes comment_b   (always == comment_a — the
+#                                            file stores the comment
+#                                            twice, back-to-back)
+#     u8 plen_f + plen_f bytes footprint    (package name, e.g. "0805")
 #     5 bytes zero-padding
 #     u32 pin_count
 #     16 bytes (pin block header — purpose unclear)
 #     pin_count × { u32 pin_idx + u8 sep + u8 plen + Pascal pin_name +
 #                   variable zero-padding }
 #
+# The empirically-observed comment-twice layout was missed by an earlier
+# revision of this parser, which read the second comment Pascal as an
+# unprefixed footprint. Records whose comment was empty happened to
+# parse correctly (the duplicated zero-byte plen aliased onto the old
+# `_sep + plen` shape), but records with a non-empty comment (e.g. the
+# LB-family inductors on Gigabyte graphics-card fixtures, comment = "N/A")
+# leaked the trailing bytes into the `footprint` field. The 3-string
+# layout is verified across 30k+ records on 15 different `.tvw` files
+# (every component lands on a clean `value / comment / comment_dup /
+# footprint` boundary, with `comment == comment_dup` 100% of the time).
+#
 # We anchor the scan via a regex over the whole file (any position
 # whose Pascal-prefixed body matches `[A-Z]{1,3}[0-9]{1,4}` AND whose
 # next 8 i32 form plausible centi-mil coordinates), then parse each
 # record bounded by the next refdes match.
 
-_REFDES_PAT = re.compile(rb"[A-Z]{1,3}[0-9]{1,4}")
+# Refdes pattern. The original `{1,3}[0-9]{1,4}` was too tight — it
+# silently dropped legitimate connector / module names like `MPCIE1`,
+# `BAT1`, `USB30`, `MTG`/`MTS` (mounting tabs), `REG1`, etc. that
+# appear in TVW component records. Widening the prefix to 1-5 letters
+# (and tail to 1-5 digits) recovers them; the bbox/centre sanity
+# checks downstream filter random byte sequences.
+_REFDES_PAT = re.compile(rb"[A-Z]{1,5}[0-9]{1,5}")
 
 
 # Outline-group signature: 8 bytes `FF 00 00 00 00 FF 00 00` followed by
@@ -1410,7 +1492,7 @@ def _scan_polygon_records(buf: bytes) -> list[PolygonRecord]:
         # Sanity: bbox coords in plausible range.
         if any(abs(v) > 10_000_000 for v in (bx1, by1, bx2, by2)):
             continue
-        # Vertex count is at body_off + 36 in the layout we surveyed.
+        # Vertex count is at body_off + 36 in the layout we tested.
         vc_off = body_off + 36
         if vc_off + 4 > n:
             continue
@@ -1474,8 +1556,28 @@ def _scan_component_records(buf: bytes) -> list[ComponentRecord]:
             continue
         if any(abs(v) > 10_000_000 for v in (bx1, by1, bx2, by2, cx, cy)):
             continue
-        # Sanity: bbox must enclose the centre.
-        if not (bx1 <= cx <= bx2 and by1 <= cy <= by2):
+        # Bbox must be properly ordered (positive size) — main filter
+        # against random byte sequences that happen to look like a
+        # refdes followed by 24 bytes of garbage.
+        if bx1 >= bx2 or by1 >= by2:
+            continue
+        w = bx2 - bx1
+        h = by2 - by1
+        # Plausible size: 1 to 50_000 mils (= 5 ft). Catches both
+        # zero-size noise and absurdly large garbage.
+        if w < 100 or h < 100 or w > 5_000_000 or h > 5_000_000:
+            continue
+        # Centre proximity: must be within 0.5 × bbox-extent of the
+        # bbox edge. Connectors (J1900, MJ1900, …) commonly carry a
+        # body bbox that doesn't enclose the contact-array centre —
+        # the strict "centre inside bbox" check that lived here used
+        # to drop them silently. The looser proximity check still
+        # catches random byte sequences (their cx/cy lands far from
+        # the bbox they happen to align on) while admitting
+        # connector-style records.
+        mx = w // 2
+        my = h // 2
+        if not (bx1 - mx <= cx <= bx2 + mx and by1 - my <= cy <= by2 + my):
             continue
         candidates.append(i)
 
@@ -1529,29 +1631,107 @@ def _parse_component_at(
         return None
 
     # Soft reads from here onward — record may end before all fields.
+    # The string region is 4 fields back-to-back:
+    #   u8 sep_v + Pascal value        (sep_v always 0x01)
+    #   Pascal comment_a               (no leading sep)
+    #   Pascal comment_b               (no leading sep, == comment_a)
+    #   Pascal footprint               (no leading sep)
+    # All three trailing Pascal lengths are tightly bounded; we keep the
+    # `<= 64` guard as a sanity rail. If any field's plen overruns we
+    # bail out of the string region and try to recover the pin block
+    # from the current offset — this preserves pin parsing on truncated
+    # records without smearing garbage into the string fields. We
+    # deliberately only commit the offset advance after a successful
+    # length check on the field, so a rejected plen leaves `o` pointing
+    # at the bad byte instead of having already consumed it.
+    pins: list[ComponentPin] = []
+    string_region_ok = True
     try:
         if o + 2 <= region_end:
-            _sep_v, o = _u8(buf, o)
-            plen_v, o = _u8(buf, o)
-            if plen_v <= 64 and o + plen_v <= region_end:
+            sep_v_off = o
+            sep_v = buf[sep_v_off]
+            plen_v = buf[sep_v_off + 1]
+            if sep_v == 0x01 and plen_v <= 64 and sep_v_off + 2 + plen_v <= region_end:
+                o = sep_v_off + 2
                 value = buf[o:o + plen_v].decode("ascii", errors="replace")
                 o += plen_v
-        if o + 2 <= region_end:
-            _sep_c, o = _u8(buf, o)
-            plen_c, o = _u8(buf, o)
-            if plen_c <= 64 and o + plen_c <= region_end:
-                comment = buf[o:o + plen_c].decode("ascii", errors="replace")
-                o += plen_c
-        if o + 1 <= region_end:
-            plen_f, o = _u8(buf, o)
-            if plen_f <= 64 and o + plen_f <= region_end:
+            else:
+                string_region_ok = False
+        if string_region_ok and o + 1 <= region_end:
+            plen_a_off = o
+            plen_a = buf[plen_a_off]
+            if plen_a <= 64 and plen_a_off + 1 + plen_a <= region_end:
+                o = plen_a_off + 1
+                comment = buf[o:o + plen_a].decode("ascii", errors="replace")
+                o += plen_a
+            else:
+                string_region_ok = False
+        if string_region_ok and o + 1 <= region_end:
+            plen_b_off = o
+            plen_b = buf[plen_b_off]
+            if plen_b <= 64 and plen_b_off + 1 + plen_b <= region_end:
+                o = plen_b_off + 1
+                # comment_b is always the duplicate of comment_a; we
+                # discard it after consuming the bytes.
+                o += plen_b
+            else:
+                string_region_ok = False
+        if string_region_ok and o + 1 <= region_end:
+            plen_f_off = o
+            plen_f = buf[plen_f_off]
+            if plen_f <= 64 and plen_f_off + 1 + plen_f <= region_end:
+                o = plen_f_off + 1
                 footprint = buf[o:o + plen_f].decode("ascii", errors="replace")
                 o += plen_f
+            else:
+                string_region_ok = False
         if o + 9 <= region_end:
             o += 5
             cnt_u32, o = _u32(buf, o)
-            if cnt_u32 <= 1000:
+            # Cap at 10_000 — covers all real BGAs (170, 270, 1024…)
+            # and the GPU on graphics-card fixtures (~2200 pins). The
+            # previous 1000 cap silently zero'd U1 (Tahiti GPU, BGA
+            # 40×40 array) which then got no pins assigned.
+            if cnt_u32 <= 10_000:
                 pin_count = cnt_u32
+            # Read the 2-u32 separator before the PINS array. The doc
+            # mentions only `uint32 unknown (2)` here but on every
+            # graphics-card fixture we tested the layout is actually
+            # u32 + u32 (e.g. `07 00 00 00 00 00 00 00` for C5001 —
+            # the first u32 varies between records, the second is 0).
+            if o + 8 > region_end:
+                pins = []
+            else:
+                _sep_a, o = _u32(buf, o)
+                _sep_b, o = _u32(buf, o)
+            # Decode each PIN sub-record:
+            #   uint32  pad_index_number  (canonical link to PinRecord)
+            #   uint32  unknown (0)
+            #   uint32  pin_index_in_part (1-based)
+            #   string  pin_name (Pascal-prefixed)
+            #   uint32  unknown (0)
+            for _i in range(pin_count):
+                if o + 12 > region_end:
+                    break
+                pad_idx, o = _u32(buf, o)
+                _u, o = _u32(buf, o)
+                pin_idx, o = _u32(buf, o)
+                if o + 1 > region_end:
+                    break
+                name_len, o = _u8(buf, o)
+                if name_len > 16 or o + name_len + 4 > region_end:
+                    break
+                name_bytes = buf[o:o + name_len]
+                if not all(32 <= b <= 126 for b in name_bytes):
+                    break
+                pin_name = name_bytes.decode("ascii", errors="replace")
+                o += name_len
+                _trailer, o = _u32(buf, o)
+                pins.append(
+                    ComponentPin(
+                        pad_index=pad_idx, pin_index=pin_idx, name=pin_name,
+                    )
+                )
     except (struct.error, IndexError, UnicodeDecodeError):
         pass
 
@@ -1568,7 +1748,166 @@ def _parse_component_at(
         bbox_x1=bx1, bbox_y1=by1, bbox_x2=bx2, bbox_y2=by2,
         rotation=rotation, kind=kind,
         pin_count=pin_count,
+        pins=pins,
     )
+
+
+# === Package table ==============================================================
+#
+# Each PACKAGE entry is laid out as:
+#   uint8   marker (always 0x01)
+#   uint8   pascal_len
+#   bytes   name (pascal_len bytes, ASCII upper / digit / _ / - / .)
+#   ~173 bytes header (variable; not yet decoded — we skip up to the
+#                       first `-1, 10` group)
+#   loop:
+#     int32  -1      (segment-start sentinel)
+#     int32  10      (segment marker)
+#     int32  x1
+#     int32  y1
+#     int32  x2
+#     int32  y2
+#   end-of-loop sentinel:
+#     int32  0
+#   (~0x39 bytes trailer before next entry — absorbed by the next
+#    entry's header search)
+#
+# Coordinates are centi-mils, signed, centred on (0, 0). To draw the
+# package on the board, rotate by `component.rotation` then translate
+# by `(component.cx, component.cy)`.
+
+_PACKAGE_NAME_RE = re.compile(rb"[A-Z0-9_\-/.]+")
+
+
+def _decode_package_at(buf: bytes, start: int) -> tuple[PackageRecord, int] | None:
+    """Try to decode a single PACKAGE entry beginning at `start`.
+
+    Returns (record, end_off) on success, None when the bytes don't
+    form a valid entry (used as the candidate-rejection signal during
+    the file-wide scan).
+    """
+    if start + 2 >= len(buf):
+        return None
+    if buf[start] != 0x01:
+        return None
+    plen = buf[start + 1]
+    if not (4 <= plen <= 50):
+        return None
+    name_b = buf[start + 2:start + 2 + plen]
+    if not _PACKAGE_NAME_RE.fullmatch(name_b):
+        return None
+    cur = start + 2 + plen
+    # Skip the variable-size header until the first (-1, 10) group.
+    # Cap the search at 600 bytes — every package we tested has its
+    # first group within ~200 bytes of the name; 600 covers all of
+    # them with margin while bailing on garbage candidates quickly.
+    header_end = min(len(buf), cur + 600)
+    while cur + 8 <= header_end:
+        try:
+            v0 = struct.unpack_from("<i", buf, cur)[0]
+            v1 = struct.unpack_from("<i", buf, cur + 4)[0]
+        except struct.error:
+            return None
+        if v0 == -1 and v1 == 10:
+            break
+        cur += 1
+    else:
+        return None
+    # Each segment is `int32 -1, int32 marker, int32 x1, int32 y1,
+    # int32 x2, int32 y2`. The marker byte mostly takes the value 10
+    # but multi-pad packages (LFPAK MOSFETs, custom connectors) sprinkle
+    # 11, 12, … values to tag different sub-shapes (body silkscreen vs
+    # drain / source / gate pad outlines, …). Their byte layout is
+    # identical, so we accept any small positive marker and dispatch
+    # later if needed. Range [1, 256] catches the variants we observe
+    # without admitting random alignment garbage.
+    segments: list[tuple[int, int, int, int]] = []
+    while cur + 4 <= len(buf):
+        try:
+            sentinel = struct.unpack_from("<i", buf, cur)[0]
+        except struct.error:
+            return None
+        if sentinel == 0:
+            cur += 4
+            break
+        if sentinel != -1:
+            return None
+        cur += 4
+        if cur + 4 > len(buf):
+            return None
+        try:
+            marker = struct.unpack_from("<i", buf, cur)[0]
+        except struct.error:
+            return None
+        if not (1 <= marker <= 256):
+            return None
+        cur += 4
+        if cur + 16 > len(buf):
+            return None
+        try:
+            x1, y1, x2, y2 = struct.unpack_from("<4i", buf, cur)
+        except struct.error:
+            return None
+        # Sanity: each coord ≤ 1e7 cmils (= 100" — bigger than any
+        # board we'll see). Anything past that is misaligned data.
+        if any(abs(v) > 10_000_000 for v in (x1, y1, x2, y2)):
+            return None
+        segments.append((x1, y1, x2, y2))
+        cur += 16
+        # Defensive cap on segments per package — a 1737-pin BGA tops
+        # out around 102 segments; 2048 is comfortably above any real
+        # multi-pad package.
+        if len(segments) > 2048:
+            return None
+    if not segments:
+        return None
+    return (
+        PackageRecord(
+            name=name_b.decode("ascii"),
+            segments=segments,
+            file_offset=start,
+        ),
+        cur,
+    )
+
+
+def _scan_package_table(buf: bytes) -> dict[str, PackageRecord]:
+    """Locate and decode every PACKAGE entry in the trailing table.
+
+    Strategy: forward-scan the trailing region of the file (where the
+    PACKAGE table sits, after the per-component records) for the
+    `\\x01[plen][printable_name]` signature, then attempt to decode
+    each candidate with `_decode_package_at`. A candidate that fails
+    to decode is silently skipped — the BRDPart records earlier in the
+    file have a similar shape (`[len][name]`) but no `\\x01` prefix
+    and no trailing `-1, 10` segment groups, so they're naturally
+    excluded by the decoder's structural checks.
+
+    Returns a dict keyed by package name. When a name appears twice
+    (rare but observed on certain TVWs) the first occurrence wins.
+    """
+    packages: dict[str, PackageRecord] = {}
+    n = len(buf)
+    # Bound the search to the trailing 25% of the file. The PACKAGE
+    # table sits past the BRDPart section, which itself starts past
+    # all layer bodies. On every TVW we tested the table begins well
+    # into the last quarter; capping the scan there avoids spurious
+    # matches in earlier polygon / surface vertex data.
+    scan_start = max(0, n - n // 2)
+    cur = scan_start
+    while cur < n - 4:
+        if buf[cur] != 0x01:
+            cur += 1
+            continue
+        decoded = _decode_package_at(buf, cur)
+        if decoded is None:
+            cur += 1
+            continue
+        rec, end = decoded
+        if rec.name not in packages:
+            packages[rec.name] = rec
+        cur = end
+    return packages
 
 
 # === Top-level walk =============================================================
@@ -1766,5 +2105,12 @@ def parse(raw: bytes) -> TVWFile:
     # the per-corner OUTLINE_TB_TPN groups. Each group carries a small
     # header + a list of line / polyline primitives in mils.
     file.outlines = _scan_outline_groups(raw)
+
+    # PACKAGE table — per-footprint silkscreen body outlines, named so
+    # we can look them up by `component.footprint`. Each entry is a
+    # list of straight segments centred on (0, 0) in centi-mils; the
+    # mapper rotates by `component.rotation` and translates by
+    # `(component.cx, component.cy)` to land on the board.
+    file.packages = _scan_package_table(raw)
 
     return file

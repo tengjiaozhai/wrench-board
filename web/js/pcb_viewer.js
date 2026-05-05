@@ -52,7 +52,7 @@ const PCB_DEFAULT_NET_HEX = {
     // Entity-typed pseudo-categories — not net-name driven, but still
     // surfaced in the Tweaks picker so the technician can retune the
     // visually prominent test pads and vias the same way.
-    testPad:  '#d4af37',
+    testPad:  '#5a6378',
     via:      '#c084fc',
     // Board chrome — outline is the closed-polygon contour (cyan by
     // default), fill is the substrate behind it (default matches
@@ -373,7 +373,7 @@ class PCBViewerOptimized {
         this._sharedGeometries.circlePin = new THREE.CircleGeometry(1, 32);
         // Thin border ring around each pin (~6% of the pad radius).
         // Drawn behind the fill in a darker tone so each pad reads as
-        // a defined object (matches FlexBV's per-pad outline).
+        // a defined object instead of a flat blob.
         this._sharedGeometries.circlePinRing = new THREE.RingGeometry(0.94, 1.0, 32);
 
         // Via geometries — outer ring + inner hole
@@ -389,7 +389,15 @@ class PCBViewerOptimized {
         this._sharedMaterials.pinFill = new THREE.MeshBasicMaterial({ color: this.colors.pinDefault });
         this._sharedMaterials.via = new THREE.MeshBasicMaterial({ color: this.colors.via, side: THREE.DoubleSide });
         this._sharedMaterials.viaHole = new THREE.MeshBasicMaterial({ color: this.colors.background });
-        this._sharedMaterials.testPad = new THREE.MeshBasicMaterial({ color: this.colors.testPad });
+        // Test pads (ICT probe targets, mostly TVW) render as a discreet
+        // secondary layer — half-opacity so the dense ICT probe field on
+        // a graphics-card bottom view doesn't drown out real SMD pads.
+        this._sharedMaterials.testPad = new THREE.MeshBasicMaterial({
+            color: this.colors.testPad,
+            transparent: true,
+            opacity: 0.55,
+            depthWrite: false,
+        });
     }
 
     /**
@@ -1780,8 +1788,8 @@ class PCBViewerOptimized {
             return { x: item.x, y: item.y, z: hiddenZ };
         }
         // Pin is on the hidden face. Map its display position onto the
-        // visible face's coordinate frame following the FlexBV /
-        // OpenBoardView convention: for a side-by-side X split the
+        // visible face's coordinate frame following the OpenBoardView
+        // flip convention: for a side-by-side X split the
         // bottom view is the result of flipping the physical board
         // around its vertical edge, so the X axis is MIRRORED between
         // faces (left of top = right of bottom, same physical pin).
@@ -1898,7 +1906,16 @@ class PCBViewerOptimized {
         // 1. Create board outline
         this.createBoard(data);
 
-        // 2. Create components (individual meshes - usually < 500)
+        // 2. Geometric edge-finger detection — must run BEFORE component
+        //    and pin meshes are built so its mutations on `comp.layer`
+        //    (clearing the side designation for edge connectors) and
+        //    on each finger pin's shape / size land on the data the
+        //    builders read.
+        if (data.pins && data.components) {
+            this._applyEdgeFingerDetection(data.pins, data.components);
+        }
+
+        // 3. Create components (individual meshes - usually < 500)
         console.time('[PERF] components');
         // Build a refdes -> component lookup once so the info panel can
         // resolve `dnp_alternates` refdes back to their footprint /
@@ -1910,7 +1927,7 @@ class PCBViewerOptimized {
         }
         console.timeEnd('[PERF] components');
 
-        // 3. Create pins using InstancedMesh (MAJOR optimization)
+        // 4. Create pins using InstancedMesh (MAJOR optimization)
         console.time('[PERF] pins-instanced');
         if (data.pins) {
             this._createPinsInstanced(data.pins);
@@ -2024,6 +2041,148 @@ class PCBViewerOptimized {
     }
 
     /**
+     * Detect edge-finger connectors and retune each finger's pad
+     * shape / dimensions before pin instancing.
+     *
+     * An "edge finger" pattern is the dense single-row pad layout used
+     * by every PCIe / CrossFire / SLI / MXM / DDR / sodimm-style slot:
+     * 15+ pads arranged on a single line with a regular pitch. The
+     * pads are physically long rectangles oriented perpendicular to
+     * the line so they can mate with a card edge. Some sources only
+     * carry the small probe-target square per pad (~22 mils on PCIe),
+     * which renders as a row of dots that hides the connector layout
+     * — this pass restores the visual connector identity.
+     *
+     * Detection is purely geometric: we look at every component with
+     * ≥ 15 pins, check that one axis is wide and the other is narrow
+     * (collinear), and confirm the inter-pin pitch is regular within
+     * 30 % stddev / mean. When that holds, each pin's `shape` becomes
+     * `'rect'` and its width/height are retuned so the long edge
+     * follows the body silkscreen's perpendicular extent (typically
+     * ~55 % of `comp.height` for a horizontal slot) and the short
+     * edge takes ~55 % of the pitch — proportions that match the
+     * physical pad layout of a real edge connector.
+     */
+    _applyEdgeFingerDetection(pins, components) {
+        const compIndex = new Map();
+        for (const c of (components || [])) compIndex.set(c.id, c);
+
+        const pinsByComp = new Map();
+        for (const p of pins) {
+            if (!p.component) continue;
+            let bucket = pinsByComp.get(p.component);
+            if (!bucket) {
+                bucket = [];
+                pinsByComp.set(p.component, bucket);
+            }
+            bucket.push(p);
+        }
+
+        const MIN_FINGERS = 15;
+        const PITCH_REGULARITY_MAX_CV = 0.30;  // gap stddev / mean cap
+        const COLLINEAR_RATIO = 0.05;  // perpendicular spread must be ≤ 5% of axis spread
+        const COLLINEAR_FLOOR_MM = 0.05;  // floor (probe-target jitter on a perfect line)
+        const PITCH_MM_MIN = 0.3;
+        const PITCH_MM_MAX = 5.0;
+        const PAD_ALONG_FRAC = 0.55;
+        const PAD_PERP_FRAC = 0.55;
+
+        let detected = 0;
+        for (const [refdes, compPins] of pinsByComp) {
+            if (compPins.length < MIN_FINGERS) continue;
+
+            const xs = compPins.map(p => p.x);
+            const ys = compPins.map(p => p.y);
+            const xMin = Math.min(...xs), xMax = Math.max(...xs);
+            const yMin = Math.min(...ys), yMax = Math.max(...ys);
+            const spreadX = xMax - xMin;
+            const spreadY = yMax - yMin;
+
+            const isHorizontalAxis = spreadX >= spreadY;
+            const axisSpread = isHorizontalAxis ? spreadX : spreadY;
+            const perpSpread = isHorizontalAxis ? spreadY : spreadX;
+            if (axisSpread <= 0) continue;
+            if (perpSpread > axisSpread * COLLINEAR_RATIO + COLLINEAR_FLOOR_MM) continue;
+
+            const axisVals = (isHorizontalAxis ? xs : ys).slice().sort((a, b) => a - b);
+            const gaps = [];
+            for (let i = 1; i < axisVals.length; i++) {
+                const g = axisVals[i] - axisVals[i - 1];
+                if (g > 1e-6) gaps.push(g);
+            }
+            if (gaps.length === 0) continue;
+            const meanGap = gaps.reduce((a, b) => a + b, 0) / gaps.length;
+            if (meanGap < PITCH_MM_MIN || meanGap > PITCH_MM_MAX) continue;
+            const variance = gaps.reduce((s, g) => s + (g - meanGap) ** 2, 0) / gaps.length;
+            const stddev = Math.sqrt(variance);
+            if (stddev / meanGap > PITCH_REGULARITY_MAX_CV) continue;
+
+            // Estimate the perpendicular pad extent from the
+            // component's silkscreen body when available — fingers run
+            // ~55 % of the body's perpendicular extent on real
+            // connectors. Fall back to 4 × pitch for components
+            // without body_lines.
+            const comp = compIndex.get(refdes);
+            let perpExtent = meanGap * 4.0;
+            if (comp && Array.isArray(comp.body_lines) && comp.body_lines.length > 0) {
+                let minP = Infinity, maxP = -Infinity;
+                for (const seg of comp.body_lines) {
+                    const v1 = isHorizontalAxis ? seg.y1 : seg.x1;
+                    const v2 = isHorizontalAxis ? seg.y2 : seg.x2;
+                    if (v1 < minP) minP = v1;
+                    if (v2 < minP) minP = v2;
+                    if (v1 > maxP) maxP = v1;
+                    if (v2 > maxP) maxP = v2;
+                }
+                const bodyPerp = maxP - minP;
+                if (isFinite(bodyPerp) && bodyPerp > 0) {
+                    perpExtent = bodyPerp;
+                }
+            }
+
+            const padAlong = meanGap * PAD_ALONG_FRAC;
+            const padPerp = perpExtent * PAD_PERP_FRAC;
+
+            for (const p of compPins) {
+                p.shape = 'rect';
+                if (isHorizontalAxis) {
+                    p.width = padAlong;
+                    p.height = padPerp;
+                } else {
+                    p.width = padPerp;
+                    p.height = padAlong;
+                }
+                // Edge connectors physically carry fingers on BOTH
+                // faces of the PCB, but the source only ships the
+                // probe-testable face. Mark the pin so the viewer
+                // surfaces it regardless of the TOP / BOTTOM side
+                // filter — same logical pad, visible on either
+                // viewing direction. Storing the marker on the pin
+                // (rather than mutating its `layer`) keeps the
+                // existing layer-derived bookkeeping (z position,
+                // hover dispatch, info panel) untouched.
+                p._edgeFinger = true;
+            }
+            // Same treatment for the component itself: clearing its
+            // side designation lets the body silkscreen / bbox / label
+            // appear in either face-only mode. Without this, the pads
+            // would show but the carrier component would vanish from
+            // TOP-only view (or BOTTOM-only on the opposite case),
+            // giving the connector a "ghost pads with no body"
+            // appearance.
+            if (comp) {
+                comp._edgeFinger = true;
+                comp._side = null;
+                comp.layer = null;
+            }
+            detected += 1;
+        }
+        if (detected > 0) {
+            console.log(`[edge-fingers] retuned pads on ${detected} connector(s)`);
+        }
+    }
+
+    /**
      * Create all pins using InstancedMesh - single draw call for all circular pins
      */
     _createPinsInstanced(pins) {
@@ -2092,7 +2251,7 @@ class PCBViewerOptimized {
                 ...pin,
                 _instanceType: 'dnpPin',
                 _instanceId: i,
-                _side: pin._side || pin.layer || null,
+                _side: pin._edgeFinger ? null : (pin._side || pin.layer || null),
                 originalColor: 0x6b7280,
                 type: 'Pin',
             });
@@ -2146,7 +2305,7 @@ class PCBViewerOptimized {
                 ...pin,
                 _instanceType: 'dnpPin',
                 _instanceId: i,
-                _side: pin._side || pin.layer || null,
+                _side: pin._edgeFinger ? null : (pin._side || pin.layer || null),
                 originalColor: 0x6b7280,
                 type: 'Pin',
             });
@@ -2234,7 +2393,7 @@ class PCBViewerOptimized {
                 ...pin,
                 _instanceType: 'pin',
                 _instanceId: i,
-                _side: pin._side || null,
+                _side: pin._edgeFinger ? null : (pin._side || null),
                 originalColor: pinColor,
                 type: 'Pin'
             };
@@ -2251,8 +2410,7 @@ class PCBViewerOptimized {
         // Per-pin thin border ring drawn just above the fill in a
         // mid-grey that contrasts both the navy background and most
         // pad colours — so each pad reads as a defined object even on
-        // densely-packed connectors / ICs (matches FlexBV's per-pad
-        // outline).
+        // densely-packed connectors / ICs.
         const ringGeom = this._sharedGeometries.circlePinRing;
         const ringMat = new THREE.MeshBasicMaterial({
             color: 0x4b5563,  // tailwind gray-600 — readable on both pad fill and bg-deep
@@ -2347,7 +2505,13 @@ class PCBViewerOptimized {
 
             const fullMatrix = new THREE.Matrix4();
             fullMatrix.identity();
-            const zPos = pin.layer === 'top' ? 2 : (pin.layer === 'bottom' ? 1 : 1.5);
+            // Edge fingers: lift to z=2.3 so they sit above both faces'
+            // ordinary pads / probes. The edge connector physically
+            // exists on both sides of the PCB, and its fingers are the
+            // canonical visual cue for the slot — keep them on top.
+            const zPos = pin._edgeFinger
+                ? 2.3
+                : (pin.layer === 'top' ? 2 : (pin.layer === 'bottom' ? 1 : 1.5));
             fullMatrix.setPosition(pin.x, pin.y, zPos);
             if (pin.rotation) {
                 fullMatrix.multiply(new THREE.Matrix4().makeRotationZ(pin.rotation * Math.PI / 180));
@@ -2358,7 +2522,7 @@ class PCBViewerOptimized {
                 ? fullMatrix
                 : new THREE.Matrix4().makeScale(0, 0, 0));
             instancedMesh.userData._matrices[i] = fullMatrix;
-            instancedMesh.userData._sides[i] = pin._side || null;
+            instancedMesh.userData._sides[i] = pin._edgeFinger ? null : (pin._side || null);
             instancedMesh.userData._dnpFlags[i] = isDnp;
             instancedMesh.userData._components[i] = pin.component || null;
             color.setHex(pinColor);
@@ -2369,7 +2533,7 @@ class PCBViewerOptimized {
                 _instanceType: 'rectPin',
                 _instanceId: i,
                 _sizeKey: sizeKey,
-                _side: pin._side || null,
+                _side: pin._edgeFinger ? null : (pin._side || null),
                 originalColor: pinColor,
                 type: 'Pin'
             };
@@ -2381,9 +2545,9 @@ class PCBViewerOptimized {
 
         // Per-pin thin border drawn just above the fill in a dark
         // tone, so each rect/square/oval pad reads as a defined object
-        // (matches FlexBV's per-pad outline). Build a closed Line from
-        // the same Shape used for the fill — Three.js sees it as a
-        // separate buffer geometry, so we instance it the same way.
+        // instead of a flat blob. Build a closed Line from the same
+        // Shape used for the fill — Three.js sees it as a separate
+        // buffer geometry, so we instance it the same way.
         const borderPts = shape.getPoints(48);
         if (borderPts.length) {
             // Close the loop
@@ -2401,10 +2565,12 @@ class PCBViewerOptimized {
             // (count is small enough; rect pins are O(thousands) max).
             pins.forEach((pin) => {
                 const line = new THREE.Line(borderGeom, borderMat);
-                const zPos = (pin.layer === 'top' ? 2.05 : (pin.layer === 'bottom' ? 1.05 : 1.55));
+                const zPos = pin._edgeFinger
+                    ? 2.35
+                    : (pin.layer === 'top' ? 2.05 : (pin.layer === 'bottom' ? 1.05 : 1.55));
                 line.position.set(pin.x, pin.y, zPos);
                 if (pin.rotation) line.rotation.z = pin.rotation * Math.PI / 180;
-                line.userData._side = pin._side || null;
+                line.userData._side = pin._edgeFinger ? null : (pin._side || null);
                 line.userData._isDnp = !!pin.is_dnp;
                 line.userData._component = pin.component || null;
                 if (pin.is_dnp) line.visible = !!this._showDnp;
@@ -3042,8 +3208,8 @@ class PCBViewerOptimized {
         const hasBodyLines = Array.isArray(comp.body_lines) && comp.body_lines.length > 0;
 
         // Body fill — soft grey rectangle behind the pads so each
-        // component reads as a defined object, mirroring FlexBV's
-        // 'tinted body' look. For XZZ parts with body_lines we fill
+        // component reads as a defined object on the dense board.
+        // For XZZ parts with body_lines we fill
         // the body_lines bbox in absolute coords (no group rotation,
         // since body_lines are absolute too); for KiCad/BRD parts
         // (no body_lines) we fill the AABB inside the rotated group.
@@ -3998,7 +4164,7 @@ class PCBViewerOptimized {
 
     /**
      * Translate the current camera position from `fromMode`'s display
-     * frame to `toMode`'s display frame using the same FlexBV flip-over
+     * frame to `toMode`'s display frame using the same flip-over
      * mirror that `_netEndpointPos` applies to fly-line endpoints.
      * Frustum size is unchanged — zoom level stays exactly where it
      * was. The mirror is computed in scene-local coords so it composes

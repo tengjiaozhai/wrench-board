@@ -82,7 +82,7 @@ const DEFAULT_NET_HEX = {
   // time but reads/writes the same localStorage entry, so we keep
   // both maps shape-aligned to avoid losing user picks when one
   // viewer writes a value the other doesn't know about.
-  testPad:  '#d4af37',
+  testPad:  '#5a6378',
   via:      '#c084fc',
   boardOutline: '#67d4f5',
   boardFill:    '#07101f',

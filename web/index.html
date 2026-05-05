@@ -58,11 +58,11 @@
 <link rel="stylesheet" href="styles/mascot.css">
 <link rel="stylesheet" href="styles/schematic.css?v=fitcenter">
 <link rel="stylesheet" href="/styles/profile.css" />
-<link rel="stylesheet" href="styles/protocol.css?v=dnp26" />
+<link rel="stylesheet" href="styles/protocol.css?v=edge29" />
 <!-- Markdown rendering + sanitization for agent chat (MIT / Apache 2.0) -->
 <script src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.8/dist/purify.min.js" defer></script>
-<script type="module" src="js/i18n.js?v=dnp26"></script>
+<script type="module" src="js/i18n.js?v=edge29"></script>
 </head>
 <body>
 
@@ -310,8 +310,8 @@
         </svg>
       </button>
       <!-- DNP / DFM-alternate toggle. OFF by default — the canvas only
-           shows physically-placed components (matches what XZZ /
-           FlexBV do in their default view). Toggle ON to overlay the
+           shows physically-placed components, keeping the default view
+           uncluttered for diagnostic work. Toggle ON to overlay the
            non-stuffed alternate footprints as dashed cyan outlines so
            a tech can spot DFM-alternate seats while diagnosing. -->
       <button class="brd-btn" id="brdToggleDnp" type="button"
@@ -1226,15 +1226,15 @@
      This isolates chat-panel edits from parallel work on index.html. -->
 <div id="llmRoot"></div>
 
-<script type="module" src="js/main.js?v=dnp26"></script>
+<script type="module" src="js/main.js?v=edge29"></script>
 <!-- pcb_viewer.js exports window.PCBViewerOptimized (the ported WebGL viewer).
      brd_viewer.js installs the legacy SVG/D3 viewer + window.Boardview API.
      pcb_viewer_bridge.js loads LAST so it can override window.Boardview /
      window.initBoardview to drive Three.js while keeping the SVG path as a
      fallback for any session where /api/board/render is unreachable. -->
-<script src="js/pcb_viewer.js?v=dnp26"></script>
-<script type="module" src="brd_viewer.js?v=dnp26" defer></script>
-<script type="module" src="js/pcb_viewer_bridge.js?v=dnp26" defer></script>
+<script src="js/pcb_viewer.js?v=edge29"></script>
+<script type="module" src="brd_viewer.js?v=edge29" defer></script>
+<script type="module" src="js/pcb_viewer_bridge.js?v=edge29" defer></script>
 <script type="module" src="js/schematic_minimap.js" defer></script>
 <script type="module" src="/js/profile.js"></script>
 </body>

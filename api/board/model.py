@@ -30,12 +30,18 @@ class Pin(BaseModel):
     net: str | None = None
     probe: int | None = None
     layer: Layer
-    pad_shape: str | None = None  # "rect" | "circle"
+    pad_shape: str | None = None  # "rect" | "circle" | "oval" | "square"
     pad_size: tuple[float, float] | None = None  # (width, height) in mils
     # Float — sub-mil pads on XZZ board-to-board connectors (e.g. XW8230
     # at ~0.9 mil) need fractional precision; int truncation collapsed
     # them to 1×1 mil = 0.0254×0.0254 mm.
     pad_rotation_deg: float | None = None
+    # Silkscreen pin name — populated when the source format carries an
+    # explicit per-pin label (TVW PINS arrays, KiCad pads, …). For
+    # numeric labels ("1", "2") the value mirrors `index`; for BGA / grid
+    # parts the label is alphanumeric ("A1", "B14", …) and `index` is
+    # the 1-based position within the part's pin list.
+    name: str | None = None
 
 
 class Segment(BaseModel):

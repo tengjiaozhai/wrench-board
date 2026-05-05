@@ -6,7 +6,7 @@ Modules:
     only — layer header strings, source paths, and net names are plain
     Pascal strings)
   * `magic.py` — file magic detection (3 Pascal-prefixed constants at the
-    start of every production-binary `.tvw` we surveyed)
+    start of every production-binary `.tvw` we tested)
   * `walker.py` — section-aware reader: file_header, layer headers,
     dcode (aperture) tables, pin records (variable-length, 19 base
     bytes + optional 3-47 byte extension), and the trailing network
