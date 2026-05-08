@@ -112,6 +112,12 @@ api/
                      reliability-line injector (from simulator_reliability.json)
   profile/           Technician profile — catalog/derive/model/prompt/router/
                      store/tools; backs memory/_profile/technician.json
+  stock/             Stock & donor salvage — schemas / safety table /
+                     parts_index builder / atomic store / search engine /
+                     HTTP router / agent tools. Searches across donor
+                     boards for replacement parts under a hard safety
+                     filter; backs the `stock_*` agent tools and
+                     /api/stock/* HTTP endpoints
   session/           Per-session state (board, highlights, annotations)
   tools/             boardview.py — bv_* side-effect functions; ws_events.py
   vision/            Stub — reserved for image helpers
@@ -155,9 +161,14 @@ memory/{device_slug}/
   electrical_graph.json    # optional: compiled ElectricalGraph
   boot_sequence_analyzed.json      # optional: Opus-refined boot sequence
   simulator_reliability.json       # optional: bench-generator reliability score
+  parts_index.json         # optional: searchable per-device projection
+                           # (refdes → type/value/role/safety) for stock_*
   repairs/{repair_id}/
     messages.jsonl         # chat history, one JSON-line per turn
     findings.json          # cross-session field reports for this repair
+memory/_stock/
+  inventory.json           # singleton: physical donor inventory (every
+                           # declared donor + per-refdes consumed log)
 ```
 
 `memory/{slug}/` is the source of truth. HTTP endpoints read it; agent tools
@@ -377,6 +388,15 @@ Custom tools (`manifest.py`):
 - **Profile** (3 tools): `profile_get`, `profile_check_skills`,
   `profile_track_skill` — read/update the technician profile under
   `memory/_profile/technician.json`.
+- **Stock** (5 tools): `stock_search` (strict-then-tolerant matching across
+  donor boards with a hard safety filter — refuses substitutions on tuned /
+  feedback / RF / SMPS / ICs roles), `stock_consume`, `stock_mark_donor`,
+  `stock_unmark_donor`, `stock_list_donors`. Backed by per-device
+  `memory/{slug}/parts_index.json` (built at the end of schematic ingestion)
+  and the singleton `memory/_stock/inventory.json`. Implementations in
+  `api/stock/tools.py`. The `render_system_prompt` "Stock awareness" block
+  instructs the agent to call `stock_search` proactively after confirming a
+  root cause that requires component replacement.
 - **Camera** (1 tool, conditional): `cam_capture` — request a webcam frame from
   the frontend for visual inspection during diagnosis.
 - **Consult** (1 tool): `consult_specialist` — escalate to a deeper-tier
