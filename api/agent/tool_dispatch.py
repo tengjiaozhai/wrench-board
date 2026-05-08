@@ -107,6 +107,39 @@ async def _dispatch_profile(name: str, payload: dict, ctx: ToolContext) -> dict:
 
 
 # --------------------------------------------------------------------------- #
+# stock_* handlers — donor inventory, search, harvest tracking.
+# --------------------------------------------------------------------------- #
+# Lazy-imported to keep the optional `api.stock` package decoupled from the
+# rest of the agent runtime (mirrors the profile pattern).
+
+
+async def _dispatch_stock(name: str, payload: dict, ctx: ToolContext) -> dict:
+    from api.stock.tools import (
+        stock_consume,
+        stock_list_donors,
+        stock_mark_donor,
+        stock_search,
+        stock_unmark_donor,
+    )
+
+    if name == "stock_search":
+        return stock_search(payload)
+    if name == "stock_consume":
+        return stock_consume(payload)
+    if name == "stock_mark_donor":
+        return stock_mark_donor(payload)
+    if name == "stock_unmark_donor":
+        return stock_unmark_donor(payload)
+    if name == "stock_list_donors":
+        return stock_list_donors(payload)
+    return {
+        "ok": False,
+        "reason": "unknown-tool",
+        "error": f"unknown stock tool: {name}",
+    }
+
+
+# --------------------------------------------------------------------------- #
 # bv_* protocol bridge handlers (the four protocol tools that need MA-side
 # context — repair_id / conv_id / memory_root — beyond what dispatch_bv has)
 # --------------------------------------------------------------------------- #
@@ -521,6 +554,9 @@ async def dispatch_tool(name: str, payload: dict, ctx: ToolContext) -> dict:
     """
     if name.startswith("profile_"):
         return await _dispatch_profile(name, payload, ctx)
+
+    if name.startswith("stock_"):
+        return await _dispatch_stock(name, payload, ctx)
 
     handler = _HANDLERS.get(name)
     if handler is not None:
