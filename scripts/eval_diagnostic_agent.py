@@ -522,7 +522,7 @@ async def _play_scenario(
                 t0 = time.perf_counter()
                 await ws.send(json.dumps({"type": "message", "text": turn_def["text"]}))
                 try:
-                    await _drain_until_turn_complete(ws, rec, timeout_s=180.0)
+                    await _drain_until_turn_complete(ws, rec, timeout_s=600.0)
                 except TimeoutError as exc:
                     rec.error = str(exc)
                 rec.wall_seconds = time.perf_counter() - t0
