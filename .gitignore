@@ -82,6 +82,7 @@ managed_ids.json
 .zed/
 .claude/scheduled_tasks.lock
 .claude/*.lock
+.claude/worktrees/
 
 # --- OS ---
 .DS_Store
@@ -178,6 +179,15 @@ web/assets/
 benchmark/auto_proposals/
 benchmark/auto_proposals_*/
 benchmark/poc_multi_agent/
+
+# Bench research staging files (e.g. agent_scenarios_research.jsonl carry
+# upstream URLs / provenance evidence). The promoted oracle is the *.jsonl
+# without the _research suffix; staging copies stay local.
+benchmark/*_research.jsonl
+
+# Per-run eval outputs (timestamped JSON snapshots) — they grow without
+# bound, the meaningful baseline lives in code/tests, not in artefacts.
+benchmark/eval_runs/
 
 # --- Internal docs / specs / plans / notes ---
 # Design specs, implementation plans, and internal architecture notes
