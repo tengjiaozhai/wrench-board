@@ -665,6 +665,27 @@ body.llm-open .rd-data-grid-4 { grid-template-columns: repeat(2, 1fr); }
   gap: 8px;
   margin-bottom: 2px;
 }
+/* Row block: 6+6 padding + ~16 content + 4 gap ≈ 32px. 5 rows ≈ 160px;
+   add a sliver so the 5th row isn't visually clipped by hover-elevation. */
+.rd-versions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.rd-versions-list[data-overflow="scroll"] {
+  max-height: 170px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.rd-versions-list[data-overflow="scroll"]::-webkit-scrollbar { width: 6px; }
+.rd-versions-list[data-overflow="scroll"]::-webkit-scrollbar-track { background: transparent; }
+.rd-versions-list[data-overflow="scroll"]::-webkit-scrollbar-thumb {
+  background: var(--border-soft);
+  border-radius: 3px;
+}
+.rd-versions-list[data-overflow="scroll"]::-webkit-scrollbar-thumb:hover {
+  background: var(--border-hover);
+}
 .rd-versions-tag {
   font-family: var(--mono);
   font-size: 9.5px;
@@ -681,32 +702,49 @@ body.llm-open .rd-data-grid-4 { grid-template-columns: repeat(2, 1fr); }
   border-radius: 999px;
   background: var(--bg-2);
 }
+/* Row = flex container of two siblings: the switch button (full-width
+   click target) and the delete button (hover-revealed). Background + border
+   live on the row itself so both children align visually as one unit. */
 .rd-version-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: var(--bg-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  transition: background .15s, border-color .15s;
+}
+.rd-version-row:hover {
+  border-color: var(--cyan);
+  background: var(--panel-2);
+}
+.rd-version-row.is-active {
+  border-color: color-mix(in oklch, var(--emerald) 35%, var(--border-soft));
+  background: color-mix(in oklch, var(--emerald) 6%, var(--bg-2));
+}
+.rd-version-row.is-active:hover {
+  /* Active row keeps its emerald tint on hover — don't flip to cyan. */
+  border-color: color-mix(in oklch, var(--emerald) 50%, var(--border-soft));
+  background: color-mix(in oklch, var(--emerald) 8%, var(--bg-2));
+}
+.rd-version-switch {
+  flex: 1;
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 6px 8px;
-  background: var(--bg-2);
-  border: 1px solid var(--border-soft);
-  border-radius: 4px;
+  background: transparent;
+  border: 0;
   font-family: inherit;
   font-size: 11.5px;
   color: var(--text-2);
   text-align: left;
   cursor: pointer;
-  transition: background .15s, border-color .15s, color .15s;
-  width: 100%;
+  min-width: 0;
 }
-.rd-version-row:hover:not(:disabled) {
-  border-color: var(--cyan);
-  background: var(--panel-2);
-  color: var(--text);
-}
-.rd-version-row:disabled {
+.rd-version-row:hover .rd-version-switch { color: var(--text); }
+.rd-version-switch:disabled {
   cursor: default;
-  opacity: 1;
-  border-color: color-mix(in oklch, var(--emerald) 35%, var(--border-soft));
-  background: color-mix(in oklch, var(--emerald) 6%, var(--bg-2));
   color: var(--text);
 }
 .rd-version-dot {
@@ -719,7 +757,9 @@ body.llm-open .rd-data-grid-4 { grid-template-columns: repeat(2, 1fr); }
   background: transparent;
   transition: border-color .15s, background .15s;
 }
-.rd-version-row:hover:not(:disabled) .rd-version-dot { border-color: var(--cyan); }
+.rd-version-row:hover .rd-version-switch:not(:disabled) .rd-version-dot {
+  border-color: var(--cyan);
+}
 .rd-version-row.is-active .rd-version-dot {
   border-color: var(--emerald);
   background: var(--emerald);
@@ -749,6 +789,35 @@ body.llm-open .rd-data-grid-4 { grid-template-columns: repeat(2, 1fr); }
   color: var(--text-3);
   letter-spacing: .3px;
   flex-shrink: 0;
+}
+.rd-version-delete {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-right: 4px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  color: var(--text-3);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity .15s, color .15s, background .15s;
+  flex-shrink: 0;
+}
+.rd-version-row:hover .rd-version-delete { opacity: 1; }
+/* Keep the trash visible while focused, so keyboard users can reach it
+   without depending on hover. */
+.rd-version-delete:focus-visible {
+  opacity: 1;
+  outline: 1px solid var(--cyan);
+  outline-offset: 1px;
+}
+.rd-version-delete:hover {
+  color: var(--amber);
+  background: color-mix(in oklch, var(--amber) 12%, transparent);
 }
 
 /* Toast for upload progress / success. */

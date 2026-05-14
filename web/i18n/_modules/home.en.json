@@ -195,10 +195,19 @@
     "compile_done_title": "Compilation complete",
     "compile_done_sub": "Electrical graph available — version is cached.",
     "kind_schematic": "schematic",
-    "kind_boardview": "boardview"
+    "kind_boardview": "boardview",
+    "delete_failed_title": "Delete failed",
+    "delete_failed_sub": "{status} {detail}",
+    "delete_failed_retry": "retry",
+    "version_deleted_title": "Version deleted",
+    "version_deleted_sub": "{name} — file removed from disk.",
+    "version_deleted_rebuilding_title": "Version deleted — recompiling",
+    "version_deleted_rebuilding_sub": "Replacement: {name}{pages}{eta}"
   },
   "version": {
-    "tag": "versions"
+    "tag": "versions",
+    "delete_aria": "Delete this version",
+    "delete_confirm": "Delete the version « {name} » ?\nThe file will be removed from disk. If it's the active version, the next newest one becomes active."
   },
   "modal": {
     "badge": "New session",

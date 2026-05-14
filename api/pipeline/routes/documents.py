@@ -30,6 +30,7 @@ from fastapi.responses import FileResponse
 import api.pipeline as _pkg  # noqa: PLC0415 — module-attribute lookups for patchability
 from api.pipeline import sources
 from api.pipeline.models import (
+    DeleteSourceResponse,
     DocumentUploadResponse,
     SourceKindEntry,
     SourcesResponse,
@@ -482,6 +483,141 @@ async def switch_pack_source(
         active=payload.filename,
         status="rebuilding",
         detail="cache miss; vision pipeline launched in background.",
+        eta_seconds=eta,
+        page_count=pages,
+    )
+
+
+@router.delete(
+    "/packs/{device_slug}/sources/{kind}/versions/{filename}",
+    response_model=DeleteSourceResponse,
+)
+async def delete_pack_source_version(
+    device_slug: str,
+    kind: str,
+    filename: str,
+) -> DeleteSourceResponse:
+    """Drop one uploaded version of a source. Auto-switches the pin on active deletes.
+
+    Behaviour:
+      - non-active version: file unlinked, pin unchanged → `deleted`.
+      - active version with remaining versions: newest remaining becomes
+        the new pin; same cache-or-reingest logic as PUT /sources/{kind}
+        → `switched_cached` | `switched_rebuilding`.
+      - active version with no remaining versions: pin cleared and (for
+        schematic) the in-place schematic.pdf + derived files removed
+        → `cleared`.
+    """
+    slug = _validate_slug(device_slug)
+    if kind not in sources.KNOWN_KINDS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"unknown kind={kind!r} — allowed: {list(sources.KNOWN_KINDS)}",
+        )
+    if f"-{kind}-" not in filename:
+        raise HTTPException(
+            status_code=422,
+            detail=f"filename does not match kind={kind!r}",
+        )
+
+    settings = _pkg.get_settings()
+    pack_dir = Path(settings.memory_root) / slug
+    if not pack_dir.exists():
+        raise HTTPException(status_code=404, detail=f"No pack for device_slug={slug!r}")
+
+    target = pack_dir / "uploads" / filename
+    if not target.exists() or not target.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail=f"upload {filename!r} not found in {slug!r}/uploads",
+        )
+
+    pins = sources.read_active(pack_dir)
+    was_active = pins.get(kind) == filename
+
+    sidecar = pack_dir / "uploads" / f"{filename}.description.txt"
+    try:
+        target.unlink()
+        if sidecar.exists():
+            sidecar.unlink()
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"could not delete upload: {exc}") from exc
+
+    if not was_active:
+        return DeleteSourceResponse(
+            device_slug=slug,
+            kind=kind,
+            deleted_filename=filename,
+            new_active=pins.get(kind),
+            status="deleted",
+            detail="non-active version dropped; pin unchanged.",
+        )
+
+    # Active was just deleted — pick newest remaining (list_uploads_for_kind
+    # returns newest-first). None means no versions left for this kind.
+    remaining = sources.list_uploads_for_kind(pack_dir, kind)
+    if not remaining:
+        # No replacement — clear the pin entirely. For schematic, also drop
+        # in-place derivatives so detect helpers report has_*=False.
+        pins.pop(kind, None)
+        sources.write_active(pack_dir, pins)
+        if kind == sources.SCHEMATIC_KIND:
+            sources.clear_in_place_schematic(pack_dir)
+            legacy_pdf = pack_dir / "schematic.pdf"
+            if legacy_pdf.exists():
+                try:
+                    legacy_pdf.unlink()
+                except OSError:
+                    logger.warning(
+                        "could not drop legacy schematic.pdf after clearing pin for %s",
+                        slug,
+                        exc_info=True,
+                    )
+        return DeleteSourceResponse(
+            device_slug=slug,
+            kind=kind,
+            deleted_filename=filename,
+            new_active=None,
+            status="cleared",
+            detail="active version dropped; no replacement available.",
+        )
+
+    new_active = remaining[0]["filename"]
+    pins[kind] = new_active
+    sources.write_active(pack_dir, pins)
+
+    if kind == sources.BOARDVIEW_KIND:
+        return DeleteSourceResponse(
+            device_slug=slug,
+            kind=kind,
+            deleted_filename=filename,
+            new_active=new_active,
+            status="switched_cached",
+            detail=f"active version dropped; pin moved to {new_active}.",
+        )
+
+    # schematic_pdf — reuse the shared cache-or-reingest helper.
+    try:
+        status, eta, pages = _apply_schematic_pin(slug, pack_dir, new_active)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"could not apply pin: {exc}") from exc
+
+    if status == "cached":
+        return DeleteSourceResponse(
+            device_slug=slug,
+            kind=kind,
+            deleted_filename=filename,
+            new_active=new_active,
+            status="switched_cached",
+            detail="active version dropped; replacement restored from cache.",
+        )
+    return DeleteSourceResponse(
+        device_slug=slug,
+        kind=kind,
+        deleted_filename=filename,
+        new_active=new_active,
+        status="switched_rebuilding",
+        detail="active version dropped; replacement vision pipeline launched.",
         eta_seconds=eta,
         page_count=pages,
     )

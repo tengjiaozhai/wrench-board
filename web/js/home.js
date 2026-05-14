@@ -617,8 +617,10 @@ function renderCapabilities(pack) {
 }
 
 // Render the list of uploaded versions inside a card (only when 2+ exist).
-// One row per version: radio + filename · timestamp · size. Click a non-active
-// row to switch the active pin via PUT /sources/{kind}.
+// Each row: radio + filename · timestamp · size + trash (hover). Click the
+// row to switch the active pin via PUT /sources/{kind}; click the trash to
+// drop the version via DELETE /sources/{kind}/versions/{filename}.
+// When 5+ versions, the inner list scrolls and the header stays fixed.
 function renderVersionList(cardId, kind, versions, slug, rid) {
   const card = document.getElementById(cardId);
   if (!card) return;
@@ -635,22 +637,38 @@ function renderVersionList(cardId, kind, versions, slug, rid) {
   host.innerHTML = `<div class="rd-versions-head">
     <span class="rd-versions-tag">${escapeHtml(t("home.version.tag"))}</span>
     <span class="rd-versions-count">${versions.length}</span>
-  </div>`;
+  </div>
+  <div class="rd-versions-list" data-overflow="${versions.length > 5 ? "scroll" : "fit"}"></div>`;
+  const listEl = host.querySelector(".rd-versions-list");
   for (const v of versions) {
-    const row = document.createElement("button");
-    row.type = "button";
+    const row = document.createElement("div");
     row.className = "rd-version-row" + (v.is_active ? " is-active" : "");
-    row.disabled = !!v.is_active;
     const dateLabel = formatVersionDate(v.timestamp);
-    row.innerHTML = `
+    const switchBtn = document.createElement("button");
+    switchBtn.type = "button";
+    switchBtn.className = "rd-version-switch";
+    switchBtn.disabled = !!v.is_active;
+    switchBtn.innerHTML = `
       <span class="rd-version-dot" aria-hidden="true"></span>
       <span class="rd-version-name">${escapeHtml(v.original_name)}</span>
       <span class="rd-version-meta">${escapeHtml(dateLabel)} · ${escapeHtml(fmtBytes(v.size_bytes))}</span>
     `;
     if (!v.is_active) {
-      row.addEventListener("click", () => switchSource(slug, rid, kind, v));
+      switchBtn.addEventListener("click", () => switchSource(slug, rid, kind, v));
     }
-    host.appendChild(row);
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "rd-version-delete";
+    deleteBtn.title = t("home.version.delete_aria");
+    deleteBtn.setAttribute("aria-label", t("home.version.delete_aria"));
+    deleteBtn.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>`;
+    deleteBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      deleteVersion(slug, rid, kind, v);
+    });
+    row.appendChild(switchBtn);
+    row.appendChild(deleteBtn);
+    listEl.appendChild(row);
   }
 }
 
@@ -867,6 +885,71 @@ async function switchSource(slug, rid, kind, version) {
     await refreshDashboardData(slug, rid);
   } catch (err) {
     console.error("switchSource failed", err);
+    showToast("warn",
+      t("home.toast.network_title"),
+      t("home.toast.network_sub"));
+    await refreshDashboardData(slug, rid);
+  }
+}
+
+async function deleteVersion(slug, rid, kind, version) {
+  const confirmMsg = t("home.version.delete_confirm", { name: version.original_name });
+  if (!window.confirm(confirmMsg)) return;
+
+  // Pre-flight: if we're deleting the active schematic, the backend will
+  // switch to the next newest. Either way the card flips to building until
+  // the cache decision lands.
+  if (version.is_active && kind === "schematic_pdf") {
+    setCardState("rdCardSchematic", "building");
+    setCardState("rdCardElectrical", "building");
+  }
+
+  try {
+    const res = await fetch(
+      `/pipeline/packs/${encodeURIComponent(slug)}`
+      + `/sources/${kind}/versions/${encodeURIComponent(version.filename)}`,
+      { method: "DELETE" },
+    );
+    if (!res.ok) {
+      let detail = "";
+      try { detail = (await res.json()).detail || ""; } catch (_) { /* noop */ }
+      showToast("warn",
+        t("home.toast.delete_failed_title"),
+        t("home.toast.delete_failed_sub", {
+          status: res.status,
+          detail: detail || t("home.toast.delete_failed_retry"),
+        }));
+      await refreshDashboardData(slug, rid);
+      return;
+    }
+    const body = await res.json();
+    if (body.status === "switched_rebuilding") {
+      const pages = body.page_count ? ` · ${body.page_count} pages` : "";
+      const eta = body.eta_seconds ? ` · ~${formatRemaining(body.eta_seconds)}` : "";
+      showToast("info",
+        t("home.toast.version_deleted_rebuilding_title"),
+        t("home.toast.version_deleted_rebuilding_sub", {
+          name: version.original_name,
+          pages,
+          eta,
+        }));
+      startBuildWatch(slug, rid, body.eta_seconds || 0, body.page_count || null);
+    } else {
+      showToast("ok",
+        t("home.toast.version_deleted_title"),
+        t("home.toast.version_deleted_sub", { name: version.original_name }));
+    }
+    // For boardview deletes, the PCB viewer cache holds the previous file's
+    // payload — invalidate so the next visit refetches /api/board/render.
+    if (kind === "boardview"
+        && version.is_active
+        && window.Boardview
+        && typeof window.Boardview.invalidate === "function") {
+      window.Boardview.invalidate(slug);
+    }
+    await refreshDashboardData(slug, rid);
+  } catch (err) {
+    console.error("deleteVersion failed", err);
     showToast("warn",
       t("home.toast.network_title"),
       t("home.toast.network_sub"));

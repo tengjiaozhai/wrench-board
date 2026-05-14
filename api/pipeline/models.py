@@ -231,6 +231,22 @@ class SwitchSourceResponse(BaseModel):
     page_count: int | None = None
 
 
+class DeleteSourceResponse(BaseModel):
+    device_slug: str
+    kind: str
+    deleted_filename: str
+    # The pin after the delete — None when no versions remain for this kind.
+    new_active: str | None
+    # `deleted` = non-active version dropped, pin unchanged.
+    # `switched_cached` = active version dropped, new pin restored from cache.
+    # `switched_rebuilding` = active version dropped, new pin queued for re-ingest.
+    # `cleared` = active version dropped and no versions remain.
+    status: Literal["deleted", "switched_cached", "switched_rebuilding", "cleared"]
+    detail: str
+    eta_seconds: int | None = None
+    page_count: int | None = None
+
+
 # --- Hypothesize ------------------------------------------------------------
 
 class HypothesizeRequest(BaseModel):

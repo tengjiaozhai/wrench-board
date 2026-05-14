@@ -195,10 +195,19 @@
     "compile_done_title": "Compilation terminée",
     "compile_done_sub": "Graphe électrique disponible — la version est cachée.",
     "kind_schematic": "schematic",
-    "kind_boardview": "boardview"
+    "kind_boardview": "boardview",
+    "delete_failed_title": "Échec de la suppression",
+    "delete_failed_sub": "{status} {detail}",
+    "delete_failed_retry": "réessaie",
+    "version_deleted_title": "Version supprimée",
+    "version_deleted_sub": "{name} — fichier retiré du disque.",
+    "version_deleted_rebuilding_title": "Version supprimée — recompilation",
+    "version_deleted_rebuilding_sub": "Remplaçante : {name}{pages}{eta}"
   },
   "version": {
-    "tag": "versions"
+    "tag": "versions",
+    "delete_aria": "Supprimer cette version",
+    "delete_confirm": "Supprimer la version « {name} » ?\nLe fichier sera retiré du disque. Si c'est la version active, la plus récente restante devient active."
   },
   "modal": {
     "badge": "Nouvelle session",
