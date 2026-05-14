@@ -207,7 +207,9 @@
   "version": {
     "tag": "versions",
     "delete_aria": "Supprimer cette version",
-    "delete_confirm": "Supprimer la version « {name} » ?\nLe fichier sera retiré du disque. Si c'est la version active, la plus récente restante devient active."
+    "delete_confirm": "Supprimer la version « {name} » ?\nLe fichier sera retiré du disque. Si c'est la version active, la plus récente restante devient active.",
+    "status_compiled": "graph compilé",
+    "status_building": "vision en cours…"
   },
   "modal": {
     "badge": "Nouvelle session",

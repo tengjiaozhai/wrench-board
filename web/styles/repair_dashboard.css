@@ -790,6 +790,55 @@ body.llm-open .rd-data-grid-4 { grid-template-columns: repeat(2, 1fr); }
   letter-spacing: .3px;
   flex-shrink: 0;
 }
+/* Per-version status pill — only ever rendered on the active schematic
+   row. `compiled` = electrical_graph.json on disk → emerald. `building`
+   = pdf in place but graph not yet derived → cyan, dot pulses to convey
+   work-in-flight. Same emerald/cyan colour pair as `setCardState`. */
+.rd-version-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px;
+  margin-left: 8px;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: .3px;
+  text-transform: uppercase;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-2);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.rd-version-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.rd-version-status[data-status="compiled"] {
+  color: color-mix(in oklch, var(--emerald) 80%, var(--text));
+  border-color: color-mix(in oklch, var(--emerald) 40%, var(--border-soft));
+  background: color-mix(in oklch, var(--emerald) 10%, var(--bg-2));
+}
+.rd-version-status[data-status="compiled"] .rd-version-status-dot {
+  background: var(--emerald);
+  box-shadow: 0 0 6px color-mix(in oklch, var(--emerald) 60%, transparent);
+}
+.rd-version-status[data-status="building"] {
+  color: color-mix(in oklch, var(--cyan) 80%, var(--text));
+  border-color: color-mix(in oklch, var(--cyan) 40%, var(--border-soft));
+  background: color-mix(in oklch, var(--cyan) 10%, var(--bg-2));
+}
+.rd-version-status[data-status="building"] .rd-version-status-dot {
+  background: var(--cyan);
+  animation: rd-version-status-pulse 1.6s ease-in-out infinite;
+}
+@keyframes rd-version-status-pulse {
+  0%, 100% { opacity: 1;  box-shadow: 0 0 6px color-mix(in oklch, var(--cyan) 60%, transparent); }
+  50%      { opacity: .4; box-shadow: 0 0 2px color-mix(in oklch, var(--cyan) 30%, transparent); }
+}
+
 .rd-version-delete {
   display: flex;
   align-items: center;

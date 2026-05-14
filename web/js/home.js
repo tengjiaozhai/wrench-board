@@ -423,7 +423,11 @@ function renderDashboardData(slug, rid, pack, sourcesData) {
         }, "is-warn"));
     }
   }
-  renderVersionList("rdCardSchematic", "schematic_pdf", schemVersions, slug, rid);
+  renderVersionList("rdCardSchematic", "schematic_pdf", schemVersions, slug, rid, {
+    graphStatus: pack?.has_schematic_pdf
+      ? (pack.has_electrical_graph ? "compiled" : "building")
+      : null,
+  });
 
   // ── INPUT 2 — Boardview ─────────────────────────────────────────────
   setCardState("rdCardBoardview", pack?.has_boardview ? "on" : "off");
@@ -616,12 +620,16 @@ function renderCapabilities(pack) {
   }).join("");
 }
 
-// Render the list of uploaded versions inside a card (only when 2+ exist).
-// Each row: radio + filename · timestamp · size + trash (hover). Click the
-// row to switch the active pin via PUT /sources/{kind}; click the trash to
-// drop the version via DELETE /sources/{kind}/versions/{filename}.
+// Render the list of uploaded versions inside a card (rendered as soon as
+// 1 version exists — even a single version is worth surfacing so the tech
+// can see which file is loaded and delete it if it's wrong).
+// Each row: radio + filename · timestamp · size + status (active schematic
+// only) + trash (hover). Click the row to switch the active pin via
+// PUT /sources/{kind}; click the trash to drop via DELETE.
 // When 5+ versions, the inner list scrolls and the header stays fixed.
-function renderVersionList(cardId, kind, versions, slug, rid) {
+// opts.graphStatus is `compiled | building | null` and only affects the
+// active row of a schematic card — boardview rows ignore it.
+function renderVersionList(cardId, kind, versions, slug, rid, opts = {}) {
   const card = document.getElementById(cardId);
   if (!card) return;
   let host = card.querySelector(".rd-versions");
@@ -630,7 +638,7 @@ function renderVersionList(cardId, kind, versions, slug, rid) {
     host.className = "rd-versions";
     card.appendChild(host);
   }
-  if (!versions || versions.length < 2) {
+  if (!versions || versions.length < 1) {
     host.remove();
     return;
   }
@@ -648,10 +656,25 @@ function renderVersionList(cardId, kind, versions, slug, rid) {
     switchBtn.type = "button";
     switchBtn.className = "rd-version-switch";
     switchBtn.disabled = !!v.is_active;
+    const showStatus = (
+      v.is_active
+      && kind === "schematic_pdf"
+      && (opts.graphStatus === "compiled" || opts.graphStatus === "building")
+    );
+    const statusKey = opts.graphStatus === "compiled"
+      ? "home.version.status_compiled"
+      : "home.version.status_building";
+    const statusHtml = showStatus
+      ? `<span class="rd-version-status" data-status="${opts.graphStatus}">
+           <span class="rd-version-status-dot" aria-hidden="true"></span>
+           <span class="rd-version-status-label">${escapeHtml(t(statusKey))}</span>
+         </span>`
+      : "";
     switchBtn.innerHTML = `
       <span class="rd-version-dot" aria-hidden="true"></span>
       <span class="rd-version-name">${escapeHtml(v.original_name)}</span>
       <span class="rd-version-meta">${escapeHtml(dateLabel)} · ${escapeHtml(fmtBytes(v.size_bytes))}</span>
+      ${statusHtml}
     `;
     if (!v.is_active) {
       switchBtn.addEventListener("click", () => switchSource(slug, rid, kind, v));
