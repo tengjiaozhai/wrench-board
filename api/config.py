@@ -22,6 +22,10 @@ class Settings(BaseSettings):
         default="",
         description="Anthropic API key. Required at agent runtime, optional for tests.",
     )
+    anthropic_base_url: str = Field(
+        default="",
+        description="Custom Anthropic API base URL. Leave empty for default (api.anthropic.com).",
+    )
     anthropic_model_main: str = Field(
         default="claude-opus-4-7",
         description=(

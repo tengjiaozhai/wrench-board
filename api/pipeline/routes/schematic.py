@@ -85,7 +85,10 @@ async def _run_schematic_in_background(
     """
     t0 = time.monotonic()
     _s = _pkg.get_settings()
-    client = AsyncAnthropic(api_key=_s.anthropic_api_key, max_retries=_s.anthropic_max_retries)
+    _client_kwargs = {"api_key": _s.anthropic_api_key, "max_retries": _s.anthropic_max_retries}
+    if _s.anthropic_base_url:
+        _client_kwargs["base_url"] = _s.anthropic_base_url
+    client = AsyncAnthropic(**_client_kwargs)
     try:
         await _pkg.ingest_schematic(
             device_slug=device_slug,
@@ -375,7 +378,10 @@ async def _run_boot_analyzer_in_background(device_slug: str, pack_dir: Path) -> 
         logger.exception("[API] analyze-boot: failed to load electrical_graph for %s", device_slug)
         return
     _s = _pkg.get_settings()
-    client = AsyncAnthropic(api_key=_s.anthropic_api_key, max_retries=_s.anthropic_max_retries)
+    _client_kwargs = {"api_key": _s.anthropic_api_key, "max_retries": _s.anthropic_max_retries}
+    if _s.anthropic_base_url:
+        _client_kwargs["base_url"] = _s.anthropic_base_url
+    client = AsyncAnthropic(**_client_kwargs)
     try:
         from api.pipeline.schematic.boot_analyzer import (
             analyze_boot_sequence,  # lazy: module is optional WIP on evolve
@@ -427,7 +433,10 @@ async def _run_net_classifier_in_background(device_slug: str, pack_dir: Path) ->
         logger.exception("[API] classify-nets: failed to load electrical_graph for %s", device_slug)
         return
     _s = _pkg.get_settings()
-    client = AsyncAnthropic(api_key=_s.anthropic_api_key, max_retries=_s.anthropic_max_retries)
+    _client_kwargs = {"api_key": _s.anthropic_api_key, "max_retries": _s.anthropic_max_retries}
+    if _s.anthropic_base_url:
+        _client_kwargs["base_url"] = _s.anthropic_base_url
+    client = AsyncAnthropic(**_client_kwargs)
     try:
         classification = await _pkg.classify_nets(graph, client=client)
         (pack_dir / "nets_classified.json").write_text(classification.model_dump_json(indent=2))

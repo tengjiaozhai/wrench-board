@@ -298,7 +298,10 @@ async def _reingest_and_cache(slug: str, pack_dir: Path, pdf_path: Path, pdf_has
         logger.error("[sources] cannot reingest without ANTHROPIC_API_KEY for %s", slug)
         return
     try:
-        client = AsyncAnthropic(api_key=api_key, max_retries=4)
+        _ck = {"api_key": api_key, "max_retries": 4}
+        if settings.anthropic_base_url:
+            _ck["base_url"] = settings.anthropic_base_url
+        client = AsyncAnthropic(**_ck)
         await _pkg.ingest_schematic(
             device_slug=slug,
             pdf_path=pdf_path,

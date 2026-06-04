@@ -275,7 +275,10 @@ async def expand_pack(
     if client is None:
         if not settings.anthropic_api_key:
             raise RuntimeError("ANTHROPIC_API_KEY not set")
-        client = AsyncAnthropic(api_key=settings.anthropic_api_key, max_retries=settings.anthropic_max_retries)
+        _ek = {"api_key": settings.anthropic_api_key, "max_retries": settings.anthropic_max_retries}
+        if settings.anthropic_base_url:
+            _ek["base_url"] = settings.anthropic_base_url
+        client = AsyncAnthropic(**_ek)
 
     # Load current state.
     existing_registry = Registry.model_validate_json(

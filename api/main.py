@@ -8,6 +8,12 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+# Load .env into os.environ so DIAGNOSTIC_MODE etc. are available
+# to code that reads os.environ directly (e.g. the WS dispatcher).
+load_dotenv()
+
 from fastapi import FastAPI, HTTPException, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse

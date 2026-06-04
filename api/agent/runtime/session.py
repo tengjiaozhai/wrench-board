@@ -88,7 +88,10 @@ async def run_diagnostic_session_managed(
         await ws.close()
         return
 
-    client = _rm.AsyncAnthropic(api_key=settings.anthropic_api_key, max_retries=settings.anthropic_max_retries)  # noqa: E501
+    _sk = {"api_key": settings.anthropic_api_key, "max_retries": settings.anthropic_max_retries}
+    if settings.anthropic_base_url:
+        _sk["base_url"] = settings.anthropic_base_url
+    client = _rm.AsyncAnthropic(**_sk)
     session_mirrors = _SessionMirrors()
     memory_root = Path(settings.memory_root)
 

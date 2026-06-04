@@ -124,7 +124,16 @@ async def extract_page(
     mode observed on cheaper models running nu.
     """
     png_bytes = rendered.png_path.read_bytes()
-    b64 = base64.standard_b64encode(png_bytes).decode("ascii")
+    # Convert PNG to JPEG for proxy compatibility
+    from io import BytesIO
+    from PIL import Image
+    img = Image.open(BytesIO(png_bytes))
+    if img.mode in ("RGBA", "P"):
+        img = img.convert("RGB")
+    buf = BytesIO()
+    img.save(buf, format="JPEG", quality=90)
+    jpeg_bytes = buf.getvalue()
+    b64 = base64.standard_b64encode(jpeg_bytes).decode("ascii")
 
     context_line = (
         f"Device: {device_label or 'unknown'}. "
@@ -145,7 +154,7 @@ async def extract_page(
             "type": "image",
             "source": {
                 "type": "base64",
-                "media_type": "image/png",
+                "media_type": "image/jpeg",
                 "data": b64,
             },
         }

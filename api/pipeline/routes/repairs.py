@@ -199,7 +199,10 @@ async def delete_repair(repair_id: str) -> dict:
     # repair which never opened a session simply no-ops here.
     store_deleted = False
     try:
-        client = AsyncAnthropic(api_key=settings.anthropic_api_key or "missing", max_retries=settings.anthropic_max_retries)  # noqa: E501
+        _ck = {"api_key": settings.anthropic_api_key or "missing", "max_retries": settings.anthropic_max_retries}
+        if settings.anthropic_base_url:
+            _ck["base_url"] = settings.anthropic_base_url
+        client = AsyncAnthropic(**_ck)
         store_deleted = await delete_repair_store(
             client, device_slug=device_slug, repair_id=repair_id
         )
@@ -376,7 +379,10 @@ async def _run_pipeline_with_events(
     settings = _pkg.get_settings()
     narrator_client: AsyncAnthropic | None = None
     if settings.anthropic_api_key:
-        narrator_client = AsyncAnthropic(api_key=settings.anthropic_api_key, max_retries=settings.anthropic_max_retries)
+        _nck = {"api_key": settings.anthropic_api_key, "max_retries": settings.anthropic_max_retries}
+        if settings.anthropic_base_url:
+            _nck["base_url"] = settings.anthropic_base_url
+        narrator_client = AsyncAnthropic(**_nck)
 
     async def _narrate_and_publish(phase: str) -> None:
         if narrator_client is None:
@@ -517,7 +523,10 @@ async def _maybe_check_coverage(
             confidence=0.0,
             reason="no Anthropic API key configured — treating as uncovered",
         )
-    client = AsyncAnthropic(api_key=settings.anthropic_api_key, max_retries=settings.anthropic_max_retries)
+    _cck = {"api_key": settings.anthropic_api_key, "max_retries": settings.anthropic_max_retries}
+    if settings.anthropic_base_url:
+        _cck["base_url"] = settings.anthropic_base_url
+    client = AsyncAnthropic(**_cck)
     try:
         return await check_symptom_coverage(
             client=client,
