@@ -43,6 +43,7 @@ from api.pipeline.schematic.page_vision import extract_page
 from api.pipeline.schematic.passive_classifier import classify_passives
 from api.pipeline.schematic.renderer import render_pages
 from api.pipeline.schematic.schemas import (
+    Ambiguity,
     ElectricalGraph,
     NetClassification,
     SchematicPageGraph,
@@ -107,8 +108,16 @@ async def ingest_schematic(
     total = len(rendered_pages)
     logger.info("rendered %d pages", total)
 
+    # Grounding is an anti-hallucination aid (truth set of refdes/nets the
+    # model must respect). It costs ~8k input tokens per page and pushes
+    # mimo's output budget over the 8k cap — mimo then burns the budget
+    # on prose and never emits the tool_use. Skip grounding for non-Claude
+    # models; they get less protection but at least produce structured
+    # output. Grounding anchors (the bbox overlay) are still written to
+    # disk below for the web viewer's highlight rects.
+    is_claude_model = str(model).startswith("claude-")
     grounding_texts: list[str | None] = [None] * total
-    if use_grounding:
+    if use_grounding and is_claude_model:
         for i, page in enumerate(rendered_pages):
             g = extract_grounding(pdf_path, page.page_number)
             grounding_texts[i] = format_grounding_for_prompt(g)
@@ -161,19 +170,58 @@ async def ingest_schematic(
         cached_path.write_text(graph.model_dump_json(indent=2))
         return graph
 
-    # Fan every page out immediately. The earlier pattern serialised page
-    # 1 so its `cache_write` would land before the rest arrived, but with
-    # explicit `cache_control` breakpoints on the system prompt + tool
-    # schema that dance buys nothing — Anthropic's cache key is the
-    # prefix, not the order of arrival, and the ephemeral entry persists
-    # for the ~minute-long burst. Parallel from t=0 cuts wall-time ~2×.
-    # `cache_warmup_seconds` is retained on the signature for callers
-    # that still want a warmup (default 0 = no wait).
+    # Fan out with concurrency limit — third-party API proxies (mimo etc.)
+    # enforce per-second rate limits; unlimited gather triggers 429s.
     if warmup > 0 and total > 1:
         await asyncio.sleep(warmup)
-    page_graphs = await asyncio.gather(
-        *[_one_page(i) for i in range(total)]
+    _sem = asyncio.Semaphore(5)
+
+    async def _limited_page(idx: int) -> SchematicPageGraph:
+        async with _sem:
+            return await _one_page(idx)
+
+    # Use return_exceptions=True so a single page's failure (e.g. mimo
+    # returning thinking-only with no tool_use, exhausting all retries)
+    # doesn't crash the gather and cancel the other 48 in-flight pages.
+    # Each failed page is replaced with a confidence=0 stub below and
+    # written to disk so the merge / classifier can still proceed.
+    raw_results = await asyncio.gather(
+        *[_limited_page(i) for i in range(total)],
+        return_exceptions=True,
     )
+    page_graphs: list[SchematicPageGraph] = []
+    for idx, result in enumerate(raw_results):
+        rp = rendered_pages[idx]
+        cached_path = pages_dir / f"page_{rp.page_number:03d}.json"
+        if isinstance(result, BaseException):
+            logger.error(
+                "vision FAILED page %d/%d: %s: %s",
+                rp.page_number, total,
+                type(result).__name__, str(result)[:300],
+            )
+            stub = SchematicPageGraph(
+                page=rp.page_number,
+                confidence=0.0,
+                ambiguities=[
+                    Ambiguity(
+                        page=rp.page_number,
+                        description=(
+                            f"vision failed: {type(result).__name__}: "
+                            f"{str(result)[:200]}"
+                        ),
+                    )
+                ],
+            )
+            cached_path.write_text(stub.model_dump_json(indent=2))
+            page_graphs.append(stub)
+        else:
+            page_graphs.append(result)
+    failed_count = sum(1 for r in raw_results if isinstance(r, BaseException))
+    if failed_count:
+        logger.warning(
+            "vision summary: %d/%d pages failed; continuing with stubs",
+            failed_count, total,
+        )
 
     schematic_graph = merge_pages(
         page_graphs,

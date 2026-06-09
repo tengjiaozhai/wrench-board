@@ -49,9 +49,11 @@ async def call_with_forced_tool(
     for attempt in range(1, max_attempts + 1):
         if attempt > 1 and last_error:
             retry_suffix = (
-                "\n\n---\nPREVIOUS ATTEMPT FAILED VALIDATION:\n"
+                "\n\n---\nPREVIOUS ATTEMPT FAILED:\n"
                 + last_error
-                + f"\n\nRetry — emit a valid {forced_tool_name} payload."
+                + f"\n\nCRITICAL: You MUST call the `{forced_tool_name}` tool. "
+                f"Do NOT output thinking-only responses. "
+                f"Emit a valid `{forced_tool_name}` tool call NOW."
             )
             # Suffix is appended without disturbing the upstream cache entry
             # (Anthropic's cache keys on a prefix — prepending or modifying the
@@ -79,13 +81,17 @@ async def call_with_forced_tool(
         #     preserved for source-compat but its value is unused under
         #     adaptive; we pair adaptive with `output_config.effort="high"`
         #     to nudge the model toward deeper reasoning.
+        #   - Third-party proxies (mimo etc.) don't support forced tool_choice
+        #     via streaming. Use `auto` + system prompt instruction instead;
+        #     the retry logic handles cases where the model doesn't call the
+        #     tool.
         #
         # Streaming required for max_tokens >= ~16k (SDK refuses non-stream
         # otherwise with "operations that may take longer than 10 minutes").
         if thinking_budget is not None:
             tool_choice_param: dict = {"type": "auto"}
         else:
-            tool_choice_param = {"type": "tool", "name": forced_tool_name}
+            tool_choice_param = {"type": "auto"}
 
         stream_kwargs: dict = dict(
             model=model,
@@ -104,8 +110,25 @@ async def call_with_forced_tool(
             effort = "xhigh" if str(model).startswith("claude-opus-4-") else "high"
             stream_kwargs.setdefault("output_config", {})["effort"] = effort
 
-        async with client.messages.stream(**stream_kwargs) as stream:
-            response = await stream.get_final_message()
+        # Third-party proxies (mimo etc.) don't support forced tool_choice
+        # via streaming, and large max_tokens requires streaming. Detect
+        # non-Claude models and use create() with smaller max_tokens.
+        # For non-Claude models we also force `thinking=disabled`: mimo
+        # otherwise burns the entire output budget on a thinking block
+        # (verified: 8192 max_tokens → end_turn with only `thinking`;
+        # `thinking={"type":"disabled"}` → 20-token tool_use, no waste).
+        is_claude = str(model).startswith("claude-")
+        if is_claude and max_tokens >= 16000:
+            async with client.messages.stream(**stream_kwargs) as stream:
+                response = await stream.get_final_message()
+        else:
+            # For non-Claude models or small max_tokens, use create()
+            # which works reliably with tool_choice=auto.
+            if not is_claude:
+                stream_kwargs.pop("thinking", None)
+                stream_kwargs["thinking"] = {"type": "disabled"}
+                stream_kwargs["max_tokens"] = min(max_tokens, 8192)
+            response = await client.messages.create(**stream_kwargs)
 
         tool_use = next(
             (b for b in response.content if b.type == "tool_use" and b.name == forced_tool_name),

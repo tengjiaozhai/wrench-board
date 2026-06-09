@@ -92,19 +92,24 @@ as genuinely unknown, and emit null/empty rather than fabricate.
 """
 
 
-def _submit_page_tool() -> dict:
-    return {
+def _submit_page_tool(*, cache_tool: bool = True) -> dict:
+    tool = {
         "name": SUBMIT_PAGE_TOOL_NAME,
         "description": (
             "Submit the structured analysis of one schematic page as a "
             "SchematicPageGraph payload."
         ),
         "input_schema": SchematicPageGraph.model_json_schema(),
-        # Cache the (large) tool definition — identical across every page call
-        # in a batch. On a warm hit Anthropic reports these tokens as
-        # `cache_read_input_tokens`, cutting input cost 50-90%.
-        "cache_control": {"type": "ephemeral"},
     }
+    if cache_tool:
+        # Cache the (large) tool definition — identical across every page
+        # call in a batch. On a warm hit Anthropic reports these tokens as
+        # `cache_read_input_tokens`, cutting input cost 50-90%. Disable
+        # for non-Claude proxies that may serve stale responses from
+        # their cache (mimo cache hit was returning text-only when the
+        # fresh request had a tool_use).
+        tool["cache_control"] = {"type": "ephemeral"}
+    return tool
 
 
 async def extract_page(
@@ -213,11 +218,35 @@ async def extract_page(
     # page calls reuses the same 1.5k-token preamble via Anthropic's prompt
     # cache. The tool definition on the next line carries its own cache
     # marker — together they cover ~5-6k tokens of shared preamble.
+    #
+    # For non-Claude proxies (mimo etc.), the model needs an explicit
+    # "no thinking, no text" instruction. Without it, mimo burns the
+    # entire output budget on a text block (verified: with CRITICAL
+    # suffix → 6k tokens of valid tool_use; without → 8192 tokens of
+    # plain text, no tool_call at all). Claude ignores this suffix
+    # since it has no effect on a model that already calls tools.
+    system_text = SYSTEM_PROMPT
+    is_claude_model = str(model).startswith("claude-")
+    if not is_claude_model:
+        system_text = (
+            SYSTEM_PROMPT
+            + "\n\nCRITICAL: You MUST call the "
+            + SUBMIT_PAGE_TOOL_NAME
+            + " tool now. Do NOT output thinking-only or text-only "
+            + "responses — emit a valid "
+            + SUBMIT_PAGE_TOOL_NAME
+            + " tool call."
+        )
+    # Cache the system prompt + tool def for the burst of N page calls.
+    # For non-Claude proxies, skip cache_control — third-party caches
+    # can return stale or wrong responses (verified: mimo cache hit
+    # returned text-only when fresh calls returned tool_use).
+    cache_marker = {"type": "ephemeral"} if is_claude_model else None
     system_cached = [
         {
             "type": "text",
-            "text": SYSTEM_PROMPT,
-            "cache_control": {"type": "ephemeral"},
+            "text": system_text,
+            "cache_control": cache_marker,
         }
     ]
     graph = await call_with_forced_tool(
@@ -225,15 +254,12 @@ async def extract_page(
         model=model,
         system=system_cached,
         messages=[{"role": "user", "content": user_content}],
-        tools=[_submit_page_tool()],
+        tools=[_submit_page_tool(cache_tool=is_claude_model)],
         forced_tool_name=SUBMIT_PAGE_TOOL_NAME,
         output_schema=SchematicPageGraph,
-        # Token budget: 64k total = up to 24k thinking + ~40k visible output.
-        # mnt-reform p2 baseline visible output was ~38.5k tokens; with 64k
-        # cap and 24k thinking budget, the actual visible budget is ~40k —
-        # fits p2 with ~1.5k margin. If p2 starts truncating again, dial
-        # thinking_budget back to 16k to free 8k more visible budget.
-        max_tokens=64000,
+        # Token budget: reduced for mimo compatibility — 8k is enough for
+        # the structured output; 64k triggered streaming requirements.
+        max_tokens=8192,
         # Extended thinking: model reasons before emitting the structured
         # tool_call. Adaptive thinking on Opus 4.7+ (the deprecated
         # `enabled` type returns 400). Adaptive is incompatible with
@@ -242,6 +268,7 @@ async def extract_page(
         # below tells the model to always emit the submit_schematic_page
         # tool, so the effective behavior is identical.
         thinking_budget=24000,
+        max_attempts=5,
         log_label=f"page_vision:page_{rendered.page_number}",
     )
 

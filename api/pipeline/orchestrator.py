@@ -312,25 +312,32 @@ async def generate_knowledge_pack(
         # context. The function→refdes bridge is now Phase 2.5 (Mapper) — a
         # forced-tool agent with deterministic post-validation. See
         # docs/superpowers/specs/2026-04-25-refdes-mapper-agent.md.
-        t0 = time.monotonic()
-        await emit({"type": "phase_started", "phase": "scout"})
-        scout_stats = PhaseTokenStats(phase="scout")
-        raw_dump = await run_scout(
-            client=client,
-            model=models_by_role["scout"],
-            device_label=device_label,
-            focus_symptom=focus_symptom,
-            min_symptoms=settings.pipeline_scout_min_symptoms,
-            min_components=settings.pipeline_scout_min_components,
-            min_sources=settings.pipeline_scout_min_sources,
-            max_retries=settings.pipeline_scout_max_retries,
-            stats=scout_stats,
-        )
-        scout_stats.duration_s = time.monotonic() - t0
-        phase_stats.append(scout_stats)
-        (pack_dir / "raw_research_dump.md").write_text(raw_dump, encoding="utf-8")
-        logger.info("[Pipeline] Phase 1 complete · raw_research_dump.md written")
-        await emit({"type": "phase_finished", "phase": "scout", "elapsed_s": scout_stats.duration_s})
+        scout_dump_path = pack_dir / "raw_research_dump.md"
+        if scout_dump_path.exists():
+            raw_dump = scout_dump_path.read_text(encoding="utf-8")
+            logger.info("[Pipeline] Phase 1 skipped — using existing raw_research_dump.md (%d chars)", len(raw_dump))
+            await emit({"type": "phase_started", "phase": "scout"})
+            await emit({"type": "phase_finished", "phase": "scout", "elapsed_s": 0.0, "skipped": True})
+        else:
+            t0 = time.monotonic()
+            await emit({"type": "phase_started", "phase": "scout"})
+            scout_stats = PhaseTokenStats(phase="scout")
+            raw_dump = await run_scout(
+                client=client,
+                model=models_by_role["scout"],
+                device_label=device_label,
+                focus_symptom=focus_symptom,
+                min_symptoms=settings.pipeline_scout_min_symptoms,
+                min_components=settings.pipeline_scout_min_components,
+                min_sources=settings.pipeline_scout_min_sources,
+                max_retries=settings.pipeline_scout_max_retries,
+                stats=scout_stats,
+            )
+            scout_stats.duration_s = time.monotonic() - t0
+            phase_stats.append(scout_stats)
+            scout_dump_path.write_text(raw_dump, encoding="utf-8")
+            logger.info("[Pipeline] Phase 1 complete · raw_research_dump.md written")
+            await emit({"type": "phase_finished", "phase": "scout", "elapsed_s": scout_stats.duration_s})
 
         # -------- Phase 2 — Registry --------------------------------------------
         t0 = time.monotonic()
