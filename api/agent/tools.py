@@ -37,14 +37,14 @@ def _load_pack(
     try:
         max_mtime = max(p.stat().st_mtime for p in paths)
     except FileNotFoundError:
-        # Caching requires stat() to succeed on all three files. When any is
-        # missing, fall through to direct reads so the caller receives the
-        # canonical FileNotFoundError from the missing file's read_text.
-        return {
-            "registry": json.loads(paths[0].read_text()),
-            "dictionary": json.loads(paths[1].read_text()),
-            "rules": json.loads(paths[2].read_text()),
-        }
+        pack: dict[str, Any] = {}
+        for key, path in zip(("registry", "dictionary", "rules"), paths):
+            try:
+                pack[key] = json.loads(path.read_text())
+            except FileNotFoundError:
+                pack[key] = {}
+        pack["_partial"] = True
+        return pack
 
     if session is not None:
         cached = session.pack_cache.get(slug)
