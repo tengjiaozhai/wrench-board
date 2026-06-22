@@ -120,6 +120,15 @@ board_assets/*.pdf
 # Runtime data — technician's working data, never committed (any device, any brand)
 memory/*
 !memory/.gitkeep
+# Exception: hand-written knowledge-pack seed (raw_research_dump.md).
+# Unlike other memory/* artefacts which are pipeline outputs (regenerable),
+# this file is the human-curated Scout replacement per the SCOUT bypass
+# workflow (docs/superpowers/plans/2026-06-22-handwrite-scout-dump-smt-v551.md).
+# Commit so future engineers can audit, diff, and reproduce the pack.
+# The directory itself must be negated first, otherwise files inside
+# a gitignored dir are unreachable.
+!memory/*/
+!memory/*/raw_research_dump.md
 
 # --- Proprietary boardview / schematic dumps (local-only) ---
 # The product runs on any board at runtime. Dumps that ship as proprietary
