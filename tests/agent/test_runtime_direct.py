@@ -581,3 +581,40 @@ async def test_sanitizer_logs_unknown_refdes_and_wraps_text(
     # The warning is structural — without it, silent corruption would be
     # invisible in production logs.
     assert any("sanitizer wrapped" in rec.getMessage() for rec in caplog.records)
+
+
+async def test_mb_tool_exception_returns_tool_error_not_crash(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """When _dispatch_mb_tool raises (e.g. incomplete pack), the runtime must
+    catch it and return a structured tool_error to the agent — not crash the
+    WebSocket. Defense-in-depth alongside _load_pack's _partial fallback."""
+    _stub_session(monkeypatch)
+    _patch_settings(monkeypatch, memory_root=tmp_path)
+
+    import api.agent.runtime_direct as rt
+
+    async def boom(*_args, **_kwargs):
+        raise RuntimeError("simulated pack failure")
+
+    monkeypatch.setattr(rt, "_dispatch_mb_tool", boom)
+
+    iter_scripted = iter([
+        _stream_tool_use("mb_get_rules_for_symptoms", {"symptoms": ["no boot"]}),
+        _stream_text("Tool failed."),
+    ])
+    client = MagicMock()
+
+    def _stream_factory(**kwargs):
+        events, final = next(iter_scripted)
+        return _FakeStream(events, final)
+    client.messages.stream = _stream_factory
+    monkeypatch.setattr(rt, "AsyncAnthropic", lambda **_kw: client)
+
+    ws = FakeWS(["diagnose"])
+    await rt.run_diagnostic_session_direct(ws, "demo-pi", tier="fast")
+
+    # The WS must not have closed abnormally — agent got a structured error
+    tool_use_frames = [m for m in ws.sent if m.get("type") == "tool_use"]
+    assert len(tool_use_frames) == 1
+    assert tool_use_frames[0]["name"] == "mb_get_rules_for_symptoms"
