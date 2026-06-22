@@ -210,3 +210,92 @@ curl -X POST http://127.0.0.1:9000/pipeline/generate \
 
 - **手写 dump**：工业/专有/无社区痕迹的设备（每次 ~30min 人力）
 - **修 Scout**：消费电子有 portfolio，且 web search 反复因冷门失败（~1-2 天工程，做 ResearchSource port 重构）
+
+## Knowledge pack 数据流参考
+
+`raw_research_dump.md` 是整个 pack 的**唯一权威种子**。一旦它在 `memory/{slug}/` 里，orchestrator 就把它当 Phase 1 的产物，串行触发 Phase 2-4，每个 phase 读 dump + 上一阶段产物，写出自己那份 JSON。
+
+```
+raw_research_dump.md       ←  Phase 1 产物（手写或 Scout）
+        │
+        ↓  orchestrator.py:316  bypass
+        │
+   ┌────┴────┐
+   │ Phase 2 │  registry_builder 读 dump
+   │  ↓      │  抽 components / signals / taxonomy
+   │registry.json
+   └────┬────┘
+        │
+   ┌────┴─────────────────────────────┐
+   │ Phase 3 (3 writers 并发, 共享 cache) │
+   │  Cartographe  → knowledge_graph.json │
+   │  Clinicien    → rules.json           │
+   │  Lexicographe → dictionary.json      │
+   └────┬──────────────────────────────┘
+        │
+   ┌────┴────┐
+   │Phase 2.5│  Mapper 单独跑（refdes_attributions.json）
+   │  (bonus)│  raw_dump + electrical_graph → 字面 refdes 匹配
+   └────┬────┘
+        │
+   ┌────┴────┐
+   │ Phase 4 │  Auditor 读 4 份 JSON + drift
+   │  ↓      │  出一致性判定
+   │audit_verdict.json
+   └─────────┘
+```
+
+| 阶段 | 文件:行 | 写什么 |
+|------|---------|--------|
+| Bypass | `api/pipeline/orchestrator.py:316-320` | 不写，跳过 Scout |
+| Phase 2 | `api/pipeline/orchestrator.py:350-362` → `run_registry_builder` | `registry.json` |
+| Phase 3 | `api/pipeline/orchestrator.py:435-471` → `run_writers_parallel` | 3 个 JSON 并发 |
+| Phase 2.5 | `api/pipeline/refdes_mapper.py`（或类似）| `refdes_attributions.json` |
+| Phase 4 | `api/pipeline/orchestrator.py:484+` → `run_auditor` | `audit_verdict.json` |
+
+**关键事实**：dump 是 source of truth，6 个 JSON 是它的不同切片。Registry = 词汇表视图，KG = 拓扑视图，Rules = 诊断视图，Dictionary = 器件手册视图，Audit = 元校验。Phase 2-4 都吃 dump + 前一阶段输出 — 即使 dump 写得很差，JSON 也能产出，只是内容是垃圾。所以**结构门（5 小节 + refdes 真实 + rail 真实）必须过**——它是质量门，不是存在性门。
+
+## 下次正常 import 流程：让 raw_research_dump 走标准入口
+
+当前流程缺一个"dump 跟随 repair 一起提交"的入口，导致手写 dump 必须 `git commit` 后才能跑。3 个方案（从轻到重）：
+
+### 方案 A：landing 表单加一个 textarea（最小改动）
+
+`POST /pipeline/repairs` 加一个可选 `raw_dump: str` 字段。如果非空，落盘到 `memory/{slug}/raw_research_dump.md` 再触发 Phase 2-4。
+
+**改动范围**：
+- `api/pipeline/routes/repairs.py` — `RepairRequest` schema 加 `raw_dump: str | None = None`
+- 同文件 `create_repair` 处理器 — 收到非空 `raw_dump` 就 `write_text()`
+- `web/js/landing.js` — 表单加 `<textarea name="rawDump" rows="12">`
+- `web/index.html` — landing modal 加 textarea 容器
+- **新加 doc 校验**（防止 raw_dump 绕过结构门）
+
+**优点**：用户操作不变（landing → submit），dump 跟 repair 一起走，UI 提示"粘贴已知资料可加速"
+**缺点**：textarea 复制粘贴长 markdown 不方便；没有文件拖拽
+
+### 方案 B：新增 `POST /pipeline/repairs/{id}/raw_dump` 端点（中等）
+
+落地后或上传 schematic PDF 时，单独提交 dump 文件。端点写盘 + 触发 Phase 2-4。
+
+**改动范围**：
+- `api/pipeline/routes/repairs.py` — 新增 `POST /repairs/{id}/raw_dump`（接受 `multipart/form-data` 里的 `file: UploadFile`）
+- 写入 `memory/{slug}/raw_research_dump.md` → 触发 `run_phase_2_to_4_background` task
+- UI：在 `#home` 修页加一个"补 dump"按钮（在 schematic 上传按钮旁边）
+
+**优点**：支持文件拖拽、可以后补（Scout 跑一半挂了也能补救）
+**缺点**：新端点、新 UI 组件、2 个 commit 路径（landing vs 后补）
+
+### 方案 C：landing 支持上传 `dump.md` 附件（最重但最完整）
+
+landing 表单加 `<input type="file" accept=".md">`，multipart submit。`POST /pipeline/repairs` 接收文件流，落盘到 `memory/{slug}/raw_research_dump.md`，再跑 Phase 2-4。
+
+**改动范围**：
+- `RepairRequest` schema 改成 `Form`/`UploadFile` 双形态
+- `landing.js` — fetch 改 FormData
+- 服务端区分有无 dump 的启动路径
+- 文档/示例
+
+**优点**：拖拽友好、和上传 schematic PDF 风格一致
+**缺点**：landing 接口从 JSON 变 multipart，破坏现有调用方；前端 fetch 改造面大
+
+**推荐 A**：和现有 `POST /pipeline/repairs` 兼容（`raw_dump` 字段可选，None 时行为不变），UI 改动小，符合 YAGNI。B 和 C 在用户实际操作 dump 频繁后再做。
