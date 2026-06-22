@@ -32,15 +32,15 @@ device, every downstream diagnosis starts there.
 - **Symptom:** Cannot DOWNLOAD — workstation reports "download failed" before eMMC erase begins
   - **Likely cause:** USB data lines (USB_DP / USB_DM) open or pulled, USB sub-system supply rail collapsed, or eMMC RST_n held low
   - **Components mentioned:** U1400F (SoC), the Type-C USB connector in the U57xx block, decoupling caps on VBUS_USB_IN / VUSB_PMU
-  - **Rail / test point:** VBUS_USB_IN at the USB connector's VBUS pin (pin 42 area), AVDD33_USB on C1122, VUSB_PMU
+  - **Rail / test point:** VBUS_USB_IN at the USB connector's VBUS pin (pin 42 area), VUSB_PMU on C1122
   - **Repair type:** rail-probe
-  - **Rework hint:** Diode-mode probe VBUS_USB_IN and AVDD33_USB before swapping the SoC. Cold joints on the Type-C connector are the most common cause on a workstation fixture that has seen >5k insertion cycles.
+  - **Rework hint:** Diode-mode probe VBUS_USB_IN and VUSB_PMU before swapping the SoC. Cold joints on the Type-C connector are the most common cause on a workstation fixture that has seen >5k insertion cycles.
   - **Resolution:** ambiguous
 
 - **Symptom:** DOWNLOAD starts, fails at eMMC initialisation (0xC0/0xC1 stage in MediaTek bootrom log)
   - **Likely cause:** eMMC CLK line integrity issue, VMC_PMU rail missing, or SoC companion eMMC controller dead
   - **Components mentioned:** U1400F, U1400G, decoupling caps on VMC_PMU
-  - **Rail / test point:** VMC_PMU on C1113, VCCQ (eMMC IO) on C1xxx
+  - **Rail / test point:** VMC_PMU on C1113, EMI_VDD1 on decoupling caps near the SoC package
   - **Repair type:** rail-probe + signal-integrity
   - **Rework hint:** Verify VMC_PMU at the SoC balls. If both rails good, reflow the SoC first (lead-free profile, peak 245°C, 30 s above 220°C); replace only if reflow fails twice.
   - **Resolution:** ambiguous

@@ -140,14 +140,34 @@ referenced = set(refdes_re.findall(dump))
 assert not (referenced - set(eg['components'].keys())), f'fabricated refdes: {referenced - set(eg["components"].keys())}'
 
 # 3b. Rail 全部存在于 power_rails（不要漏！scout.py 的结构门不查这条）
+# Two passes because symptom body fields (**Rail / test point:**, **Rework hint:**, **Likely cause:**)
+# ALSO carry rail names — scanning only `## Signals` misses them.
+FIELD_LABELS = {
+    'Likely cause', 'Components mentioned', 'Rail', 'test point',
+    'Repair type', 'Rework hint', 'Resolution', 'Symptom', 'Source',
+    'References', 'Notes', 'Aliases', 'Role', 'Typical failure',
+    'Nominal voltage', 'Measurable at', 'Description',
+    'Symptoms', 'Causes', 'Mitigations', 'Steps',
+}
 sig = re.search(r'## Signals[^\n]*\n(.*?)(?=\n## |\Z)', dump, re.DOTALL)
+failure_modes = re.search(r'## Known failure modes\n(.*?)(?=\n## |\Z)', dump, re.DOTALL)
 rails = set()
-for m in re.finditer(r'\*\*([^*\n]+?)\*\*', sig.group(1)):
-    for part in re.split(r'\s*/\s*', m.group(1)):
-        part = part.strip()
-        if part and not re.fullmatch(r'[A-Z]{1,3}\d{1,4}[A-Z]?', part):
+for section in (sig, failure_modes):
+    if not section:
+        continue
+    for m in re.finditer(r'\*\*([^*\n]+?)\*\*', section.group(1)):
+        for part in re.split(r'\s*/\s*', m.group(1)):
+            part = part.strip()
+            # Filter: field labels (contain : or / or whitespace) + known single-word labels
+            if not part or ':' in part or '/' in part or ' ' in part or part in FIELD_LABELS:
+                continue
+            if re.fullmatch(r'[A-Z]{1,3}\d{1,4}[A-Z]?', part):
+                continue
             rails.add(part)
-assert not (rails - set(eg['power_rails'].keys())), f'fabricated rails: {rails - set(eg["power_rails"].keys())}'
+# Differential-pair signals (USB_DP/USB_DM, CLK, etc.) are not in power_rails by design.
+signal_allowlist = {'USB_DP', 'USB_DM', 'CLK', 'DPLUS', 'DMINUS'}
+rail_fab = (rails - set(eg['power_rails'].keys())) - signal_allowlist
+assert not rail_fab, f'fabricated rails: {sorted(rail_fab)}'
 
 # 4. 阈值
 sources = len({u.rstrip('.,;:') for u in re.findall(r'https?://\S+', dump) + re.findall(r'local://\S+', dump)})
