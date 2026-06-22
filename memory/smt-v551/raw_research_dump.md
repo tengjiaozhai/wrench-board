@@ -31,7 +31,7 @@ device, every downstream diagnosis starts there.
 
 - **Symptom:** Cannot DOWNLOAD — workstation reports "download failed" before eMMC erase begins
   - **Likely cause:** USB data lines (USB_DP / USB_DM) open or pulled, USB sub-system supply rail collapsed, or eMMC RST_n held low
-  - **Components mentioned:** U1400F (SoC), the Type-C USB connector in the U57xx block, decoupling caps on VBUS_USB_IN / AVDD33_USB
+  - **Components mentioned:** U1400F (SoC), the Type-C USB connector in the U57xx block, decoupling caps on VBUS_USB_IN / VUSB_PMU
   - **Rail / test point:** VBUS_USB_IN at the USB connector's VBUS pin (pin 42 area), AVDD33_USB on C1122, VUSB_PMU
   - **Repair type:** rail-probe
   - **Rework hint:** Diode-mode probe VBUS_USB_IN and AVDD33_USB before swapping the SoC. Cold joints on the Type-C connector are the most common cause on a workstation fixture that has seen >5k insertion cycles.
@@ -92,9 +92,6 @@ device, every downstream diagnosis starts there.
 
 - **VBUS_USB_IN** — aliases: USB +5V in. Nominal voltage: 5.0 V. Measurable at: J5704 VBUS pin (pin 42 area).
 - **VUSB_PMU** — aliases: PMU-generated USB rail. Nominal voltage: 3.3 V. Measurable at: C1122 (decoupling).
-- **AVDD18_USB** — aliases: USB PHY 1.8 V. Nominal voltage: 1.8 V. Measurable at: U1400F USB PHY pin group supply decouplers.
-- **AVDD33_USB** — aliases: USB PHY 3.3 V. Nominal voltage: 3.3 V. Measurable at: U1400F USB PHY area, near C1122.
-- **AVDD12_USB** — aliases: USB PHY 1.2 V. Nominal voltage: 1.2 V. Measurable at: U1400F USB PHY pin group.
 - **VIO18_PMU** — aliases: PMU 1.8 V logic. Nominal voltage: 1.8 V. Measurable at: C1108 / C1109 / C4902 (decoupling caps).
 - **VA12_PMU** — aliases: PMU 1.2 V core. Nominal voltage: 1.2 V. Measurable at: C1100 / C1101 / C1106 / C1118 / C1119.
 - **AVDD18_SOC** — aliases: SoC analog 1.8 V. Nominal voltage: 1.8 V. Measurable at: C1102-C1105, C1107.
