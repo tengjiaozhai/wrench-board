@@ -803,8 +803,6 @@ function wsURL(slug, tier, repairId, convParam) {
 function setSendEnabled(enabled) {
   el("llmSend").disabled = !enabled;
   el("llmStop").disabled = !enabled;
-  const input = el("llmInput");
-  if (input) input.disabled = !enabled;
 }
 
 // --- Files+Vision (Flow A + Flow B) ---------------------------------------

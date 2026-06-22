@@ -221,27 +221,17 @@ async def _run_agent_turn(
             elif block.name.startswith("profile_"):
                 result = _dispatch_profile_tool(block.name, block.input or {}, session=session)
             else:
-                try:
-                    result = await _dispatch_mb_tool(
-                        block.name,
-                        block.input or {},
-                        device_slug,
-                        memory_root,
-                        client,
-                        session,
-                        session_id=repair_id,
-                        repair_id=repair_id,
-                        conv_id=conv_id,
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "[Diag-Direct] tool %s raised: %s — returning tool_error",
-                        block.name, exc,
-                    )
-                    result = {
-                        "found": False,
-                        "reason": f"tool_error: {type(exc).__name__}: {exc}",
-                    }
+                result = await _dispatch_mb_tool(
+                    block.name,
+                    block.input or {},
+                    device_slug,
+                    memory_root,
+                    client,
+                    session,
+                    session_id=repair_id,
+                    repair_id=repair_id,
+                    conv_id=conv_id,
+                )
             # Tools may return either `event` (single) for atomic ops or
             # `events` (list) for composites like bv_scene. Both paths fan
             # out individual WS frames so the frontend stays oblivious.
