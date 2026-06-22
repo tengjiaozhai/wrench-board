@@ -75,3 +75,118 @@ curl -s -X POST http://127.0.0.1:9000/pipeline/ingest-schematic \
 - 服务器日志出现 `rendering ... → memory/SLUG/schematic_pages (dpi=200)`
 - 等待 `schematic ingestion finished`（49 页约 24 分钟）
 - 检查 `memory/SLUG/` 下生成 `schematic_pages/`、`schematic_graph.json`、`electrical_graph.json` 等
+
+## 手写 `raw_research_dump.md` 绕过 Scout
+
+场景：
+- 设备是工业/冷门（公开维修资料 ≈ 0），Scout 即便能跑 web_search 也会过不了 `assess_dump` 阈值
+- LLM 代理（mimo 等）不支持 Anthropic server tool（`web_search_20250305`）+ `thinking=adaptive` + `output_config.effort=xhigh`，Scout 必败
+
+机制（已存在于 `api/pipeline/orchestrator.py:316-320`）：
+```python
+scout_dump_path = pack_dir / "raw_research_dump.md"
+if scout_dump_path.exists():
+    raw_dump = scout_dump_path.read_text(encoding="utf-8")
+    # ... bypass Phase 1, run Phase 2-4 directly
+```
+
+手写 dump 落盘到 `memory/{slug}/raw_research_dump.md` → orchestrator 跳过 Scout → Phase 2 (Registry) + Phase 3 (Writers ×3) + Phase 4 (Auditor) + Phase 2.5 (Mapper) 直接跑。
+
+### Dump 模板（来自 `api/pipeline/prompts.py:12-206` 的 SCOUT_SYSTEM）
+
+必备 5 小节，按顺序：
+- `## Device overview` — <200 词，板的物理身份
+- `## Known failure modes` — 每条 `- **Symptom:**` bullet，**必须**以 `**Resolution:** <tag>` 结尾，tag ∈ `{hardware_fix_verified, hardware_ruled_out, ambiguous}`。冷门/工业设备无社区数据，全部用 `ambiguous`
+- `## Components mentioned by the community` — `- **<refdes>**` 行带 `aliases:` / `Role:` / `Typical failure:`
+- `## Signals / power rails / nets mentioned` — `- **<rail>**` 行带 `aliases:` / `Nominal voltage:` / `Measurable at:`
+- `## Sources` — `https://...` 或 `local://...` URL 列表
+
+### 阈值（`api/pipeline/scout.py:97-99` 默认 3/3/3）
+
+`assess_dump` 要求 ≥3 symptoms + ≥3 distinct components + ≥3 unique sources。手写时建议 **5 / 8 / 6** 留余量。
+
+### Refdes / rail 纪律（关键）
+
+**每个出现在 dump 里的 refdes 和 rail 名字必须在 `electrical_graph.json` 里实际存在**。
+
+- Components dict 的 key（refdes 形如 `U1400F`/`C1100`/`J5704`）
+- `power_rails` dict 的 key（rail 形如 `VUSB_PMU`/`AVDD18_SOC`）
+
+**不要凭直觉发明**。MediaTek USB PHY 有 `AVDD12/18/33_USB` 听起来合理，但这块板的 schematic 没有 — 实际只有 `VUSB_PMU` 和 `VBUS_USB_IN`。发明会被 Phase 2-4 LLM 当事实采纳，污染整个 pack。
+
+### 结构门（执行前必跑）
+
+```python
+import re, json
+from pathlib import Path
+dump = Path('memory/{slug}/raw_research_dump.md').read_text()
+eg = json.loads(Path('memory/{slug}/electrical_graph.json').read_text())
+
+# 1. 5 小节齐
+for s in ['## Device overview', '## Known failure modes', '## Components mentioned by the community',
+          '## Signals / power rails / nets mentioned', '## Sources']:
+    assert s in dump, f'missing: {s}'
+
+# 2. Symptom + Resolution 配对
+symptoms = re.findall(r'\*\*Symptom:\*\*', dump)
+resolutions = re.findall(r'\*\*Resolution:\*\*\s*(\w+)', dump)
+assert len(symptoms) >= 3
+assert len(resolutions) == len(symptoms)
+assert all(r in {'hardware_fix_verified', 'hardware_ruled_out', 'ambiguous'} for r in resolutions)
+
+# 3. Refdes 全部存在于 components
+refdes_re = re.compile(r'\b([A-Z]{1,3}\d{1,4}[A-Z]?)\b')
+referenced = set(refdes_re.findall(dump))
+assert not (referenced - set(eg['components'].keys())), f'fabricated refdes: {referenced - set(eg["components"].keys())}'
+
+# 3b. Rail 全部存在于 power_rails（不要漏！scout.py 的结构门不查这条）
+sig = re.search(r'## Signals[^\n]*\n(.*?)(?=\n## |\Z)', dump, re.DOTALL)
+rails = set()
+for m in re.finditer(r'\*\*([^*\n]+?)\*\*', sig.group(1)):
+    for part in re.split(r'\s*/\s*', m.group(1)):
+        part = part.strip()
+        if part and not re.fullmatch(r'[A-Z]{1,3}\d{1,4}[A-Z]?', part):
+            rails.add(part)
+assert not (rails - set(eg['power_rails'].keys())), f'fabricated rails: {rails - set(eg["power_rails"].keys())}'
+
+# 4. 阈值
+sources = len({u.rstrip('.,;:') for u in re.findall(r'https?://\S+', dump) + re.findall(r'local://\S+', dump)})
+assert sources >= 3
+```
+
+### Slug 陷阱
+
+`_slugify(label)`（`api/pipeline/orchestrator.py:154`）会把非 ASCII 全部替换成 `-`，然后去重和 strip。
+
+- `SMT工站V551不良品` → `smt-v551` ✓
+- `SMT工站V551不良品 不能DOWNLOAD的分析` → `smt-v551-download` ✗ （同主题两个 slug，dump 会落到错地方）
+
+`/pipeline/generate` 用传入的 `device_label` 现算 slug。落 dump 时要和上次 `/pipeline/repairs` 用的 device_label 保持一致，否则 orchestrator 的 bypass 找不到文件。
+
+### Git 策略
+
+`memory/*` 默认被 `.gitignore` 排除（pipeline 输出都 regenerable）。但**手写 dump 是人类知识输入**，应当追踪。加例外：
+
+```
+memory/*
+!memory/.gitkeep
+!memory/*/
+!memory/*/raw_research_dump.md
+```
+
+注意 `!memory/*/`（目录例外）必须放在文件例外之前 — 否则 gitignore 把整个目录禁了，里面文件就 unreachable。
+
+### 触发 pipeline
+
+```bash
+curl -X POST http://127.0.0.1:9000/pipeline/generate \
+  -H "Content-Type: application/json" \
+  -d '{"device_label": "SMT工站V551不良品", "focus_symptom": "不能DOWNLOAD"}'
+```
+
+期望：HTTP 200，60-180s wall clock，verdict `APPROVED`。`audit_verdict.json` consistency_score ≥ 0.9。
+
+### 何时用此 vs 修 Scout
+
+- **手写 dump**：工业/专有/无社区痕迹的设备（每次 ~30min 人力）
+- **修 Scout**：消费电子有 portfolio，且 web search 反复因冷门失败（~1-2 天工程，做 ResearchSource port 重构）
