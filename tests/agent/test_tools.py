@@ -247,3 +247,71 @@ def test_invalidate_pack_cache_drops_component_entries(tmp_path: Path):
     assert slug not in session.pack_cache
     assert (slug, "U1") not in session.component_cache
     assert (slug, "U2") not in session.component_cache
+
+
+def test_load_pack_missing_directory_returns_partial(tmp_path: Path):
+    """No pack dir at all — must not raise FileNotFoundError."""
+    from api.agent.tools import _load_pack
+
+    pack = _load_pack("smt-v551", tmp_path)
+    assert pack["_partial"] is True
+    assert pack["registry"] == {}
+    assert pack["dictionary"] == {}
+    assert pack["rules"] == {}
+
+
+def test_load_pack_one_file_missing_returns_partial(tmp_path: Path):
+    """registry present, rules missing — load what exists, tag partial."""
+    from api.agent.tools import _load_pack
+
+    slug = "partial-device"
+    pack_dir = tmp_path / slug
+    pack_dir.mkdir()
+    (pack_dir / "registry.json").write_text(
+        '{"components": [{"canonical_name": "U1", "kind": "ic"}], "signals": []}'
+    )
+    (pack_dir / "dictionary.json").write_text('{"entries": []}')
+    # rules.json intentionally absent
+
+    pack = _load_pack(slug, tmp_path)
+    assert pack["_partial"] is True
+    assert len(pack["registry"].get("components", [])) == 1
+    assert pack["rules"] == {}
+
+
+def test_mb_get_rules_for_symptoms_incomplete_pack_returns_empty(tmp_path: Path):
+    """Schematic-only device: no rules file — tool returns 0 matches, no crash."""
+    from api.agent.tools import mb_get_rules_for_symptoms
+
+    slug = "schematic-only"
+    (tmp_path / slug).mkdir()  # empty pack dir
+
+    result = mb_get_rules_for_symptoms(
+        device_slug=slug,
+        symptoms=["no boot", "dead battery"],
+        memory_root=tmp_path,
+    )
+    assert result["matches"] == []
+    assert result["total_available_rules"] == 0
+    assert result["device_slug"] == slug
+    assert result["query_symptoms"] == ["no boot", "dead battery"]
+
+
+def test_load_pack_complete_pack_not_marked_partial(tmp_path: Path):
+    """All three files present — no _partial key, cache still works."""
+    from api.agent.tools import _load_pack
+    from api.session.state import SessionState
+
+    slug = "complete"
+    pack_dir = tmp_path / slug
+    pack_dir.mkdir()
+    (pack_dir / "registry.json").write_text('{"components": [], "signals": []}')
+    (pack_dir / "dictionary.json").write_text('{"entries": []}')
+    (pack_dir / "rules.json").write_text('{"rules": []}')
+
+    session = SessionState()
+    pack1 = _load_pack(slug, tmp_path, session=session)
+    pack2 = _load_pack(slug, tmp_path, session=session)
+
+    assert "_partial" not in pack1
+    assert pack1 is pack2  # same cached object
