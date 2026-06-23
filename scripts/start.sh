@@ -16,6 +16,13 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# Load .env if it exists (so DIAGNOSTIC_MODE and other settings are available)
+if [ -f .env ]; then
+    set -a
+    source .env
+    set +a
+fi
+
 MODE="${DIAGNOSTIC_MODE:-managed}"
 IDS_FILE="managed_ids.json"
 PORT="${PORT:-8000}"
