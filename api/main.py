@@ -56,6 +56,22 @@ async def _prewarm_active_boardviews(memory_root: Path) -> None:
     if not memory_root.exists():
         return
 
+    # Check if pcbnew is available (required for KiCad files)
+    # KiCad parser shells out to system Python, so check that
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["/usr/bin/env", "python3", "-c", "import pcbnew"],
+            capture_output=True,
+            timeout=5,
+        )
+        pcbnew_available = result.returncode == 0
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pcbnew_available = False
+    
+    if not pcbnew_available:
+        logger.info("[prewarm] pcbnew not available — skipping KiCad files")
+
     parsed = 0
     failed = 0
     for pack_dir in sorted(memory_root.iterdir()):
@@ -67,6 +83,10 @@ async def _prewarm_active_boardviews(memory_root: Path) -> None:
         slug = pack_dir.name
         path = _find_boardview(slug, pack_dir)
         if path is None:
+            continue
+        # Skip KiCad files if pcbnew is not available
+        if not pcbnew_available and path.suffix == ".kicad_pcb":
+            logger.debug("[prewarm] skipping %s (pcbnew not available)", slug)
             continue
         try:
             mtime = path.stat().st_mtime
