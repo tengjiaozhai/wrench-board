@@ -49,9 +49,20 @@ def _emit(event: dict[str, Any]) -> None:
 
 
 def _known_refdes(memory_root: Path, device_slug: str) -> set[str] | None:
-    """Return the refdes set from the device's electrical_graph, or None if absent."""
-    graph_path = memory_root / device_slug / "electrical_graph.json"
-    if not graph_path.exists():
+    """Return the refdes set from the device's electrical_graph, or None if absent.
+
+    T9 — per-owner : on lit le graphe du PDF actif du tenant courant
+    (current_owner_ref → hash → .cache_schematic/{hash}/), pas la racine
+    partagée du slug (= scratch de build, potentiellement le PDF d'un autre
+    tenant → fuite cross-tenant). owner None (self-host) → racine, inchangé.
+    Fail-soft conservé : graphe absent / non épinglé → None."""
+    from api.agent.owner_ref import current_owner_ref
+    from api.pipeline import live_graph
+
+    graph_path = live_graph.resolve_graph_path(
+        memory_root / device_slug, current_owner_ref()
+    )
+    if graph_path is None:
         return None
     try:
         from api.pipeline.schematic.schemas import ElectricalGraph

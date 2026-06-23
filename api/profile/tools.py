@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
+from api.agent.owner_ref import current_owner_ref
 from api.profile.catalog import SKILLS_CATALOG, SkillId, ToolId
 from api.profile.derive import effective_verbosity, global_level, skill_status
 from api.profile.model import SkillEvidence
@@ -46,7 +47,8 @@ def _skills_summary(profile) -> dict[str, list[dict[str, Any]]]:
 
 def profile_get(session: SessionState | None = None) -> dict[str, Any]:
     from api.profile.store import profile_path
-    path = profile_path()
+    owner_ref = current_owner_ref()
+    path = profile_path(owner_ref)
     try:
         mtime = path.stat().st_mtime
     except FileNotFoundError:
@@ -57,7 +59,7 @@ def profile_get(session: SessionState | None = None) -> dict[str, Any]:
         if cached_mtime >= mtime:
             return cached_data
 
-    profile = load_profile()
+    profile = load_profile(owner_ref)
     data = {
         "identity": {
             "name": profile.identity.name,
@@ -73,6 +75,7 @@ def profile_get(session: SessionState | None = None) -> dict[str, Any]:
         "tools_missing": [
             t.value for t in ToolId if not getattr(profile.tools, t.value)
         ],
+        "custom_tools": list(profile.custom_tools),
         "skills_summary": _skills_summary(profile),
     }
     if session is not None:
@@ -81,7 +84,7 @@ def profile_get(session: SessionState | None = None) -> dict[str, Any]:
 
 
 def profile_check_skills(candidate_skills: list[str]) -> dict[str, Any]:
-    profile = load_profile()
+    profile = load_profile(current_owner_ref())
     out: dict[str, Any] = {}
     for sid in candidate_skills:
         entry = _SKILL_LOOKUP.get(sid)
@@ -140,12 +143,13 @@ def profile_track_skill(skill_id: str, evidence: dict[str, Any]) -> dict[str, An
         # bad input when it's actually an internal regression.
         return {"error": "invalid_evidence", "detail": str(exc)}
 
-    profile = load_profile()
+    owner_ref = current_owner_ref()
+    profile = load_profile(owner_ref)
     prev = profile.skills.get(SkillId(skill_id))
     usages_before = prev.usages if prev is not None else 0
     status_before = skill_status(usages_before)
 
-    rec = bump_skill(SkillId(skill_id), ev)
+    rec = bump_skill(SkillId(skill_id), ev, owner_ref)
     status_after = skill_status(rec.usages)
 
     return {

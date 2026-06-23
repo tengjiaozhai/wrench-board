@@ -18,7 +18,7 @@ def _group_skill_ids_with_usages(
     return out
 
 
-_LANG_LABEL = {"fr": "French", "en": "English", "zh": "Chinese (Simplified)"}
+_LANG_LABEL = {"fr": "French", "en": "English", "zh": "Chinese (Simplified)", "hi": "Hindi"}
 
 
 def render_technician_block(profile: TechnicianProfile) -> str:
@@ -40,6 +40,7 @@ def render_technician_block(profile: TechnicianProfile) -> str:
 
     tools_have_str = ", ".join(tools_have) if tools_have else "no tool declared"
     tools_missing_str = ", ".join(tools_missing) if tools_missing else "—"
+    custom_tools_str = ", ".join(profile.custom_tools) if profile.custom_tools else "—"
     mastered_str = ", ".join(mastered) if mastered else "—"
     practiced_str = ", ".join(practiced) if practiced else "—"
     learning_str = ", ".join(learning) if learning else "—"
@@ -54,6 +55,7 @@ def render_technician_block(profile: TechnicianProfile) -> str:
         f"Specialties: {specs}\n"
         f"Tools available: {tools_have_str}\n"
         f"Tools NOT available: {tools_missing_str}\n"
+        f"Other tools the tech declared (free-text, treat as AVAILABLE): {custom_tools_str}\n"
         f"Skills mastered (≥10×): {mastered_str}\n"
         f"Skills practiced (3-9×): {practiced_str}\n"
         f"Skills learning (1-2×): {learning_str}\n"
@@ -62,7 +64,8 @@ def render_technician_block(profile: TechnicianProfile) -> str:
         "if they consistently write in another language, or switch when "
         "they explicitly ask.\n"
         "  - NEVER propose an action that requires an unavailable tool "
-        "— propose a workaround or ask.\n"
+        "— propose a workaround or ask. The free-text tools the tech "
+        "declared above count as available.\n"
         "  - For mastered skills, get straight to the point "
         "(refdes, gesture, done). For learning or unlearned skills, "
         "detail the steps and the risks.\n"

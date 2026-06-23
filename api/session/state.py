@@ -56,19 +56,38 @@ def _memory_root() -> Path:
     return Path(__file__).resolve().parents[2] / "memory"
 
 
-def _candidate_boardview_paths(device_slug: str) -> list[Path]:
+def _candidate_boardview_paths(device_slug: str, owner_ref: str | None = None) -> list[Path]:
     """Ordered candidate boardview files for a slug — first match wins.
 
-    Order:
+    Managed (`owner_ref` set) — T9 per-owner: resolve STRICTLY the tenant's own
+    pin (`_sources/{owner}/active_sources.json` → `uploads/{filename}`). No root
+    pin, no `board_assets`, no shared `uploads/` scan — any of those would
+    cross-load another tenant's board. Mirrors
+    `api.pipeline.routes.packs._find_owner_boardview`.
+
+    Self-host (`owner_ref` None) — legacy slug-scoped chain, unchanged:
       1. Pinned active version from `memory/{slug}/active_sources.json`.
       2. `board_assets/{slug}.<ext>` for every parser-supported extension.
       3. Any other `memory/{slug}/uploads/*-boardview-*`, newest-first.
-    The pin is read on import to avoid a circular import with the pipeline
+    The pin is read inline to avoid a circular import with the pipeline
     package, so we duplicate the lightweight read here.
     """
+    pack_dir = _memory_root() / device_slug
+
+    if owner_ref is not None:
+        # Local import: keep `api.session` free of an import-time dependency on
+        # `api.pipeline` (closes the session→pipeline→session cycle via FastAPI
+        # router registration). Same trick `_find_owner_boardview` uses.
+        from api.pipeline import live_graph
+
+        active = live_graph.read_owner_active(pack_dir, owner_ref)
+        bv = active.get("boardview")
+        if bv and bv.get("filename"):
+            return [pack_dir / "uploads" / bv["filename"]]
+        return []
+
     candidates: list[Path] = []
 
-    pack_dir = _memory_root() / device_slug
     pinned = _read_active_pin(pack_dir, "boardview")
     if pinned is not None:
         candidates.append(pinned)
@@ -119,6 +138,17 @@ def _read_active_pin(pack_dir: Path, kind: str) -> Path | None:
 @dataclass
 class SessionState:
     board: Board | None = None
+    # Identity of the device/tenant this session is bound to, plus the file the
+    # current board was parsed from. Set by `from_device`; read by
+    # `refresh_board_if_changed` to lazily reload when the active boardview
+    # changes mid-session. Without this the board is a one-time snapshot taken
+    # at WS open — a boardview uploaded *after* the session opened stays
+    # invisible to the bv_* tools (the viewer reads disk live; the agent never
+    # re-reads). `owner_ref` makes resolution per-tenant (T9): a managed session
+    # resolves STRICTLY its own per-owner pin, never the shared uploads scan.
+    device_slug: str | None = None
+    owner_ref: str | None = None
+    board_source: Path | None = None
     layer: Side = "top"
     highlights: set[str] = field(default_factory=set)
     # Color the last bv_highlight / bv_focus call asked for. Without this,
@@ -139,8 +169,10 @@ class SessionState:
     layer_visibility: dict[Side, bool] = field(
         default_factory=lambda: {"top": True, "bottom": True}
     )
-    # R1: pack cache — keyed by device_slug, storing (max_mtime, pack_dict).
-    pack_cache: dict[str, tuple[float, dict[str, Any]]] = field(default_factory=dict)
+    # R1: pack cache — keyed by device_slug, storing (max_mtime, pack_dict,
+    # owner_ref). owner_ref dans la valeur → un mismatch est traité comme un
+    # miss (anti cross-tenant ; T8 Option C).
+    pack_cache: dict[str, tuple[float, dict[str, Any], str | None]] = field(default_factory=dict)
     # R2: per-session LRU for mb_get_component results, keyed by (device_slug, refdes).
     # Size cap kept small — sessions ask about the same ~dozen refdes repeatedly.
     component_cache: OrderedDict[tuple[str, str], dict[str, Any]] = field(
@@ -279,30 +311,75 @@ class SessionState:
             } or {"top": True, "bottom": True}
 
     @classmethod
-    def from_device(cls, device_slug: str) -> SessionState:
+    def from_device(cls, device_slug: str, owner_ref: str | None = None) -> SessionState:
         """Build a session for a device, auto-loading the board if available.
 
-        Lookup order:
-          1. `board_assets/{slug}.<ext>` for every extension in
-             `_BOARD_EXT_PRIORITY` (priority list, richer formats first).
-          2. `memory/{slug}/uploads/*-boardview-*` — newest upload wins,
-             used when the technician uploaded their own boardview from
-             the Journal dashboard.
+        Managed (`owner_ref` set) resolves STRICTLY the tenant's own per-owner
+        boardview pin (T9). Self-host (`owner_ref` None) uses the legacy
+        slug-scoped chain (root pin → `board_assets` → uploads scan). The
+        session remembers `(device_slug, owner_ref)` so
+        `refresh_board_if_changed` can reload when the active boardview changes
+        mid-session.
+
         Falls back to an empty SessionState if no file is found or parsing
         fails — the agent then simply does not get the `bv_*` tool family.
         """
-        for candidate in _candidate_boardview_paths(device_slug):
+        session = cls()
+        session.device_slug = device_slug
+        session.owner_ref = owner_ref
+        session._load_active_board()
+        return session
+
+    def _load_active_board(self) -> bool:
+        """(Re)resolve and parse the active boardview for this session's
+        `(device_slug, owner_ref)`, recording the source in `board_source`.
+
+        Returns True if a board was loaded. On the first existing candidate's
+        parse failure it gives up with the board unchanged — mirrors the
+        original `from_device` fall-through (a malformed active file is not
+        silently skipped in favour of an older one)."""
+        if self.device_slug is None:
+            return False
+        for candidate in _candidate_boardview_paths(self.device_slug, self.owner_ref):
             if not candidate.exists():
                 continue
             try:
-                parser = parser_for(candidate)
-                board = parser.parse_file(candidate)
-                session = cls()
-                session.set_board(board)
-                return session
+                board = parser_for(candidate).parse_file(candidate)
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
-                    "board load failed for %s (%s): %s", device_slug, candidate.name, exc
+                    "board load failed for %s (%s): %s",
+                    self.device_slug, candidate.name, exc,
                 )
-                return cls()  # fall through with empty session
-        return cls()
+                return False
+            self.set_board(board)
+            self.board_source = candidate
+            return True
+        return False
+
+    def refresh_board_if_changed(self) -> bool:
+        """Reload the board when the active boardview file changed since it was
+        loaded (or appeared after the session opened). Cheap: resolves the
+        current active file (small pin read / stat) and reparses only when it
+        differs from `board_source`. This is what makes a mid-session boardview
+        upload/switch visible to the bv_* tools — the board is otherwise frozen
+        at `from_device` (WS-open), while the schematic graph (read from disk on
+        every call) stays live. Returns True if it reloaded.
+
+        A no-op (returns False, overlay preserved) when the active file is
+        unchanged or when nothing is active now — it never wipes an
+        already-loaded board just because the pin briefly fails to resolve."""
+        if self.device_slug is None:
+            return False
+        current = next(
+            (
+                c
+                for c in _candidate_boardview_paths(self.device_slug, self.owner_ref)
+                if c.exists()
+            ),
+            None,
+        )
+        if current is None:
+            return False
+        if self.board is not None and self.board_source == current:
+            return False
+        return self._load_active_board()

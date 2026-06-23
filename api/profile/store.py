@@ -1,6 +1,10 @@
 """On-disk profile store.
 
-Single file `memory/_profile/technician.json`. Writes are atomic via
+Single file `memory/_profile/technician.json` for self-host. Under the
+multi-tenant cloud front-door each tenant gets its own partition
+`memory/_profile/{owner_ref}/technician.json` — same owner-scoping pattern as
+`api/stock/store.py`. `owner_ref` is an opaque tag from the cloud (NOT a
+security boundary; the cloud is the gatekeeper). Writes are atomic via
 tempfile + os.replace. Evidence history is FIFO-capped per skill.
 """
 
@@ -8,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -21,19 +26,33 @@ from api.profile.model import SkillEvidence, SkillRecord, TechnicianProfile
 _PROFILE_SUBDIR = "_profile"
 _PROFILE_FILENAME = "technician.json"
 
+# owner_ref is an opaque tenant id from the cloud. Restrict it to a safe path
+# segment so it can never traverse out of the _profile directory.
+_SAFE_OWNER = re.compile(r"^[A-Za-z0-9_-]+$")
 
-def _profile_path() -> Path:
-    root = Path(get_settings().memory_root)
-    return root / _PROFILE_SUBDIR / _PROFILE_FILENAME
+
+def _owner_dir(owner_ref: str | None) -> Path:
+    """Profile directory for an owner — a sanitised subdir of _profile, or the
+    _profile root itself when owner_ref is unset (single-tenant / self-host)."""
+    root = Path(get_settings().memory_root) / _PROFILE_SUBDIR
+    if owner_ref is None:
+        return root
+    if not _SAFE_OWNER.match(owner_ref):
+        raise ValueError(f"invalid owner_ref: {owner_ref!r}")
+    return root / owner_ref
 
 
-def profile_path() -> Path:
+def _profile_path(owner_ref: str | None = None) -> Path:
+    return _owner_dir(owner_ref) / _PROFILE_FILENAME
+
+
+def profile_path(owner_ref: str | None = None) -> Path:
     """Public accessor for the profile file path (used by mtime-based caches)."""
-    return _profile_path()
+    return _profile_path(owner_ref)
 
 
-def load_profile() -> TechnicianProfile:
-    path = _profile_path()
+def load_profile(owner_ref: str | None = None) -> TechnicianProfile:
+    path = _profile_path(owner_ref)
     if not path.exists():
         return TechnicianProfile.default()
     try:
@@ -47,8 +66,8 @@ def load_profile() -> TechnicianProfile:
         return TechnicianProfile.default()
 
 
-def save_profile(profile: TechnicianProfile) -> None:
-    path = _profile_path()
+def save_profile(profile: TechnicianProfile, owner_ref: str | None = None) -> None:
+    path = _profile_path(owner_ref)
     path.parent.mkdir(parents=True, exist_ok=True)
     profile.updated_at = datetime.now(UTC).isoformat()
     payload = profile.model_dump(mode="json")
@@ -70,8 +89,10 @@ def save_profile(profile: TechnicianProfile) -> None:
             os.unlink(tmp_path)
 
 
-def bump_skill(skill_id: SkillId, evidence: SkillEvidence) -> SkillRecord:
-    profile = load_profile()
+def bump_skill(
+    skill_id: SkillId, evidence: SkillEvidence, owner_ref: str | None = None
+) -> SkillRecord:
+    profile = load_profile(owner_ref)
     rec = profile.skills.get(skill_id) or SkillRecord()
     rec.usages += 1
     rec.last_used = evidence.date
@@ -81,5 +102,5 @@ def bump_skill(skill_id: SkillId, evidence: SkillEvidence) -> SkillRecord:
     if len(rec.evidences) > SKILL_EVIDENCES_CAP:
         rec.evidences = rec.evidences[-SKILL_EVIDENCES_CAP:]
     profile.skills[skill_id] = rec
-    save_profile(profile)
+    save_profile(profile, owner_ref)
     return rec

@@ -54,9 +54,20 @@ def _lookup_comp_kind(memory_root: Path, device_slug: str, refdes: str) -> str |
     """Return the ComponentKind for `refdes` from the device's electrical
     graph, or None when the graph is missing / unreadable / the refdes
     unknown. Best-effort — any error path yields None, which means the
-    caller skips kind-specific mode validation."""
-    graph_path = memory_root / device_slug / "electrical_graph.json"
-    if not graph_path.exists():
+    caller skips kind-specific mode validation.
+
+    T9 — per-owner : on lit le graphe du PDF actif du tenant courant
+    (current_owner_ref → hash → .cache_schematic/{hash}/), pas la racine
+    partagée du slug (= scratch de build d'un autre tenant → fuite). owner
+    None (self-host) → racine, inchangé. Fail-soft conservé : graphe absent
+    / non épinglé → None."""
+    from api.agent.owner_ref import current_owner_ref
+    from api.pipeline import live_graph
+
+    graph_path = live_graph.resolve_graph_path(
+        memory_root / device_slug, current_owner_ref()
+    )
+    if graph_path is None:
         return None
     try:
         from api.pipeline.schematic.schemas import ElectricalGraph

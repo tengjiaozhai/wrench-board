@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from api.agent.owner_ref import current_owner_ref
+from api.pipeline import live_graph
 from api.pipeline.schematic.hypothesize import (
     Observations,
     ObservedMetric,
@@ -24,21 +26,27 @@ _PACK_CACHE: dict[
 
 
 def _load_pack(
-    pack: Path,
+    base: Path | None,
 ) -> tuple[ElectricalGraph | None, AnalyzedBootSequence | None, str | None]:
     """Return (eg, ab, error_reason). `error_reason` is None on success;
     on failure it is the machine-readable reason string that mb_hypothesize
-    surfaces to the caller."""
-    graph_path = pack / "electrical_graph.json"
+    surfaces to the caller.
+
+    `base` is the per-owner-resolved graph directory (T9): self-host → slug root,
+    managed → the tenant's active-PDF cache dir. `None` means the managed tenant
+    has no active schematic pinned → no graph for them."""
+    if base is None:
+        return None, None, "no_schematic_graph"
+    graph_path = base / "electrical_graph.json"
     if not graph_path.exists():
         return None, None, "no_schematic_graph"
-    ab_path = pack / "boot_sequence_analyzed.json"
+    ab_path = base / "boot_sequence_analyzed.json"
     try:
         graph_mtime = graph_path.stat().st_mtime_ns
         ab_mtime = ab_path.stat().st_mtime_ns if ab_path.exists() else 0
     except OSError:
         return None, None, "malformed_graph"
-    key = (str(pack), graph_mtime, ab_mtime)
+    key = (str(base), graph_mtime, ab_mtime)
     cached = _PACK_CACHE.get(key)
     if cached is not None:
         eg, ab = cached
@@ -84,6 +92,7 @@ def mb_hypothesize(
     metrics_rails: dict[str, dict] | None = None,
     max_results: int = 5,
     repair_id: str | None = None,
+    owner_ref: str | None = ...,  # type: ignore[assignment]
 ) -> dict[str, Any]:
     """Rank candidate (refdes, mode) kills that explain the observations.
 
@@ -94,9 +103,23 @@ def mb_hypothesize(
 
     Returns `HypothesizeResult.model_dump() + {"found": True}` on success,
     or `{"found": False, "reason", ...}` on any validation failure.
+
+    T9 — the electrical graph is resolved PER-OWNER: the agent-tool path inherits
+    the session's tenant from the `current_owner_ref()` ContextVar (when `owner_ref`
+    is left unset); the HTTP route passes the `X-Owner-Ref` header value explicitly.
+    owner None (self-host) → the slug root, byte-identical to pre-T9. The measurement
+    journal (below) stays at the slug root — it is per-repair, already tenant-scoped
+    by repair ownership.
     """
     pack = memory_root / device_slug
-    eg, ab, err = _load_pack(pack)
+    # Owner source: explicit param wins (HTTP route forwards X-Owner-Ref);
+    # the sentinel means "not passed" → fall back to the session ContextVar
+    # (agent-tool path). owner None → slug root (self-host, unchanged).
+    if owner_ref is ...:
+        owner_ref = current_owner_ref()
+    # T9/T6 — graphe = moat PARTAGÉ : per-owner si uploadé, sinon canonique du slug.
+    graph_base = live_graph.resolve_graph_dir(pack, owner_ref)
+    eg, ab, err = _load_pack(graph_base)
     if err is not None:
         return {"found": False, "reason": err, "device_slug": device_slug}
 

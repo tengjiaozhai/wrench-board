@@ -128,6 +128,10 @@ def test_parse_accepts_mnt_reform_kicad_pcb_fixture():
     fixture = ASSETS_DIR / "mnt-reform-motherboard.kicad_pcb"
     if not fixture.exists():
         pytest.skip("MNT Reform .kicad_pcb fixture not present")
+    try:
+        import pcbnew  # noqa: F401
+    except ImportError:
+        pytest.skip("pcbnew not available (install KiCad)")
     with fixture.open("rb") as fh:
         r = client.post(
             "/api/board/parse",

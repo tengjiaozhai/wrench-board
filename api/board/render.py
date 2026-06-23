@@ -471,6 +471,37 @@ def _reconstruct_outline_polygons(board: Board) -> list[list[dict[str, float]]]:
     ]
 
 
+def _synthesize_outline_from_extent(board: Board) -> list[dict[str, float]]:
+    """Last-resort board edge for formats whose source carries NO outline.
+
+    Some exports are assembly/placement data only (e.g. CPD
+    `mfg/neutral_file`): they describe components, pins, pads and holes but
+    never the board-edge polygon, which lives in the separate layout database.
+    For those, derive a board boundary as the convex hull of everything placed
+    on the board — part bodies/bboxes, pins and holes. This is NOT the true
+    fabrication edge, but a faithful board-EXTENT boundary so the viewer shows
+    a board instead of floating parts. Returns ``[]`` when nothing is placed.
+    """
+    pts: list[tuple[float, float]] = []
+    for part in board.parts:
+        mn, mx = part.bbox
+        pts.append((_mm(mn.x), _mm(mn.y)))
+        pts.append((_mm(mx.x), _mm(mx.y)))
+        pts.append((_mm(mn.x), _mm(mx.y)))
+        pts.append((_mm(mx.x), _mm(mn.y)))
+        for seg in part.body_lines:
+            pts.append((_mm(seg.a.x), _mm(seg.a.y)))
+            pts.append((_mm(seg.b.x), _mm(seg.b.y)))
+    for pin in board.pins:
+        pts.append((_mm(pin.pos.x), _mm(pin.pos.y)))
+    for hole in board.mech_holes:
+        pts.append((_mm(hole.pos.x), _mm(hole.pos.y)))
+    hull = _convex_hull(pts)
+    if len(hull) >= 3:
+        return [{"x": p[0], "y": p[1]} for p in hull]
+    return []
+
+
 def _polygon_bbox(poly: list[dict[str, float]]) -> tuple[float, float, float, float]:
     xs = [p["x"] for p in poly]
     ys = [p["y"] for p in poly]
@@ -550,6 +581,112 @@ def _side_for(x: float, y: float, dual: dict[str, Any]) -> str:
     return "top" if y < dual["split"] else "bottom"
 
 
+# Overlay boardview formats (.cad / .fz / .tvw) place TOP and BOTTOM components
+# at the SAME physical X/Y (the honest stacked board). The viewer's 'both' mode
+# draws every entity at its raw coordinate with no per-side offset, so on these
+# boards the two faces pile up ("ça mélange les deux côtés"). XZZ (.pcb) instead
+# ships the two faces SIDE BY SIDE and the viewer renders that cleanly. The fix
+# is to give overlay boards the same side-by-side payload: keep TOP in place,
+# mirror BOTTOM in X and shift it clear to the right. The mirror is the exact
+# inverse the viewer's side-flip chevron already assumes (`T.x + B.x + B.w - x`),
+# so no viewer change is needed — the existing dual-outline path handles it.
+_OVERLAY_SPLIT_THRESHOLD = 0.1  # min top/bottom bbox overlap (of smaller face)
+
+
+def _centre_bbox(comps: list[dict[str, Any]]) -> tuple[float, float, float, float]:
+    xs = [c["x"] + c.get("width", 0.0) / 2 for c in comps]
+    ys = [c["y"] + c.get("height", 0.0) / 2 for c in comps]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def _overlap_fraction(a, b) -> float:
+    """Intersection area of two bboxes as a fraction of the SMALLER bbox."""
+    iw = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    ih = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    inter = iw * ih
+    smaller = min((a[2] - a[0]) * (a[3] - a[1]), (b[2] - b[0]) * (b[3] - b[1]))
+    return inter / smaller if smaller > 0 else 0.0
+
+
+def _synthesize_overlay_dual(
+    parts: list[dict[str, Any]],
+    pins: list[dict[str, Any]],
+    test_pads: list[dict[str, Any]],
+    outline_payload: Any,
+) -> tuple[Any, dict[str, Any]] | None:
+    """Split an overlay board into a side-by-side 'both' layout.
+
+    Fires only when TOP and BOTTOM components actually overlap in coordinate
+    space; genuinely side-by-side boards (XZZ-style .brd) are left untouched so
+    we never double-shift. Mutates the bottom-side payload dicts in place.
+    Returns `(outline_payload, dual_outline)` on a split, else `None`.
+
+    Vias and routing traces carry no top/bottom face in these formats
+    (`_side is None`) so they stay put — acceptable for through-hole vias and
+    rare for these formats; documented as a V1 limitation.
+    """
+    top = [p for p in parts if p.get("_side") == "top"]
+    bottom = [p for p in parts if p.get("_side") == "bottom"]
+    if not top or not bottom:
+        return None
+    if _overlap_fraction(_centre_bbox(top), _centre_bbox(bottom)) < _OVERLAY_SPLIT_THRESHOLD:
+        return None
+
+    # Frame the fold on the shared board OUTLINE (both faces share it) so the
+    # mirrored bottom board lands entirely clear of the top one. Fall back to
+    # the component span when the parser surfaced no outline.
+    pts = _outline_payload_points(outline_payload)
+    if pts:
+        o_x0 = min(p[0] for p in pts)
+        o_x1 = max(p[0] for p in pts)
+        o_y0 = min(p[1] for p in pts)
+        o_y1 = max(p[1] for p in pts)
+    else:
+        o_x0, o_y0, o_x1, o_y1 = _centre_bbox(top + bottom)
+    width = o_x1 - o_x0
+    gap = max(width * 0.08, 2.0)
+    b_x0 = o_x1 + gap
+    # Mirror about the top's right edge then shift into the bottom region:
+    # x in [o_x0, o_x1] -> [b_x0, b_x0 + width]. mx is its own inverse.
+    fold = o_x1 + b_x0
+
+    def mx(x: float) -> float:
+        return fold - x
+
+    bottom_refdes = {p["id"] for p in bottom}
+    for c in bottom:
+        cx = c["x"] + c.get("width", 0.0) / 2
+        c["x"] = mx(cx) - c.get("width", 0.0) / 2
+        for seg in c.get("body_lines", []):
+            seg["x1"], seg["x2"] = mx(seg["x1"]), mx(seg["x2"])
+    for p in pins:
+        if p.get("component") in bottom_refdes:
+            p["x"] = mx(p["x"])
+    for tp in test_pads:
+        if tp.get("_side") == "bottom":
+            tp["x"] = mx(tp["x"])
+
+    if isinstance(outline_payload, list) and outline_payload:
+        top_poly = outline_payload
+    else:
+        top_poly = [
+            {"x": o_x0, "y": o_y0}, {"x": o_x1, "y": o_y0},
+            {"x": o_x1, "y": o_y1}, {"x": o_x0, "y": o_y1},
+        ]
+    bot_poly = [{"x": mx(p["x"]), "y": p["y"]} for p in top_poly]
+    new_outline = {"polygons": [top_poly, bot_poly]}
+
+    dual = {
+        "top": top_poly,
+        "bottom": bot_poly,
+        "axis": "x",
+        "split": (o_x1 + b_x0) / 2.0,
+        "bbox_top": {"x": o_x0, "y": o_y0, "w": width, "h": o_y1 - o_y0},
+        "bbox_bottom": {"x": b_x0, "y": o_y0, "w": width, "h": o_y1 - o_y0},
+    }
+    return new_outline, dual
+
+
 def _bounds(*xs_ys_iters) -> tuple[float, float, float, float]:
     xs: list[float] = []
     ys: list[float] = []
@@ -593,9 +730,18 @@ def to_render_payload(board: Board) -> dict[str, Any]:
     """
     net_index: dict[str, Net] = {n.name: n for n in board.nets}
 
+    # Skip parts that have neither a real bbox nor any pins — they carry no
+    # placement and would otherwise all stack at the board origin (e.g. a
+    # refdes present in the file but absent from the connectivity). A part
+    # with a non-degenerate bbox OR at least one pin is genuinely placeable.
+    def _is_placeable(part: Part) -> bool:
+        mn, mx = part.bbox
+        return mx.x > mn.x or mx.y > mn.y or bool(part.pin_refs)
+
     parts_payload = [
         _convert_part(part, [board.pins[i] for i in part.pin_refs], net_index)
         for part in board.parts
+        if _is_placeable(part)
     ]
 
     # refdes -> ctype map so each pin payload knows its parent's type
@@ -691,7 +837,10 @@ def to_render_payload(board: Board) -> dict[str, Any]:
             outline_payload = {"polygons": polygons}
             dual_outline = _classify_dual_outlines(polygons)
         else:
-            outline_payload = []
+            # No source outline and nothing on layer 28 (assembly-only
+            # exports like CPD): fall back to the placed-entity hull
+            # so the viewer still draws a board.
+            outline_payload = _synthesize_outline_from_extent(board)
 
     # When the parser ships top + bottom views in the same coordinate
     # space (XZZ side-by-side / stacked dual layout), tag every entity
@@ -733,6 +882,16 @@ def to_render_payload(board: Board) -> dict[str, Any]:
             tp["_side"] = tp.get("layer") or None
         for tr in traces_payload:
             tr.setdefault("_side", None)
+
+        # Overlay formats stack TOP/BOTTOM at the same coordinates, so 'both'
+        # mode piles the two faces. When that overlap is real, mirror+shift the
+        # bottom face into a side-by-side layout (the shape XZZ ships natively),
+        # which the viewer's dual-outline 'both' handling renders cleanly.
+        synth = _synthesize_overlay_dual(
+            parts_payload, pins_payload, test_pads_payload, outline_payload
+        )
+        if synth is not None:
+            outline_payload, dual_outline = synth
 
     # Compute board bounds from every spatial source we have, in mm.
     pin_pts = ((_mm(p.pos.x), _mm(p.pos.y)) for p in board.pins)

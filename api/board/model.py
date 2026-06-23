@@ -69,7 +69,7 @@ class Part(BaseModel):
     # Component silkscreen / outline segments. Populated by parsers that
     # surface this (XZZ via 0x05 sub-blocks); empty for parsers that don't.
     body_lines: list[Segment] = []
-    # DFM alternate / DNP (Do Not Populate) tracking. Asus `.fz` dumps
+    # DFM alternate / DNP (Do Not Populate) tracking. Vendor `.fz` dumps
     # encode pads physically shared by two alternative footprints (e.g.
     # `R54` jumper vs `C30` cap, or `PGCE30` 8x9.7 polymer cap vs
     # `PGCE12` 7x8 polymer cap) at the same physical position. Only one

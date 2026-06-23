@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, Header, HTTPException, UploadFile
 
 from api.board.parser.base import (
     BoardParserError,
@@ -91,7 +92,13 @@ async def parse_board(file: UploadFile = File(...)) -> dict:  # noqa: B008
         path = Path(tmp.name)
         try:
             parser = parser_for(path)
-            board = parser.parse(data, file_hash=file_hash, board_id=board_id)
+            # Offload le parse CPU-lourd hors de l'event-loop : sur le moteur
+            # async single-worker, un parse sync inline gèle TOUTES les requêtes
+            # (diags, /health, WS) le temps du parse, et les parses concurrents
+            # se sérialisent. to_thread garde le loop responsive (cf. main.py:78).
+            board = await asyncio.to_thread(
+                parser.parse, data, file_hash=file_hash, board_id=board_id
+            )
         except NotImplementedError as e:
             # Defensive: surface unimplemented parser branches as 501 rather
             # than letting them propagate as a generic 500.
@@ -146,23 +153,28 @@ async def parse_board(file: UploadFile = File(...)) -> dict:  # noqa: B008
 
 
 @router.get("/render")
-async def render_board(slug: str) -> dict:
+async def render_board(
+    slug: str,
+    x_owner_ref: str | None = Header(default=None, alias="X-Owner-Ref"),
+) -> dict:
     """Return the Three.js render payload for the active boardview of a slug.
 
-    Resolution chain matches the WS / pin probes (`active_sources.json` →
-    `board_assets/{slug}.<ext>` → `memory/{slug}/uploads/*-boardview-*`).
-    Returns 404 when no boardview is on disk; 422 / 415 when the file
-    fails to parse (same error envelope as `/api/board/parse`).
+    Tenant-scopé (T9) : le cloud injecte `X-Owner-Ref` (= tenant_id) sur le trafic
+    proxifié. Managé → STRICTEMENT le boardview épinglé par CE tenant ; un tenant
+    sans boardview actif obtient 404 (jamais le board d'un autre — c'était la fuite).
+    Self-host (en-tête absent) → chaîne globale historique (`active_sources.json` →
+    `board_assets/{slug}.<ext>` → `memory/{slug}/uploads/*-boardview-*`), inchangé.
+    Returns 404 when no boardview is on disk; 422 / 415 when the file fails to parse.
     """
     # Local imports — avoids dragging the pipeline package into the board
     # router's module-load graph (FastAPI registers them in opposite order).
     from api.board.render import to_render_payload
     from api.config import get_settings
-    from api.pipeline import _find_boardview
+    from api.pipeline import _find_owner_boardview
 
     settings = get_settings()
     pack_dir = Path(settings.memory_root) / slug
-    path = _find_boardview(slug, pack_dir)
+    path = _find_owner_boardview(slug, pack_dir, x_owner_ref)
     if path is None:
         raise HTTPException(
             status_code=404,
@@ -184,7 +196,9 @@ async def render_board(slug: str) -> dict:
         return cached
     try:
         parser = parser_for(path)
-        board = parser.parse_file(path)
+        # Offload hors event-loop (cf. /parse) : un render de gros boardview ne
+        # doit pas geler le moteur ni sérialiser avec les autres requêtes.
+        board = await asyncio.to_thread(parser.parse_file, path)
     except UnsupportedFormatError as e:
         raise HTTPException(
             status_code=415,

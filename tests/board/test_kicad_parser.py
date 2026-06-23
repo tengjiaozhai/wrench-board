@@ -2,6 +2,18 @@ from pathlib import Path
 
 import pytest
 
+# Skip all tests in this module if pcbnew is not available
+try:
+    import pcbnew  # noqa: F401
+    _PCBNEW_AVAILABLE = True
+except ImportError:
+    _PCBNEW_AVAILABLE = False
+
+pytestmark = pytest.mark.skipif(
+    not _PCBNEW_AVAILABLE,
+    reason="pcbnew not available (install KiCad)",
+)
+
 from api.board.parser.base import parser_for
 from api.board.parser.kicad import KicadPcbParser
 

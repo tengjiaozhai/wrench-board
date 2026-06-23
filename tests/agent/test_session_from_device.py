@@ -28,6 +28,10 @@ def test_from_device_prefers_kicad_pcb_over_brd(board_assets_dir: Path) -> None:
     src = repo_root / "board_assets" / "mnt-reform-motherboard.kicad_pcb"
     if not src.exists():
         pytest.skip("fixture mnt-reform-motherboard.kicad_pcb not available")
+    try:
+        import pcbnew  # noqa: F401
+    except ImportError:
+        pytest.skip("pcbnew not available (install KiCad)")
     (board_assets_dir / "mnt-reform-motherboard.kicad_pcb").write_bytes(src.read_bytes())
     # Drop a bogus .brd next to it — if the helper picks .brd, parse will crash.
     (board_assets_dir / "mnt-reform-motherboard.brd").write_text("GARBAGE\n")
