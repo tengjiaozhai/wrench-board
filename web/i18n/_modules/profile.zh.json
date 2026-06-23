@@ -1,0 +1,77 @@
+{
+  "title": "技术员档案",
+  "head": {
+    "tag": "技术员",
+    "no_name": "未命名",
+    "no_specialty": "无专长",
+    "edit_identity": "编辑身份",
+    "years_one": "{n} 年经验",
+    "years_other": "{n} 年经验",
+    "years_zero": "0 年",
+    "updated": "更新于 {date}"
+  },
+  "ribbon": {
+    "tag": "进阶",
+    "title": "等级 {level}",
+    "default_blurb": "等级由练习的技能数量推导。",
+    "blurbs": {
+      "beginner": "你刚起步。agent 会在要求你操作前解释每一步。",
+      "intermediate": "你在进步。agent 会精简解释，让你主导更多。",
+      "confirmed": "你已确认。agent 将决策交给你并确认你的假设。",
+      "expert": "你是专家。agent 保持简洁，跟随你处理复杂故障。"
+    },
+    "rungs": {
+      "beginner": "新手",
+      "intermediate": "中级",
+      "confirmed": "确认",
+      "expert": "专家"
+    }
+  },
+  "stats": {
+    "tag_mastered": "精通",
+    "tag_practiced": "练习",
+    "tag_learning": "学习",
+    "tag_tools": "工具",
+    "sub_skills": "/ {total} 已编目技能",
+    "sub_tools": "/ {total} 已编目工具",
+    "block_skills_total": "{n} 项技能",
+    "block_tools_total": "{on} / {total} 项启用"
+  },
+  "blocks": {
+    "skills_tag": "技能",
+    "skills_heading": "操作档案",
+    "tools_tag": "工具",
+    "tools_heading": "声明的工具",
+    "prefs_tag": "诊断偏好",
+    "prefs_heading": "Agent 姿态"
+  },
+  "status": {
+    "mastered": "精通",
+    "practiced": "练习",
+    "learning": "学习",
+    "unlearned": "未练习"
+  },
+  "drawer": {
+    "close": "关闭",
+    "no_history": "此技能暂无历史记录 — agent 检测到确认使用后将持续追踪。"
+  },
+  "prefs": {
+    "verbosity": "详细度",
+    "language": "语言"
+  },
+  "modal": {
+    "kicker": "技术员档案",
+    "title": "编辑你的身份",
+    "close": "关闭",
+    "field_name": "姓名",
+    "field_avatar": "头像（2 个字母或 emoji）",
+    "field_years": "从业年限",
+    "field_specialties": "专长（逗号分隔）",
+    "specialties_placeholder": "apple, consoles, laptops",
+    "field_level": "强制等级（可选）",
+    "level_auto": "（自动推导）",
+    "cancel": "取消",
+    "save": "保存",
+    "save_failed": "无法保存: {error}"
+  }
+}

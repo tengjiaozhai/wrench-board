@@ -1,0 +1,98 @@
+{
+  "title": "内存库",
+  "subtitle": "V2 管线生成的确定性知识包。浏览 registry、知识图谱、诊断规则、元件表和审计结论。",
+  "title_with_device": "内存库 <span class=\"sub\" style=\"color:var(--text-3);font-weight:400;font-size:14px;margin-left:10px\">· {device}</span>{form}",
+  "picker": {
+    "label": "知识包",
+    "empty_option": "— 无包 —"
+  },
+  "search": {
+    "placeholder": "过滤包（refdes、症状、机制…）",
+    "esc_hint": "ESC 清除"
+  },
+  "blocks": {
+    "registry_heading": "规范词汇表",
+    "graph_heading": "知识图谱",
+    "rules_heading": "诊断规则",
+    "dictionary_heading": "元件表",
+    "audit_heading": "审计结论"
+  },
+  "empty": {
+    "title": "无可用的知识包",
+    "body_default": "无知识包可用。运行管线生成。",
+    "load_failed": "无法加载包「{slug}」。"
+  },
+  "verdict": {
+    "none_title": "此包尚未审计。",
+    "none_label": "审计 · 未运行",
+    "approved_label": "审计 · 通过",
+    "needs_revision_label": "审计 · 需修订",
+    "rejected_label": "审计 · 已拒绝",
+    "unknown_label": "审计 · 未知",
+    "consistency": "一致性"
+  },
+  "counts": {
+    "components": "元件",
+    "signals": "信号",
+    "nodes": "节点",
+    "edges": "边",
+    "rules": "规则",
+    "sheets": "表",
+    "rules_count": "<b>{n}</b> 规则",
+    "rules_count_zero": "<b>0</b> 规则",
+    "sheets_count": "<b>{n}</b> 表",
+    "sheets_count_zero": "<b>0</b> 表",
+    "registry_count": "<b>{c}</b> 元件 · <b>{s}</b> 信号",
+    "graph_count": "<b>{n}</b> 节点 · <b>{e}</b> 边"
+  },
+  "registry": {
+    "missing": "registry.json 缺失 — 管线未运行。",
+    "components_heading": "元件 ({n})",
+    "signals_heading": "信号 ({n})",
+    "no_components": "无元件。",
+    "no_signals": "无信号。",
+    "th_refdes": "Refdes",
+    "th_type": "类型",
+    "th_aliases": "别名",
+    "th_description": "描述",
+    "th_canonical": "规范名称",
+    "th_nominal_voltage": "标称电压"
+  },
+  "graph": {
+    "missing": "knowledge_graph.json 缺失。",
+    "no_edges": "图谱中无边。",
+    "stat_symptoms": "症状",
+    "stat_components": "元件",
+    "stat_nets": "网络",
+    "stat_edges": "边"
+  },
+  "rules": {
+    "missing": "rules.json 缺失。",
+    "none": "无诊断规则。",
+    "no_symptom": "（无症状）",
+    "h_symptoms": "症状",
+    "h_likely_causes": "可能原因",
+    "h_diagnostic_steps": "诊断步骤",
+    "h_sources": "来源",
+    "expected": "预期 {value}",
+    "conf_label": "置信度 {value}"
+  },
+  "dictionary": {
+    "missing": "dictionary.json 缺失。",
+    "none": "无元件表。",
+    "th_refdes": "Refdes",
+    "th_role": "角色",
+    "th_package": "封装",
+    "th_failure_modes": "失效模式",
+    "th_notes": "备注"
+  },
+  "audit": {
+    "missing": "audit_verdict.json 缺失 — 管线尚未审计此包。",
+    "headline_approved": "审计通过 — 包与 registry 一致。",
+    "headline_needs_revision": "审计要求修订 — 检测到漂移，需修复。",
+    "headline_rejected": "审计拒绝 — 包不一致，当前不可用。",
+    "headline_unknown": "审计状态未知。",
+    "files_to_rewrite": "需重写的文件",
+    "drift_heading": "检测到漂移 ({n})"
+  }
+}

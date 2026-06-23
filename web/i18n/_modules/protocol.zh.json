@@ -1,0 +1,63 @@
+{
+  "aria": {
+    "step_pin": "步骤引脚",
+    "panel": "诊断协议",
+    "toggle": "折叠 / 展开",
+    "abandon": "放弃协议"
+  },
+  "title": {
+    "default": "—"
+  },
+  "history": {
+    "summary": "历史"
+  },
+  "toggle": {
+    "collapse": "折叠",
+    "expand": "展开"
+  },
+  "step": {
+    "value_placeholder": "值",
+    "nominal_placeholder": "标称 {value}",
+    "observation_placeholder": "你观察到的…",
+    "yes": "是",
+    "no": "否",
+    "done": "完成",
+    "validate": "验证",
+    "skip": "跳过",
+    "skip_prompt": "为什么跳过此步骤？",
+    "result": {
+      "yes": "是",
+      "no": "否",
+      "done": "完成",
+      "empty": "—"
+    }
+  },
+  "abandon": {
+    "confirm": "放弃正在运行的协议？",
+    "modal": {
+      "badge": "放弃协议",
+      "title": "放弃正在运行的协议？",
+      "body": "agent 将收到通知，诊断序列将标记为已放弃。已记录的步骤结果将保留在修复历史中。",
+      "reason_label": "原因（可选，将传达给 agent）",
+      "reason_placeholder": "为什么放弃 — 假设错误、死胡同、客户离开、…",
+      "cancel": "取消",
+      "confirm": "是，放弃"
+    }
+  },
+  "system_event": {
+    "abandoned": "协议已放弃",
+    "completed": "协议已完成"
+  },
+  "confirm": {
+    "badge": "建议的协议",
+    "step_count_placeholder": "— 步骤",
+    "step_count": "{n} 步",
+    "rationale_label": "理由",
+    "steps_label": "步骤",
+    "reject_reason_label": "拒绝原因（可选）",
+    "reject_reason_placeholder": "为什么拒绝此协议 — agent 会考虑。",
+    "hint": "agent 正在等待你的决定后再推送协议。",
+    "reject": "拒绝",
+    "accept": "接受"
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "drawer": {
+    "header_label": "构建内存",
+    "device_placeholder": "—",
+    "close_aria": "关闭进度面板"
+  },
+  "phase": {
+    "scout": {
+      "label": "Scout",
+      "sub": "网络调研"
+    },
+    "registry": {
+      "label": "Registry",
+      "sub": "规范词汇表"
+    },
+    "writers": {
+      "label": "Writers",
+      "sub": "图谱 · 规则 · 术语表"
+    },
+    "audit": {
+      "label": "Auditor",
+      "sub": "质控 & 一致性"
+    }
+  },
+  "step": {
+    "time_placeholder": "—",
+    "in_progress": "运行中…",
+    "failed": "失败"
+  },
+  "status": {
+    "waiting": "等待首个事件…",
+    "connecting": "连接管线…",
+    "started": "管线已启动…",
+    "phase_running": "阶段运行中 · <b>{phase}</b>",
+    "ready": "内存就绪 · 审计 <b>{status}</b> · 一致性 <b>{score}</b>",
+    "failed": "管线失败 · <b>{status}</b>",
+    "lost_connection": "与进度流的连接丢失。",
+    "closed_early": "管线完成前连接已关闭。"
+  },
+  "cta": {
+    "view_memory_bank": "打开内存库",
+    "close": "关闭"
+  }
+}

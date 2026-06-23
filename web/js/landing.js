@@ -36,7 +36,7 @@ function setLandingMascot(state) {
 function _landingDateFmt() {
   const locale = (i18n && i18n.locale) || 'en';
   // Map our short locale codes to BCP-47 region tags Intl expects.
-  const bcp47 = locale === 'fr' ? 'fr-FR' : 'en-US';
+  const bcp47 = (i18n && i18n.toBcp47) ? i18n.toBcp47(locale) : 'en-US';
   return new Intl.DateTimeFormat(bcp47, {
     day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
   });

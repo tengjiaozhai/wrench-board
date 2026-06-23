@@ -1,26 +1,29 @@
 // i18n core — vanilla, no build step.
 //
 // Loads per-module JSON dictionaries from /i18n/_modules/{module}.{lang}.json
-// and exposes a global `i18n` API. Default locale: English. French is preserved
-// as an alternate locale. New locales = drop a `_modules/{module}.{lang}.json`
-// alongside the existing ones, and add the lang to SUPPORTED.
+// and exposes a global `i18n` API. Default locale: English. French and
+// Simplified Chinese are preserved as alternate locales. New locales = drop a
+// `_modules/{module}.{lang}.json` alongside the existing ones, and add the
+// lang to SUPPORTED.
 //
 // Public API:
 //   i18n.t(key, params?)       → translated string, params interpolate {name}
-//   i18n.locale                → current 'en' | 'fr'
+//   i18n.locale                → current 'en' | 'fr' | 'zh'
 //   i18n.setLocale(lang)       → switch + persist + re-apply DOM
 //   i18n.applyDom(root?)       → re-translate `[data-i18n]` / `[data-i18n-attr]`
 //   i18n.ready                 → Promise resolved once first dictionary loaded
 //   i18n.onReady(fn)           → run fn once dictionaries are loaded
 //   i18n.onChange(fn)          → notify on locale switch (re-render hook)
+//   i18n.toBcp47(code)         → resolve locale code to BCP-47 tag (e.g. zh → zh-CN)
 
-const SUPPORTED = ['en', 'fr'];
+const SUPPORTED = ['en', 'fr', 'zh'];
 const DEFAULT_LOCALE = 'en';
 const STORAGE_KEY = 'wb.locale';
 
-// Static module list — keep alphabetic. Each entry expects two files:
+// Static module list — keep alphabetic. Each entry expects three files:
 //   web/i18n/_modules/{name}.en.json
 //   web/i18n/_modules/{name}.fr.json
+//   web/i18n/_modules/{name}.zh.json
 const MODULES = [
   'brd',
   'camera',
@@ -40,7 +43,9 @@ const MODULES = [
   'stock',
 ];
 
-const dicts = { en: {}, fr: {} };
+const BCP47 = { en: 'en-US', fr: 'fr-FR', zh: 'zh-CN' };
+
+const dicts = { en: {}, fr: {}, zh: {} };
 const changeListeners = new Set();
 let currentLocale = pickInitialLocale();
 let readyResolve;
@@ -139,6 +144,8 @@ async function setLocale(lang) {
   }
 }
 
+function toBcp47(code) { return BCP47[code] || BCP47[DEFAULT_LOCALE]; }
+
 function onChange(fn) { changeListeners.add(fn); return () => changeListeners.delete(fn); }
 function onReady(fn) { ready.then(fn); }
 
@@ -149,7 +156,7 @@ async function init() {
   readyResolve();
 }
 
-const api = { t, applyDom, setLocale, onChange, onReady, ready, get locale() { return currentLocale; }, SUPPORTED };
+const api = { t, applyDom, setLocale, onChange, onReady, ready, toBcp47, get locale() { return currentLocale; }, SUPPORTED };
 window.i18n = api;
 window.t = t; // global shortcut for convenience inside JS files
 
@@ -160,4 +167,4 @@ if (document.readyState === 'loading') {
 }
 
 export default api;
-export { t, applyDom, setLocale, onChange, onReady };
+export { t, applyDom, setLocale, onChange, onReady, toBcp47 };

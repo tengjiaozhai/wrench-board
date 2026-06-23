@@ -101,7 +101,7 @@ function relativeTimeFr(isoString) {
   const days = Math.floor(hours / 24);
   if (days === 1) return t("home.time.yesterday");
   if (days < 7) return t("home.time.days_ago", { n: days });
-  const localeTag = (window.i18n && window.i18n.locale === "fr") ? "fr-FR" : "en-US";
+  const localeTag = (window.i18n && window.i18n.toBcp47) ? window.i18n.toBcp47(window.i18n.locale) : "en-US";
   return then.toLocaleDateString(localeTag, { day: "numeric", month: "short", year: "numeric" });
 }
 
@@ -801,7 +801,7 @@ function formatVersionDate(ts) {
   const [, y, mo, d, h, mi] = m;
   const dt = new Date(`${y}-${mo}-${d}T${h}:${mi}:00Z`);
   if (isNaN(dt)) return ts;
-  const localeTag = (window.i18n && window.i18n.locale === "fr") ? "fr-FR" : "en-US";
+  const localeTag = (window.i18n && window.i18n.toBcp47) ? window.i18n.toBcp47(window.i18n.locale) : "en-US";
   return dt.toLocaleString(localeTag, {
     day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
   }).replace(",", " ·");

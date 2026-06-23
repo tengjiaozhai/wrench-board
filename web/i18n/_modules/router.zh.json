@@ -1,0 +1,36 @@
+{
+  "section": {
+    "home": "修复日志",
+    "pcb": "Boardview",
+    "schematic": "原理图",
+    "graphe": "内存",
+    "stock": "库存 & Donors",
+    "profile": "档案"
+  },
+  "mode": {
+    "journal_tag": "日志",
+    "journal_repairs": "修复",
+    "journal_session": "会话",
+    "tool_tag": "工具",
+    "tool_boardview": "Boardview",
+    "tool_schematic": "电气图谱",
+    "tool_stock": "库存 & Donors",
+    "wait_tag": "等待",
+    "wait_no_memory": "未加载内存",
+    "wait_no_repair": "无活跃修复",
+    "wait_unbuilt": "内存未构建",
+    "memory_tag": "内存",
+    "memory_graph": "知识图谱",
+    "build_tag": "构建中",
+    "build_in_progress": "内存构建中",
+    "profile_tag": "档案",
+    "profile_sub": "技术员"
+  },
+  "metabar": {
+    "no_repair": "无活跃修复",
+    "no_memory_for_device": "此设备无内存 — 创建修复以构建。",
+    "memory_loaded_approved": "内存已加载 · 审计通过",
+    "memory_building_missing": "内存构建中 — 缺少 {missing}",
+    "open_repair_to_view_graph": "从日志中打开修复以查看其图谱。"
+  }
+}

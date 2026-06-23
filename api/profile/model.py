@@ -16,7 +16,7 @@ from api.profile.catalog import SkillId
 
 LevelValue = Literal["beginner", "intermediate", "confirmed", "expert"]
 VerbosityValue = Literal["auto", "concise", "normal", "teaching"]
-LanguageValue = Literal["fr", "en"]
+LanguageValue = Literal["fr", "en", "zh"]
 
 
 class Identity(BaseModel):

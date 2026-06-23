@@ -12,3 +12,7 @@
 *{box-sizing:border-box}
 html,body{height:100%}
 body{margin:0;background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-serif;font-size:13px;overflow:hidden;-webkit-font-smoothing:antialiased}
+:lang(zh) body{letter-spacing:0}
+:lang(zh) .mono,
+:lang(zh) [class*="tag"],
+:lang(zh) [class*="kicker"]{letter-spacing:.2px}

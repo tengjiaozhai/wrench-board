@@ -17,7 +17,7 @@ function escHtml(s) {
 
 const STATUS_KEYS = ["mastered", "practiced", "learning", "unlearned"];
 const VERBOSITIES = ["auto", "concise", "normal", "teaching"];
-const LANGUAGES = ["fr", "en"];
+const LANGUAGES = ["en", "fr", "zh"];
 
 async function ensurePartial() {
   if (_partialLoaded) return;
@@ -51,7 +51,7 @@ function fmtUpdated(iso) {
   if (!iso) return "—";
   const d = new Date(iso);
   if (isNaN(d)) return "—";
-  const locale = currentLocale() === "fr" ? "fr-FR" : "en-US";
+  const locale = (window.i18n && window.i18n.toBcp47) ? window.i18n.toBcp47(currentLocale()) : "en-US";
   const date = d.toLocaleDateString(locale, { day: "numeric", month: "short" });
   return window.t("profile.head.updated", { date });
 }
