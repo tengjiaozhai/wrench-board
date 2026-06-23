@@ -40,6 +40,13 @@ class Settings(BaseSettings):
             "Lexicographe — structured extraction without heavy synthesis."
         ),
     )
+    anthropic_base_url: str = Field(
+        default="",
+        description=(
+            "Custom Anthropic API base URL. Leave empty for default (api.anthropic.com). "
+            "Used for API proxies or custom endpoints."
+        ),
+    )
 
     port: int = Field(default=8000, description="HTTP server port.")
     log_level: str = Field(default="INFO", description="Log level name.")

@@ -1248,13 +1248,18 @@ async def run_diagnostic_session_direct(
         await ws.close()
         return
 
-    client = AsyncAnthropic(api_key=settings.anthropic_api_key, max_retries=settings.anthropic_max_retries)  # noqa: E501
+    client = AsyncAnthropic(
+        api_key=settings.anthropic_api_key,
+        base_url=settings.anthropic_base_url or None,
+        max_retries=settings.anthropic_max_retries,
+    )  # noqa: E501
     memory_root = Path(settings.memory_root)
     session = SessionState.from_device(device_slug)
+    # Use settings from .env for all tiers (supports custom API proxies)
     tier_to_model = {
-        "fast": "claude-haiku-4-5",
-        "normal": "claude-sonnet-4-6",
-        "deep": "claude-opus-4-8",
+        "fast": settings.anthropic_model_fast,
+        "normal": settings.anthropic_model_sonnet,
+        "deep": settings.anthropic_model_main,
     }
     model = tier_to_model.get(tier, settings.anthropic_model_main)
 
