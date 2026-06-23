@@ -20,11 +20,12 @@ import time
 from pathlib import Path
 
 from anthropic import AsyncAnthropic
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import ValidationError
 
 import api.pipeline as _pkg  # noqa: PLC0415 — module-attribute lookups for patchability
+from api.pipeline import live_graph
 from api.pipeline.models import (
     HypothesizeRequest,
     IngestSchematicRequest,
@@ -34,7 +35,7 @@ from api.pipeline.models import (
 from api.pipeline.orchestrator import _slugify
 from api.pipeline.routes._helpers import _validate_slug
 from api.pipeline.routes.packs import _read_optional_json
-from api.pipeline.schematic.grounding import extract_grounding
+from api.pipeline.schematic.grounding import extract_all_pages
 from api.pipeline.schematic.renderer import render_pages
 from api.pipeline.schematic.schemas import AnalyzedBootSequence, ElectricalGraph
 from api.pipeline.schematic.simulator import SimulationEngine
@@ -85,10 +86,7 @@ async def _run_schematic_in_background(
     """
     t0 = time.monotonic()
     _s = _pkg.get_settings()
-    _client_kwargs = {"api_key": _s.anthropic_api_key, "max_retries": _s.anthropic_max_retries}
-    if _s.anthropic_base_url:
-        _client_kwargs["base_url"] = _s.anthropic_base_url
-    client = AsyncAnthropic(**_client_kwargs)
+    client = AsyncAnthropic(api_key=_s.anthropic_api_key, max_retries=_s.anthropic_max_retries)
     try:
         await _pkg.ingest_schematic(
             device_slug=device_slug,
@@ -164,17 +162,32 @@ def _render_and_extract_pages(pdf_path: Path, pages_dir: Path, dpi: int = 150) -
     `page-NN.anchors.json` next to the PNG (same layout as the orchestrator).
     """
     pages_dir.mkdir(parents=True, exist_ok=True)
-    rendered = render_pages(pdf_path, pages_dir, dpi=dpi)
-    for rp in rendered:
-        try:
-            g = extract_grounding(pdf_path, rp.page_number)
-        except Exception:  # noqa: BLE001 — pdfplumber/extractor failures are page-local, skip + continue
-            logger.exception(
-                "grounding failed on page %d of %s — skipping anchors",
-                rp.page_number,
-                pdf_path,
-            )
-            continue
+    # Single pdfplumber pass: scan metadata for render + grounding anchors.
+    # pdftoppm then re-reads the PDF once for rasterisation; nothing parses it
+    # per page anymore (the old loop opened it once per page just for anchors).
+    # Anchors stay best-effort: if the grounding pass fails wholesale we still
+    # rasterise (render_pages probes internally) and skip the overlay JSONs.
+    try:
+        extracts = extract_all_pages(pdf_path)
+    except Exception:  # noqa: BLE001 — anchors are a non-critical search overlay
+        logger.exception(
+            "grounding pass failed on %s — rendering without anchors", pdf_path
+        )
+        render_pages(pdf_path, pages_dir, dpi=dpi)
+        return
+    render_meta = [
+        {
+            "page": e.page,
+            "width": e.width,
+            "height": e.height,
+            "char_count": e.char_count,
+            "line_count": e.line_count,
+        }
+        for e in extracts
+    ]
+    render_pages(pdf_path, pages_dir, dpi=dpi, metadata=render_meta)
+    for e in extracts:
+        g = e.grounding
         payload = {
             "page": g.page,
             "page_width_pt": g.page_width,
@@ -184,31 +197,53 @@ def _render_and_extract_pages(pdf_path: Path, pages_dir: Path, dpi: int = 150) -
                 for (rd, x0, top, x1, bot) in g.refdes_anchors
             ],
         }
-        (pages_dir / f"page-{rp.page_number:02d}.anchors.json").write_text(
+        (pages_dir / f"page-{g.page:02d}.anchors.json").write_text(
             json.dumps(payload, indent=2)
         )
 
 
-async def _ensure_pages_rendered(slug: str, memory_root: Path) -> Path | None:
+async def _ensure_pages_rendered(
+    slug: str, memory_root: Path, owner_ref: str | None = None
+) -> Path | None:
     """Lazy-render PNGs + anchors for a slug if they aren't on disk yet.
 
     Returns the pages directory on success, None when no source PDF can be
     found. The rasterisation is pushed to a thread so the event loop isn't
     blocked while `pdftoppm` runs (~1s/page at 150 DPI).
+
+    T9 — per-owner: when `owner_ref` is set, the pages resolve to the tenant's
+    active PDF cache (.cache_schematic/{hash}/schematic_pages/) keyed off the
+    owner pin; the source PDF and rendered PNGs both live in that cache base.
+    A managed tenant with no active schematic returns None → 404. owner None
+    (self-host) keeps the historical slug-root behaviour, byte-identical.
     """
-    pages_dir = memory_root / slug / "schematic_pages"
+    pack_dir = memory_root / slug
+    base = live_graph.resolve_cache_dir(pack_dir, owner_ref)
+    if base is None:
+        # Managed tenant with no active schematic pin → no pages.
+        return None
+    pages_dir = base / "schematic_pages"
     if _list_page_pngs(pages_dir):
         return pages_dir
-    pdf_path = _find_schematic_pdf(slug, memory_root)
+    # Source PDF: the cached schematic.pdf for a managed owner, else the
+    # legacy slug-root / board_assets lookup for self-host.
+    if owner_ref is None:
+        pdf_path = _find_schematic_pdf(slug, memory_root)
+    else:
+        cached_pdf = base / "schematic.pdf"
+        pdf_path = cached_pdf if cached_pdf.is_file() else None
     if pdf_path is None:
         return None
-    logger.info("[API] lazy-rendering schematic pages for slug=%s", slug)
+    logger.info("[API] lazy-rendering schematic pages for slug=%s owner=%s", slug, owner_ref)
     await asyncio.to_thread(_render_and_extract_pages, pdf_path, pages_dir)
     return pages_dir
 
 
 @router.get("/packs/{device_slug}/schematic/pages")
-async def get_pack_schematic_pages(device_slug: str) -> dict:
+async def get_pack_schematic_pages(
+    device_slug: str,
+    x_owner_ref: str | None = Header(default=None, alias="X-Owner-Ref"),
+) -> dict:
     """Return the page index for the in-app PDF viewer.
 
     Payload shape:
@@ -234,7 +269,7 @@ async def get_pack_schematic_pages(device_slug: str) -> dict:
     settings = _pkg.get_settings()
     slug = _slugify(device_slug)
     memory_root = Path(settings.memory_root)
-    pages_dir = await _ensure_pages_rendered(slug, memory_root)
+    pages_dir = await _ensure_pages_rendered(slug, memory_root, x_owner_ref)
     if pages_dir is None:
         raise HTTPException(
             status_code=404,
@@ -267,17 +302,21 @@ async def get_pack_schematic_pages(device_slug: str) -> dict:
     "/packs/{device_slug}/schematic/pages/{page_n}.png",
     methods=["GET", "HEAD"],
 )
-async def get_pack_schematic_page_png(device_slug: str, page_n: int) -> FileResponse:
+async def get_pack_schematic_page_png(
+    device_slug: str,
+    page_n: int,
+    x_owner_ref: str | None = Header(default=None, alias="X-Owner-Ref"),
+) -> FileResponse:
     """Serve one rasterised page as PNG.
 
     `page_n` is the 1-based page number; filename on disk is zero-padded to
     match pdftoppm's output (`page-01.png`). Lazy-renders the full pack if
-    the PNGs aren't on disk yet.
+    the PNGs aren't on disk yet. T9 — per-owner via X-Owner-Ref.
     """
     settings = _pkg.get_settings()
     slug = _slugify(device_slug)
     memory_root = Path(settings.memory_root)
-    pages_dir = await _ensure_pages_rendered(slug, memory_root)
+    pages_dir = await _ensure_pages_rendered(slug, memory_root, x_owner_ref)
     if pages_dir is None:
         raise HTTPException(
             status_code=404,
@@ -300,7 +339,10 @@ async def get_pack_schematic_page_png(device_slug: str, page_n: int) -> FileResp
 
 
 @router.get("/packs/{device_slug}/schematic")
-async def get_pack_schematic(device_slug: str) -> dict:
+async def get_pack_schematic(
+    device_slug: str,
+    x_owner_ref: str | None = Header(default=None, alias="X-Owner-Ref"),
+) -> dict:
     """Return the compiled electrical graph for this device.
 
     404 when either the pack directory or `electrical_graph.json` is missing.
@@ -311,14 +353,19 @@ async def get_pack_schematic(device_slug: str) -> dict:
     into the payload under key `analyzed_boot_sequence` and also surface a
     `boot_sequence_source` flag (`"analyzer"` or `"compiler"`) so the UI can
     badge the timeline appropriately.
+
+    T9 — per-owner: the cloud proxy injects `X-Owner-Ref` (= tenant_id); the
+    graph + its overlays resolve to the tenant's active PDF cache. Absent
+    header (self-host) → the slug root, unchanged.
     """
     settings = _pkg.get_settings()
     slug = _slugify(device_slug)
     pack_dir = Path(settings.memory_root) / slug
     if not pack_dir.exists():
         raise HTTPException(status_code=404, detail=f"No pack for device_slug={slug!r}")
-    graph_path = pack_dir / "electrical_graph.json"
-    if not graph_path.exists():
+    base = live_graph.resolve_graph_dir(pack_dir, x_owner_ref)   # graphe = moat partagé (fallback canonique)
+    graph_path = base / "electrical_graph.json" if base is not None else None
+    if graph_path is None or not graph_path.exists():
         raise HTTPException(
             status_code=404,
             detail=f"No schematic ingested yet for device_slug={slug!r}",
@@ -333,7 +380,7 @@ async def get_pack_schematic(device_slug: str) -> dict:
 
     # Opt-in overlay: Opus-refined boot sequence lives in its own file so we
     # can re-run the analyzer without re-doing the vision pass.
-    analyzed_path = pack_dir / "boot_sequence_analyzed.json"
+    analyzed_path = base / "boot_sequence_analyzed.json"
     if analyzed_path.exists():
         try:
             payload["analyzed_boot_sequence"] = json.loads(analyzed_path.read_text())
@@ -350,7 +397,7 @@ async def get_pack_schematic(device_slug: str) -> dict:
     # Same pattern for the net classifier — nets_classified.json when
     # present, fallback to an empty state (UI can still run the regex
     # classifier in-browser if needed).
-    classified_path = pack_dir / "nets_classified.json"
+    classified_path = base / "nets_classified.json"
     if classified_path.exists():
         try:
             classification = json.loads(classified_path.read_text())
@@ -378,10 +425,7 @@ async def _run_boot_analyzer_in_background(device_slug: str, pack_dir: Path) -> 
         logger.exception("[API] analyze-boot: failed to load electrical_graph for %s", device_slug)
         return
     _s = _pkg.get_settings()
-    _client_kwargs = {"api_key": _s.anthropic_api_key, "max_retries": _s.anthropic_max_retries}
-    if _s.anthropic_base_url:
-        _client_kwargs["base_url"] = _s.anthropic_base_url
-    client = AsyncAnthropic(**_client_kwargs)
+    client = AsyncAnthropic(api_key=_s.anthropic_api_key, max_retries=_s.anthropic_max_retries)
     try:
         from api.pipeline.schematic.boot_analyzer import (
             analyze_boot_sequence,  # lazy: module is optional WIP on evolve
@@ -433,10 +477,7 @@ async def _run_net_classifier_in_background(device_slug: str, pack_dir: Path) ->
         logger.exception("[API] classify-nets: failed to load electrical_graph for %s", device_slug)
         return
     _s = _pkg.get_settings()
-    _client_kwargs = {"api_key": _s.anthropic_api_key, "max_retries": _s.anthropic_max_retries}
-    if _s.anthropic_base_url:
-        _client_kwargs["base_url"] = _s.anthropic_base_url
-    client = AsyncAnthropic(**_client_kwargs)
+    client = AsyncAnthropic(api_key=_s.anthropic_api_key, max_retries=_s.anthropic_max_retries)
     try:
         classification = await _pkg.classify_nets(graph, client=client)
         (pack_dir / "nets_classified.json").write_text(classification.model_dump_json(indent=2))
@@ -475,18 +516,23 @@ async def post_classify_nets(device_slug: str) -> dict:
 
 
 @router.get("/packs/{device_slug}/schematic/boot")
-async def get_pack_schematic_boot(device_slug: str) -> dict:
+async def get_pack_schematic_boot(
+    device_slug: str,
+    x_owner_ref: str | None = Header(default=None, alias="X-Owner-Ref"),
+) -> dict:
     """Return just the boot sequence + power rails — the "light" subset.
 
     The full `electrical_graph.json` can reach several hundred KB on real
     boards (449 components, ~2k pins on MNT Reform). For the initial boot
     timeline view the UI only needs rails and phases, so this route strips
     the heavy `components` / `nets` / `typed_edges` arrays server-side.
+
+    T9 — per-owner: resolves to the tenant's active PDF graph via X-Owner-Ref.
     """
     settings = _pkg.get_settings()
     slug = _slugify(device_slug)
-    graph_path = Path(settings.memory_root) / slug / "electrical_graph.json"
-    if not graph_path.exists():
+    graph_path = live_graph.resolve_graph_path(Path(settings.memory_root) / slug, x_owner_ref)
+    if graph_path is None or not graph_path.exists():
         raise HTTPException(
             status_code=404,
             detail=f"No schematic ingested yet for device_slug={slug!r}",
@@ -507,17 +553,22 @@ async def get_pack_schematic_boot(device_slug: str) -> dict:
 
 
 @router.get("/packs/{device_slug}/schematic/passives")
-async def get_schematic_passives(device_slug: str) -> list[dict]:
+async def get_schematic_passives(
+    device_slug: str,
+    x_owner_ref: str | None = Header(default=None, alias="X-Owner-Ref"),
+) -> list[dict]:
     """Return classifier output per passive refdes (kind, role, confidence, source).
 
     Filters ICs out — only R/C/D/FB emitted. Used for debugging the passive
     classifier and for hand-written fixture generators to look up candidate
     refdes without deserializing the entire electrical_graph.json.
+
+    T9 — per-owner: resolves to the tenant's active PDF graph via X-Owner-Ref.
     """
     settings = _pkg.get_settings()
     slug = _slugify(device_slug)
-    graph_path = Path(settings.memory_root) / slug / "electrical_graph.json"
-    if not graph_path.exists():
+    graph_path = live_graph.resolve_graph_path(Path(settings.memory_root) / slug, x_owner_ref)
+    if graph_path is None or not graph_path.exists():
         raise HTTPException(
             status_code=404,
             detail=f"No schematic ingested yet for device_slug={slug!r}",
@@ -546,19 +597,25 @@ async def get_schematic_passives(device_slug: str) -> list[dict]:
 
 
 @router.post("/packs/{device_slug}/schematic/simulate")
-async def post_simulate(device_slug: str, request: SimulateRequest) -> dict:
+async def post_simulate(
+    device_slug: str,
+    request: SimulateRequest,
+    x_owner_ref: str | None = Header(default=None, alias="X-Owner-Ref"),
+) -> dict:
     """Run the behavioral simulator on the compiled electrical graph.
 
     Accepts killed_refdes (sugar), explicit failures (causes), and
     rail_overrides (observations). Synchronous (< 10 ms on MNT-class
     boards). HTTP context is stateless — no probe_route enrichment
     here; clients that need a route go through the agent WS path.
+
+    T9 — per-owner: resolves to the tenant's active PDF graph via X-Owner-Ref.
     """
     settings = _pkg.get_settings()
     slug = _slugify(device_slug)
-    pack_dir = Path(settings.memory_root) / slug
-    graph_path = pack_dir / "electrical_graph.json"
-    if not pack_dir.exists() or not graph_path.exists():
+    base = live_graph.resolve_graph_dir(Path(settings.memory_root) / slug, x_owner_ref)   # graphe = moat partagé (fallback canonique)
+    graph_path = base / "electrical_graph.json" if base is not None else None
+    if graph_path is None or not graph_path.exists():
         raise HTTPException(
             status_code=404,
             detail=f"No schematic ingested yet for device_slug={slug!r}",
@@ -592,7 +649,7 @@ async def post_simulate(device_slug: str, request: SimulateRequest) -> dict:
         )
 
     analyzed: AnalyzedBootSequence | None = None
-    ab_path = pack_dir / "boot_sequence_analyzed.json"
+    ab_path = base / "boot_sequence_analyzed.json"
     if ab_path.exists():
         try:
             analyzed = AnalyzedBootSequence.model_validate_json(ab_path.read_text())
@@ -610,11 +667,19 @@ async def post_simulate(device_slug: str, request: SimulateRequest) -> dict:
 
 
 @router.post("/packs/{device_slug}/schematic/hypothesize")
-async def post_hypothesize(device_slug: str, request: HypothesizeRequest) -> dict:
+async def post_hypothesize(
+    device_slug: str,
+    request: HypothesizeRequest,
+    x_owner_ref: str | None = Header(default=None, alias="X-Owner-Ref"),
+) -> dict:
     """Rank candidate refdes-kills that explain the tech's observations.
 
     Same contract as mb_hypothesize tool. 400 on unknown refdes / rail,
     404 when no electrical_graph is on disk.
+
+    T9 — per-owner: the cloud proxy injects `X-Owner-Ref` (= tenant_id); the
+    electrical graph is resolved to that tenant's active PDF (owner None →
+    slug root, self-host). The measurement journal stays at the slug root.
     """
     settings = _pkg.get_settings()
     slug = _slugify(device_slug)
@@ -627,6 +692,7 @@ async def post_hypothesize(device_slug: str, request: HypothesizeRequest) -> dic
         metrics_rails=request.metrics_rails or None,
         max_results=request.max_results,
         repair_id=request.repair_id,
+        owner_ref=x_owner_ref,
     )
     if not result.get("found"):
         reason = result.get("reason", "unknown")

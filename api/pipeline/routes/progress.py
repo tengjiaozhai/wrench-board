@@ -1,8 +1,10 @@
 """WebSocket pipeline-progress relay — `WS /pipeline/progress/{slug}`.
 
 Subscribes the client to the per-slug event bus and forwards every
-event verbatim until disconnect. Origin check runs first (see
-`api.ws_security`) so cross-origin tabs can't silently subscribe.
+event verbatim until disconnect. Origin check then service-token check
+run first (see `api.ws_security`) so cross-origin browser tabs can't
+silently subscribe AND direct access to the engine URL is blocked in
+managed deployment.
 """
 
 from __future__ import annotations
@@ -14,7 +16,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from api.pipeline import events
 from api.pipeline.orchestrator import _slugify
-from api.ws_security import enforce_ws_origin
+from api.ws_security import enforce_ws_origin, enforce_ws_service_token
 
 logger = logging.getLogger("wrench_board.pipeline.api")
 
@@ -32,9 +34,15 @@ async def progress_ws(websocket: WebSocket, device_slug: str) -> None:
 
     Origin check runs first to keep cross-origin browser pages from
     silently subscribing to another technician's pipeline progress
-    stream. See ``api.ws_security``.
+    stream. Service-token check runs next: when the engine is deployed
+    behind wrenchboard-cloud, only the cloud relay (which carries
+    ``Authorization: Bearer <token>``) may subscribe — direct ``websocat``
+    access to the engine URL is refused. Both are no-ops in the standalone
+    workbench (no allowlist / no token configured). See ``api.ws_security``.
     """
     if not await enforce_ws_origin(websocket):
+        return
+    if not await enforce_ws_service_token(websocket):
         return
 
     slug = _slugify(device_slug)

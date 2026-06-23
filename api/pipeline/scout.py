@@ -17,9 +17,16 @@ from typing import TYPE_CHECKING
 
 from anthropic import AsyncAnthropic
 
-from api.pipeline.prompts import SCOUT_RETRY_SUFFIX, SCOUT_SYSTEM, SCOUT_USER_TEMPLATE
+from api.pipeline.prompts import (
+    SCOUT_RETRY_SUFFIX,
+    SCOUT_SYSTEM,
+    SCOUT_USER_TEMPLATE,
+    device_kind_constraint,
+)
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from api.pipeline.telemetry.token_stats import PhaseTokenStats
 
 logger = logging.getLogger("wrench_board.pipeline.scout")
@@ -92,6 +99,7 @@ async def run_scout(
     client: AsyncAnthropic,
     model: str,
     device_label: str,
+    device_kind: str | None = None,
     focus_symptom: str | None = None,
     max_continuations: int = 3,
     min_symptoms: int = 3,
@@ -99,6 +107,7 @@ async def run_scout(
     min_sources: int = 3,
     max_retries: int = 1,
     stats: PhaseTokenStats | None = None,
+    on_event: Callable[[dict], Awaitable[None]] | None = None,
 ) -> str:
     """Execute Phase 1 — return the raw research Markdown dump.
 
@@ -126,10 +135,12 @@ async def run_scout(
             client=client,
             model=model,
             device_label=device_label,
+            device_kind=device_kind,
             focus_symptom=focus_symptom,
             max_continuations=max_continuations,
             attempt=attempt,
             stats=stats,
+            on_event=on_event,
         )
         last_dump = dump
         last_assessment = assess_dump(
@@ -189,13 +200,15 @@ def _build_user_prompt(
     *,
     device_label: str,
     attempt: int,
+    device_kind: str | None = None,
     focus_symptom: str | None = None,
 ) -> str:
     """Assemble the Scout user message.
 
     Without `focus_symptom`, returns exactly `SCOUT_USER_TEMPLATE.format(...)`
     plus the retry suffix on retries. With a focus symptom, prepends a
-    technician-priority block before the retry suffix."""
+    technician-priority block before the retry suffix. When `device_kind` is
+    a resolved class, appends a one-line authoritative constraint."""
     user_prompt = SCOUT_USER_TEMPLATE.format(device_label=device_label)
 
     if focus_symptom:
@@ -203,6 +216,8 @@ def _build_user_prompt(
 
     if attempt > 0:
         user_prompt = user_prompt + SCOUT_RETRY_SUFFIX
+
+    user_prompt = user_prompt + device_kind_constraint(device_kind)
 
     return user_prompt
 
@@ -212,15 +227,18 @@ async def _scout_once(
     client: AsyncAnthropic,
     model: str,
     device_label: str,
+    device_kind: str | None,
     focus_symptom: str | None,
     max_continuations: int,
     attempt: int,
     stats: PhaseTokenStats | None = None,
+    on_event: Callable[[dict], Awaitable[None]] | None = None,
 ) -> str:
     """One end-to-end Scout run, including server-side `pause_turn` handling."""
     user_prompt = _build_user_prompt(
         device_label=device_label,
         attempt=attempt,
+        device_kind=device_kind,
         focus_symptom=focus_symptom,
     )
 
@@ -237,6 +255,13 @@ async def _scout_once(
 
     for iteration in range(max_continuations + 1):
         logger.info("[Scout] API call iteration=%d (attempt=%d)", iteration + 1, attempt + 1)
+        # Live sub-step: the landing line reads "recherche web · tour N" so a
+        # long multi-round Scout phase isn't a silent spinner.
+        if on_event is not None:
+            await on_event({
+                "type": "phase_step", "phase": "scout", "step": "search_round",
+                "index": iteration + 1,
+            })
         effort = "xhigh" if str(model).startswith("claude-opus-4-") else "high"
         response = await client.messages.create(
             model=model,
@@ -256,6 +281,7 @@ async def _scout_once(
                 output_tokens=response.usage.output_tokens,
                 cache_read=getattr(response.usage, "cache_read_input_tokens", 0) or 0,
                 cache_write=getattr(response.usage, "cache_creation_input_tokens", 0) or 0,
+                model=getattr(response, "model", None),
             )
 
         if response.stop_reason == "pause_turn":

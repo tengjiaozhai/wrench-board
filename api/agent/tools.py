@@ -13,14 +13,49 @@ mb_list_findings tool: that's a redundant API surface vs. the mount.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
 from api.agent.conversation_log import record_session_log
 from api.agent.field_reports import record_field_report
+from api.agent.owner_ref import current_owner_ref
 from api.board.validator import suggest_similar
+from api.pipeline.pack_migrate import migrate_pack_if_needed
+from api.pipeline.pack_storage import load_effective_pack
+from api.pipeline.schemas import COMPONENT_KINDS
 from api.session.state import SessionState
+
+
+def _unflatten_effective(eff: dict[str, Any]) -> dict[str, Any]:
+    """Convertit la forme effective T8 {kind: {items:[...]}} vers la forme
+    attendue par les tools mb_* : {registry:{components,signals}, dictionary:
+    {entries}, rules:{rules}}.
+
+    Registry : un item est un composant si kind (insensible à la casse) ∈
+    COMPONENT_KINDS, sinon un signal (couvre les packs legacy lowercase
+    'pmic'/'power_rail' aussi bien que le T8 uppercase).
+    """
+    reg_items = eff.get("registry", {}).get("items", [])
+    components = [it for it in reg_items if str(it.get("kind", "")).upper() in COMPONENT_KINDS]
+    signals = [it for it in reg_items if str(it.get("kind", "")).upper() not in COMPONENT_KINDS]
+    return {
+        "registry": {"components": components, "signals": signals},
+        "dictionary": {"entries": eff.get("dictionary", {}).get("items", [])},
+        "rules": {"rules": eff.get("rules", {}).get("items", [])},
+    }
+
+
+def _pack_max_mtime(memory_root: Path, slug: str) -> float:
+    """mtime max des couches lues (baseline + promoted) pour l'invalidation du
+    cache de session. 0.0 si rien sur disque (cache toujours considéré frais)."""
+    base = memory_root / slug
+    mtimes = [0.0]
+    for layer in ("baseline", "promoted"):
+        for fname in ("registry.json", "dictionary.json", "rules.json"):
+            p = base / layer / fname
+            if p.is_file():
+                mtimes.append(p.stat().st_mtime)
+    return max(mtimes)
 
 
 def _load_pack(
@@ -28,36 +63,30 @@ def _load_pack(
     memory_root: Path,
     session: SessionState | None = None,
 ) -> dict[str, Any]:
-    pack_dir = memory_root / slug
-    paths = (
-        pack_dir / "registry.json",
-        pack_dir / "dictionary.json",
-        pack_dir / "rules.json",
-    )
-    try:
-        max_mtime = max(p.stat().st_mtime for p in paths)
-    except FileNotFoundError:
-        pack: dict[str, Any] = {}
-        for key, path in zip(("registry", "dictionary", "rules"), paths):
-            try:
-                pack[key] = json.loads(path.read_text())
-            except FileNotFoundError:
-                pack[key] = {}
-        pack["_partial"] = True
-        return pack
+    # T8 : migration idempotente legacy → baseline/ au premier accès, puis lecture
+    # de la vue effective (baseline + promoted, résolution par clé canonique).
+    migrate_pack_if_needed(memory_root, slug)
+    owner_ref = current_owner_ref()
 
+    # Cache de session : clé logique (slug, owner_ref). owner_ref est constant
+    # sur une session — on le stocke dans la VALEUR (pas la clé) pour rester
+    # compatible avec invalidate_pack_cache(slug) qui pop par slug (str). Un autre
+    # owner_ref → cache-miss (anti-fuite cross-tenant + future-proof).
+    max_mtime = _pack_max_mtime(memory_root, slug)
     if session is not None:
         cached = session.pack_cache.get(slug)
-        if cached is not None and cached[0] >= max_mtime:
+        if (
+            cached is not None
+            and len(cached) == 3
+            and cached[0] >= max_mtime
+            and cached[2] == owner_ref
+        ):
             return cached[1]
 
-    pack = {
-        "registry": json.loads(paths[0].read_text()),
-        "dictionary": json.loads(paths[1].read_text()),
-        "rules": json.loads(paths[2].read_text()),
-    }
+    eff = load_effective_pack(memory_root, slug, owner_ref=owner_ref)
+    pack = _unflatten_effective(eff)
     if session is not None:
-        session.pack_cache[slug] = (max_mtime, pack)
+        session.pack_cache[slug] = (max_mtime, pack, owner_ref)
     return pack
 
 
@@ -252,6 +281,7 @@ async def mb_record_session_log(
         next_steps=next_steps,
         lesson=lesson,
         memory_root=memory_root,
+        owner_ref=current_owner_ref(),  # tenant scope — private working memory
     )
 
 
@@ -282,6 +312,10 @@ async def mb_expand_knowledge(
             focus_refdes=focus_refdes or [],
             client=client,
             memory_root=memory_root,
+            # T8 : scope l'enrichissement au tenant (added_by_tenant dans la
+            # provenance). Ferme le résidu de fuite T6 — le cloud reste le
+            # gatekeeper, l'owner_ref est opaque côté moteur.
+            owner_ref=current_owner_ref(),
         )
         summary["ok"] = True
         if session is not None:

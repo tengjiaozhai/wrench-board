@@ -113,6 +113,42 @@ _active_diagnostic_keys: set[tuple[str, str, str]] = set()
 # small value and avoid sleeping the real budget.
 _GUARD_ACQUIRE_TIMEOUT_SECONDS: float = 5.0
 
+# Waiter-notification registry for the single-WS guard. When a contending
+# WS finds the key already claimed, it parks on an `asyncio.Event` keyed by
+# the triplet instead of busy-polling the set every 50 ms. The holder, on
+# teardown, calls `_release_diagnostic_key`, which discards the key AND
+# wakes every parked waiter for that key in the same uninterrupted
+# scheduler step. This replaces the old `while key in set: await sleep(.05)`
+# poll with an exact wakeup — same total timeout, same atomic claim, same
+# rejection semantics on overrun, but zero idle polling latency.
+#
+# A list of events per key (not a single event) handles the rare case of
+# two waiters parked on the same key at once: the holder sets all of them,
+# and each re-checks set membership on wake (only one wins the re-claim;
+# the loser re-parks until its deadline). asyncio is single-threaded, so
+# every set-membership check + add + event register happens atomically
+# between awaits — no lock is needed.
+_guard_waiters: dict[tuple[str, str, str], list[asyncio.Event]] = {}
+
+
+def _release_diagnostic_key(
+    key: tuple[str, str, str],
+    active_keys: set[tuple[str, str, str]],
+) -> None:
+    """Discard a guard claim and wake any WS parked waiting for it.
+
+    `active_keys` is passed in (rather than imported) so the caller stays
+    the single owner of the canonical set — the runtime holds
+    `_active_diagnostic_keys`, this helper only mutates the copy it's handed
+    and signals the waiters registered here. Idempotent: discarding an
+    absent key and waking an empty waiter list are both no-ops.
+    """
+    active_keys.discard(key)
+    waiters = _guard_waiters.get(key)
+    if waiters:
+        for ev in waiters:
+            ev.set()
+
 
 async def _sessions_create_with_retry(
     client: AsyncAnthropic,

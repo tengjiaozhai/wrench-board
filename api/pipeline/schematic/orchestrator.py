@@ -25,13 +25,18 @@ import json
 import logging
 import shutil
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from anthropic import AsyncAnthropic
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 from api.config import get_settings
 from api.pipeline.schematic.compiler import compile_electrical_graph
 from api.pipeline.schematic.grounding import (
-    extract_grounding,
+    extract_all_pages,
+    extract_page_data,
     format_grounding_for_prompt,
 )
 from api.pipeline.schematic.merger import merge_pages
@@ -41,9 +46,14 @@ from api.pipeline.schematic.net_classifier import (
 )
 from api.pipeline.schematic.page_vision import extract_page
 from api.pipeline.schematic.passive_classifier import classify_passives
-from api.pipeline.schematic.renderer import render_pages
+from api.pipeline.schematic.renderer import (
+    SchematicPageLimitExceeded,
+    ensure_renderable_pdf,
+    probe_page_count,
+    render_one_page,
+    render_pages,
+)
 from api.pipeline.schematic.schemas import (
-    Ambiguity,
     ElectricalGraph,
     NetClassification,
     SchematicPageGraph,
@@ -67,7 +77,9 @@ async def ingest_schematic(
     device_label: str | None = None,
     use_grounding: bool = True,
     cache_warmup_seconds: float | None = None,
+    vision_concurrency: int | None = None,
     render_dpi: int = 200,
+    on_event: Callable[[dict], Awaitable[None]] | None = None,
 ) -> ElectricalGraph:
     """Run the full ingestion pipeline for `pdf_path` and persist artefacts.
 
@@ -82,6 +94,11 @@ async def ingest_schematic(
         cache_warmup_seconds
         if cache_warmup_seconds is not None
         else settings.pipeline_cache_warmup_seconds
+    )
+    concurrency = (
+        vision_concurrency
+        if vision_concurrency is not None
+        else settings.pipeline_vision_concurrency
     )
     device_label = device_label or pdf_path.stem
 
@@ -99,129 +116,38 @@ async def ingest_schematic(
             "could not persist source PDF to %s", persisted_pdf, exc_info=True
         )
 
-    # Rasterise directly into the persistent pages dir — the PNGs are
-    # durable artefacts consumed by the web PDF viewer, not just vision
-    # input. Poppler's `pdftoppm` is idempotent on the same path (overwrites
-    # on re-ingest) so this doubles as a cache.
-    logger.info("rendering %s → %s (dpi=%d)", pdf_path, pages_dir, render_dpi)
-    rendered_pages = render_pages(pdf_path, pages_dir, dpi=render_dpi)
-    total = len(rendered_pages)
-    logger.info("rendered %d pages", total)
+    # Some real-world schematics (XZZ library) carry non-standard objects that
+    # pdfplumber/pdfminer can't parse → 0 pages probed → render 0 pages → an
+    # EMPTY pack built on wasted Scout/writer tokens (observed live on an
+    # iPhone 8 schematic). Repair via ghostscript up front (and FAIL loudly if
+    # still unreadable). The repaired copy is used for BOTH render and grounding
+    # below, which both read the PDF via pdfplumber/poppler.
+    pdf_path = ensure_renderable_pdf(pdf_path, pages_dir)
 
-    # Grounding is an anti-hallucination aid (truth set of refdes/nets the
-    # model must respect). It costs ~8k input tokens per page and pushes
-    # mimo's output budget over the 8k cap — mimo then burns the budget
-    # on prose and never emits the tool_use. Skip grounding for non-Claude
-    # models; they get less protection but at least produce structured
-    # output. Grounding anchors (the bbox overlay) are still written to
-    # disk below for the web viewer's highlight rects.
-    is_claude_model = str(model).startswith("claude-")
-    grounding_texts: list[str | None] = [None] * total
-    if use_grounding and is_claude_model:
-        for i, page in enumerate(rendered_pages):
-            g = extract_grounding(pdf_path, page.page_number)
-            grounding_texts[i] = format_grounding_for_prompt(g)
-            # Persist the refdes anchors next to the PNG so the web viewer
-            # can overlay highlight rectangles when the user searches.
-            anchors_payload = {
-                "page": g.page,
-                "page_width_pt": g.page_width,
-                "page_height_pt": g.page_height,
-                "anchors": [
-                    {"refdes": rd, "x0": x0, "top": top, "x1": x1, "bottom": bot}
-                    for (rd, x0, top, x1, bot) in g.refdes_anchors
-                ],
-            }
-            (pages_dir / f"page-{page.page_number:02d}.anchors.json").write_text(
-                json.dumps(anchors_payload, indent=2)
-            )
-            logger.info(
-                "grounding page %d: refdes=%d nets=%d values=%d sheet=%s anchors=%d",
-                page.page_number,
-                len(g.refdes),
-                len(g.net_labels),
-                len(g.values),
-                g.sheet_file,
-                len(g.refdes_anchors),
-            )
-
-    async def _one_page(idx: int) -> SchematicPageGraph:
-        rp = rendered_pages[idx]
-        cached_path = pages_dir / f"page_{rp.page_number:03d}.json"
-        if cached_path.exists():
-            logger.info(
-                "vision skip page %d/%d (cached at %s)",
-                rp.page_number,
-                total,
-                cached_path.name,
-            )
-            return SchematicPageGraph.model_validate_json(cached_path.read_text())
-        logger.info(
-            "vision call page %d/%d (model=%s)", rp.page_number, total, model
-        )
-        graph = await extract_page(
-            client=client,
-            model=model,
-            rendered=rp,
-            total_pages=total,
-            device_label=device_label,
-            grounding=grounding_texts[idx],
-        )
-        cached_path.write_text(graph.model_dump_json(indent=2))
-        return graph
-
-    # Fan out with concurrency limit — third-party API proxies (mimo etc.)
-    # enforce per-second rate limits; unlimited gather triggers 429s.
-    if warmup > 0 and total > 1:
-        await asyncio.sleep(warmup)
-    _sem = asyncio.Semaphore(5)
-
-    async def _limited_page(idx: int) -> SchematicPageGraph:
-        async with _sem:
-            return await _one_page(idx)
-
-    # Use return_exceptions=True so a single page's failure (e.g. mimo
-    # returning thinking-only with no tool_use, exhausting all retries)
-    # doesn't crash the gather and cancel the other 48 in-flight pages.
-    # Each failed page is replaced with a confidence=0 stub below and
-    # written to disk so the merge / classifier can still proceed.
-    raw_results = await asyncio.gather(
-        *[_limited_page(i) for i in range(total)],
-        return_exceptions=True,
-    )
-    page_graphs: list[SchematicPageGraph] = []
-    for idx, result in enumerate(raw_results):
-        rp = rendered_pages[idx]
-        cached_path = pages_dir / f"page_{rp.page_number:03d}.json"
-        if isinstance(result, BaseException):
-            logger.error(
-                "vision FAILED page %d/%d: %s: %s",
-                rp.page_number, total,
-                type(result).__name__, str(result)[:300],
-            )
-            stub = SchematicPageGraph(
-                page=rp.page_number,
-                confidence=0.0,
-                ambiguities=[
-                    Ambiguity(
-                        page=rp.page_number,
-                        description=(
-                            f"vision failed: {type(result).__name__}: "
-                            f"{str(result)[:200]}"
-                        ),
-                    )
-                ],
-            )
-            cached_path.write_text(stub.model_dump_json(indent=2))
-            page_graphs.append(stub)
-        else:
-            page_graphs.append(result)
-    failed_count = sum(1 for r in raw_results if isinstance(r, BaseException))
-    if failed_count:
-        logger.warning(
-            "vision summary: %d/%d pages failed; continuing with stubs",
-            failed_count, total,
-        )
+    # Vision extraction. Two paths, same per-page cache + output:
+    #   - batch (operator flag PIPELINE_VISION_BATCH): render + ground every
+    #     page up front, send the uncached ones through the Message Batches API
+    #     (-50% tokens, asynchronous), then load results from the per-page
+    #     cache. Latency-insensitive; for offline rebuilds.
+    #   - pipelined (default, synchronous): stream each page render → ground →
+    #     vision so the ~330 s of pdftoppm + pdfplumber CPU overlaps the
+    #     OTPM-bound vision wait instead of running as a barrier before it.
+    common = {
+        "pdf_path": pdf_path,
+        "pages_dir": pages_dir,
+        "render_dpi": render_dpi,
+        "use_grounding": use_grounding,
+        "client": client,
+        "model": model,
+        "device_label": device_label,
+        "concurrency": concurrency,
+        "warmup": warmup,
+        "on_event": on_event,
+    }
+    if settings.pipeline_vision_batch:
+        page_graphs = await _ingest_pages_bulk(**common)
+    else:
+        page_graphs = await _ingest_pages_pipelined(**common)
 
     schematic_graph = merge_pages(
         page_graphs,
@@ -294,6 +220,319 @@ async def ingest_schematic(
     )
 
     return electrical
+
+
+# CPU prep (pdfplumber + pdftoppm) runs on worker threads under this cap so the
+# event loop stays free for in-flight vision calls. 1 = strictly sequential CPU,
+# safe on a low-vCPU VPS; the CPU stage is hidden under the vision wait anyway,
+# so it never needs to be the throughput driver.
+_RENDER_CONCURRENCY = 1
+
+
+def _prepare_page(
+    pdf_path: Path,
+    page_number: int,
+    total_pages: int,
+    pages_dir: Path,
+    render_dpi: int,
+    use_grounding: bool,
+) -> tuple[object, str | None]:
+    """Render + ground a single page (the CPU unit of the pipeline).
+
+    Returns ``(RenderedPage, grounding_text | None)``. Runs synchronously — the
+    orchestrator dispatches it via ``asyncio.to_thread`` so the event loop keeps
+    servicing in-flight vision calls while this page's pdftoppm + pdfplumber
+    work happens. Persists the refdes-anchor JSON next to the PNG when grounding
+    is enabled (same artefact the bulk path writes).
+    """
+    extract = extract_page_data(pdf_path, page_number, with_grounding=use_grounding)
+    rendered = render_one_page(
+        pdf_path,
+        pages_dir,
+        page_number,
+        total_pages,
+        dpi=render_dpi,
+        width_pt=extract.width,
+        height_pt=extract.height,
+        char_count=extract.char_count,
+        line_count=extract.line_count,
+    )
+    grounding_text: str | None = None
+    g = extract.grounding
+    if g is not None:
+        grounding_text = format_grounding_for_prompt(g)
+        anchors_payload = {
+            "page": g.page,
+            "page_width_pt": g.page_width,
+            "page_height_pt": g.page_height,
+            "anchors": [
+                {"refdes": rd, "x0": x0, "top": top, "x1": x1, "bottom": bot}
+                for (rd, x0, top, x1, bot) in g.refdes_anchors
+            ],
+        }
+        (pages_dir / f"page-{page_number:02d}.anchors.json").write_text(
+            json.dumps(anchors_payload, indent=2)
+        )
+        logger.info(
+            "grounding page %d: refdes=%d nets=%d values=%d sheet=%s anchors=%d",
+            page_number,
+            len(g.refdes),
+            len(g.net_labels),
+            len(g.values),
+            g.sheet_file,
+            len(g.refdes_anchors),
+        )
+    return rendered, grounding_text
+
+
+async def _ingest_pages_pipelined(
+    *,
+    pdf_path: Path,
+    pages_dir: Path,
+    render_dpi: int,
+    use_grounding: bool,
+    client: AsyncAnthropic,
+    model: str,
+    device_label: str | None,
+    concurrency: int,
+    warmup: float,  # noqa: ARG001 — page-1-first warmup supersedes the sleep
+    on_event: Callable[[dict], Awaitable[None]] | None,
+) -> list[SchematicPageGraph]:
+    """Stream each page render → ground → vision so CPU overlaps the vision wait.
+
+    Per page: render + ground on a thread (bounded by ``_RENDER_CONCURRENCY``),
+    then a vision call (bounded by ``concurrency``). Page 1's vision completes
+    before the rest start (the ``warm`` event) so pages 2..N read the shared
+    system + tool prefix from cache rather than all racing to write it.
+    """
+    cap = get_settings().pipeline_schematic_max_pages
+    total = probe_page_count(pdf_path)
+    if total > cap:
+        raise SchematicPageLimitExceeded(
+            f"schematic has {total} pages, exceeds cap of {cap}"
+        )
+    if total == 0:
+        raise RuntimeError(
+            f"{pdf_path} probed to 0 pages — unrenderable even after repair"
+        )
+    logger.info(
+        "pipelined schematic ingest: %d pages (vision concurrency=%d)",
+        total,
+        concurrency,
+    )
+
+    pages_done = 0
+
+    async def _emit_page_done() -> None:
+        nonlocal pages_done
+        pages_done += 1
+        if on_event is not None:
+            await on_event({
+                "type": "phase_step", "phase": "schematic_ingest", "step": "page",
+                "index": pages_done, "total": total,
+            })
+
+    cpu_sem = asyncio.Semaphore(_RENDER_CONCURRENCY)
+    vision_sem = asyncio.Semaphore(concurrency)
+    warm = asyncio.Event()
+
+    async def _process(idx: int) -> SchematicPageGraph:
+        page_number = idx + 1
+        try:
+            cached_path = pages_dir / f"page_{page_number:03d}.json"
+            if cached_path.exists():
+                logger.info("vision skip page %d/%d (cached)", page_number, total)
+                graph = SchematicPageGraph.model_validate_json(
+                    cached_path.read_text()
+                )
+                await _emit_page_done()
+                return graph
+            async with cpu_sem:
+                rendered, grounding_text = await asyncio.to_thread(
+                    _prepare_page,
+                    pdf_path,
+                    page_number,
+                    total,
+                    pages_dir,
+                    render_dpi,
+                    use_grounding,
+                )
+            if idx != 0:
+                await warm.wait()
+            logger.info(
+                "vision call page %d/%d (model=%s)", page_number, total, model
+            )
+            async with vision_sem:
+                graph = await extract_page(
+                    client=client,
+                    model=model,
+                    rendered=rendered,
+                    total_pages=total,
+                    device_label=device_label,
+                    grounding=grounding_text,
+                )
+            cached_path.write_text(graph.model_dump_json(indent=2))
+            await _emit_page_done()
+            return graph
+        finally:
+            # Always release the warmup gate after page 1 resolves — on a cache
+            # hit or an error too — so pages 2..N never deadlock waiting on it.
+            if idx == 0:
+                warm.set()
+
+    return list(await asyncio.gather(*[_process(i) for i in range(total)]))
+
+
+async def _ingest_pages_bulk(
+    *,
+    pdf_path: Path,
+    pages_dir: Path,
+    render_dpi: int,
+    use_grounding: bool,
+    client: AsyncAnthropic,
+    model: str,
+    device_label: str | None,
+    concurrency: int,
+    warmup: float,
+    on_event: Callable[[dict], Awaitable[None]] | None,
+) -> list[SchematicPageGraph]:
+    """Render + ground every page up front, then vision via Message Batches.
+
+    The batch path is latency-insensitive (async, up to ~1 h) but halves token
+    cost, so it keeps the render-everything-first shape: the Batches API needs
+    all PNGs + groundings together. Uncached pages go to the batch, results land
+    in the per-page cache, and the bounded gather below loads them from disk
+    (pages the batch could not produce fall back to a direct vision call).
+    """
+    grounding_texts: list[str | None]
+    if use_grounding:
+        extracts = extract_all_pages(pdf_path)
+        render_meta = [
+            {
+                "page": e.page,
+                "width": e.width,
+                "height": e.height,
+                "char_count": e.char_count,
+                "line_count": e.line_count,
+            }
+            for e in extracts
+        ]
+        logger.info("rendering %s → %s (dpi=%d)", pdf_path, pages_dir, render_dpi)
+        rendered_pages = render_pages(
+            pdf_path, pages_dir, dpi=render_dpi, metadata=render_meta
+        )
+        total = len(rendered_pages)
+        logger.info("rendered %d pages", total)
+
+        grounding_texts = [None] * total
+        for i, e in enumerate(extracts):
+            g = e.grounding
+            grounding_texts[i] = format_grounding_for_prompt(g)
+            anchors_payload = {
+                "page": g.page,
+                "page_width_pt": g.page_width,
+                "page_height_pt": g.page_height,
+                "anchors": [
+                    {"refdes": rd, "x0": x0, "top": top, "x1": x1, "bottom": bot}
+                    for (rd, x0, top, x1, bot) in g.refdes_anchors
+                ],
+            }
+            (pages_dir / f"page-{g.page:02d}.anchors.json").write_text(
+                json.dumps(anchors_payload, indent=2)
+            )
+    else:
+        logger.info("rendering %s → %s (dpi=%d)", pdf_path, pages_dir, render_dpi)
+        rendered_pages = render_pages(pdf_path, pages_dir, dpi=render_dpi)
+        total = len(rendered_pages)
+        logger.info("rendered %d pages", total)
+        grounding_texts = [None] * total
+
+    pages_done = 0
+
+    async def _emit_page_done() -> None:
+        nonlocal pages_done
+        pages_done += 1
+        if on_event is not None:
+            await on_event({
+                "type": "phase_step", "phase": "schematic_ingest", "step": "page",
+                "index": pages_done, "total": total,
+            })
+
+    async def _one_page(idx: int) -> SchematicPageGraph:
+        rp = rendered_pages[idx]
+        cached_path = pages_dir / f"page_{rp.page_number:03d}.json"
+        if cached_path.exists():
+            logger.info(
+                "vision skip page %d/%d (cached at %s)",
+                rp.page_number,
+                total,
+                cached_path.name,
+            )
+            result = SchematicPageGraph.model_validate_json(cached_path.read_text())
+            await _emit_page_done()
+            return result
+        logger.info(
+            "vision call page %d/%d (model=%s)", rp.page_number, total, model
+        )
+        graph = await extract_page(
+            client=client,
+            model=model,
+            rendered=rp,
+            total_pages=total,
+            device_label=device_label,
+            grounding=grounding_texts[idx],
+        )
+        cached_path.write_text(graph.model_dump_json(indent=2))
+        await _emit_page_done()
+        return graph
+
+    uncached_idx = [
+        i
+        for i in range(total)
+        if not (pages_dir / f"page_{rendered_pages[i].page_number:03d}.json").exists()
+    ]
+    if uncached_idx:
+        from api.pipeline.schematic import batch_vision
+
+        logger.info(
+            "vision batch mode: %d/%d page(s) uncached → Message Batches "
+            "API (-50%% token price)",
+            len(uncached_idx),
+            total,
+        )
+        batch_graphs = await batch_vision.extract_pages_batch(
+            client=client,
+            model=model,
+            pages=[rendered_pages[i] for i in uncached_idx],
+            total_pages=total,
+            device_label=device_label,
+            groundings=[grounding_texts[i] for i in uncached_idx],
+        )
+        for page_number, graph in batch_graphs.items():
+            (pages_dir / f"page_{page_number:03d}.json").write_text(
+                graph.model_dump_json(indent=2)
+            )
+        missing = len(uncached_idx) - len(batch_graphs)
+        if missing:
+            logger.warning(
+                "vision batch mode: %d page(s) failed in the batch — "
+                "retrying via the direct path at full price",
+                missing,
+            )
+
+    sem = asyncio.Semaphore(concurrency)
+
+    async def _bounded(idx: int) -> SchematicPageGraph:
+        async with sem:
+            return await _one_page(idx)
+
+    if total > 1:
+        first = await _bounded(0)
+        if warmup > 0:
+            await asyncio.sleep(warmup)
+        rest = await asyncio.gather(*[_bounded(i) for i in range(1, total)])
+        return [first, *rest]
+    return list(await asyncio.gather(*[_bounded(i) for i in range(total)]))
 
 
 def _write_parts_index(

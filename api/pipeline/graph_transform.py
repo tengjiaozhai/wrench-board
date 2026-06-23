@@ -2,10 +2,11 @@
 expected by web/index.html (frontend design v3).
 
 Carries component / net / symptom nodes and their relations from
-knowledge_graph verbatim (symptom IDs use the Cartographe's `sym:<slug>`
-convention), enriches component nodes with dictionary / registry metadata,
-and back-fills any rule-only symptom that the Cartographe missed so no
-rule goes orphan in the UI.
+knowledge_graph verbatim. Depuis T8, les IDs de nœuds suivent le schéma
+N-[A-Z0-9_-]{1,48} (symptômes : N-S_<SLUG>, nets : N-NET_<nom>).
+Enrichit les nœuds composants depuis le dictionnaire / registre,
+et back-fille tout symptôme mentionné par une règle mais absent du
+knowledge_graph (pour qu'aucune règle ne soit orpheline dans l'UI).
 
 Synthesizes one `action` node per rule — the concrete microsoldering
 intervention (Replace / Reflow / Jumper / Lift / Reball / Hunt short)
@@ -107,18 +108,22 @@ def pack_to_graph_payload(
         )
 
     # 2. Back-fill symptom nodes that rules mention but the Cartographe didn't
-    #    emit. Keyed by label so we don't duplicate a Cartographe node. New IDs
-    #    use the same `sym:<slug>` convention the Cartographe uses so everything
-    #    shares one address space.
+    #    emit. Keyed by label so we don't duplicate a Cartographe node. Les IDs
+    #    suivent la convention T8 : N-S_<SLUG_MAJUSCULES> (pattern ^N-[A-Z0-9_-]{1,48}$).
     symptom_id_by_label = {n["label"]: n["id"] for n in nodes if n["type"] == "symptom"}
     for rule in rules.get("rules", []):
         for symptom_text in rule.get("symptoms", []):
             if symptom_text in symptom_id_by_label:
                 continue
-            sid = f"sym:{_slug(symptom_text)}"
+            # Tronquer le slug à 40 chars avant assemblage : on réserve 4 chars pour
+            # le préfixe "N-S_" et 4 chars pour le suffixe d'unicité éventuel "_NNN",
+            # garantissant len(sid) ≤ 48 < 50 en toutes circonstances et la conformité
+            # au pattern ^N-[A-Z0-9_-]{1,48}$ (T8 fix B).
+            slug_part = _slug(symptom_text).upper().replace("-", "_")[:40]
+            sid = f"N-S_{slug_part}"
             # Ensure uniqueness when two different labels slugify to the same id.
             if any(n["id"] == sid for n in nodes):
-                sid = f"sym:{_slug(symptom_text)}-{len(nodes)}"
+                sid = f"N-S_{slug_part}_{len(nodes)}"
             symptom_id_by_label[symptom_text] = sid
             nodes.append(
                 {

@@ -21,6 +21,8 @@ from api.agent.chat_history import (
     load_ma_session_id,
     save_ma_session_id,
 )
+from api.agent.owner_ref import set_owner_ref
+from api.agent.session_caps import set_can_expand
 from api.agent.runtime import _aux
 from api.agent.runtime._aux import (
     DEFAULT_TIER,
@@ -49,6 +51,8 @@ async def run_diagnostic_session_managed(
     tier: TierLiteral = DEFAULT_TIER,
     repair_id: str | None = None,
     conv_id: str | None = None,
+    owner_ref: str | None = None,
+    can_expand: bool = True,
 ) -> None:
     """Open a Managed Agents session on the tier-scoped agent and relay it to `ws`.
 
@@ -67,7 +71,12 @@ async def run_diagnostic_session_managed(
     repair history (chat bubbles in the UI) survives even if the managed
     session is gone. Semantic context for the agent now comes from the
     per-repair scribe mount instead of an LLM-summarized recap.
+
+    `owner_ref` (the tenant id from the cloud's X-Owner-Ref header) binds the
+    session to its tenant so owner-sensitive tools (stock) stay isolated.
     """
+    set_owner_ref(owner_ref)
+    set_can_expand(can_expand)
     settings = _rm.get_settings()
     if not settings.anthropic_api_key:
         await ws.accept()
@@ -88,10 +97,7 @@ async def run_diagnostic_session_managed(
         await ws.close()
         return
 
-    _sk = {"api_key": settings.anthropic_api_key, "max_retries": settings.anthropic_max_retries}
-    if settings.anthropic_base_url:
-        _sk["base_url"] = settings.anthropic_base_url
-    client = _rm.AsyncAnthropic(**_sk)
+    client = _rm.AsyncAnthropic(api_key=settings.anthropic_api_key, max_retries=settings.anthropic_max_retries)  # noqa: E501
     session_mirrors = _SessionMirrors()
     memory_root = Path(settings.memory_root)
 
@@ -148,27 +154,61 @@ async def run_diagnostic_session_managed(
             )
             return None
 
-    patterns_store_id = await _safe_ensure(
-        "patterns",
-        _rm.ensure_global_store(
-            client, kind="patterns", description=PATTERNS_DESC_RUNTIME,
-        ),
-    ) if settings.ma_memory_store_enabled else None
-    playbooks_store_id = await _safe_ensure(
-        "playbooks",
-        _rm.ensure_global_store(
-            client, kind="playbooks", description=PLAYBOOKS_DESC_RUNTIME,
-        ),
-    ) if settings.ma_memory_store_enabled else None
-    memory_store_id = await _safe_ensure(
+    # Provision the (up to) 4 stores in parallel — each is independent (no
+    # store needs another's id) and `_safe_ensure` already isolates failures
+    # per-store, so a single bad store can't poison the gather. The gating
+    # below mirrors the original sequential conditions exactly:
+    #   - patterns / playbooks: only when ma_memory_store_enabled
+    #   - device: always (custom mb_* tools also serve it, but the mount is
+    #     still attempted unconditionally as before)
+    #   - repair: only when repair_id present AND ma_memory_store_enabled
+    # A store whose condition is False resolves to None without a coroutine,
+    # preserving the original "skip" semantics. asyncio.gather keeps result
+    # order positional, so each id lands in the right variable.
+    async def _none() -> None:
+        return None
+
+    patterns_coro = (
+        _safe_ensure(
+            "patterns",
+            _rm.ensure_global_store(
+                client, kind="patterns", description=PATTERNS_DESC_RUNTIME,
+            ),
+        )
+        if settings.ma_memory_store_enabled
+        else _none()
+    )
+    playbooks_coro = (
+        _safe_ensure(
+            "playbooks",
+            _rm.ensure_global_store(
+                client, kind="playbooks", description=PLAYBOOKS_DESC_RUNTIME,
+            ),
+        )
+        if settings.ma_memory_store_enabled
+        else _none()
+    )
+    device_coro = _safe_ensure(
         "device", _rm.ensure_memory_store(client, device_slug),
     )
-    repair_store_id = await _safe_ensure(
-        "repair",
-        _rm.ensure_repair_store(
-            client, device_slug=device_slug, repair_id=repair_id,
-        ),
-    ) if (repair_id and settings.ma_memory_store_enabled) else None
+    repair_coro = (
+        _safe_ensure(
+            "repair",
+            _rm.ensure_repair_store(
+                client, device_slug=device_slug, repair_id=repair_id,
+            ),
+        )
+        if (repair_id and settings.ma_memory_store_enabled)
+        else _none()
+    )
+    (
+        patterns_store_id,
+        playbooks_store_id,
+        memory_store_id,
+        repair_store_id,
+    ) = await asyncio.gather(
+        patterns_coro, playbooks_coro, device_coro, repair_coro,
+    )
 
     await _rm.maybe_auto_seed(
         client=client,
@@ -176,7 +216,7 @@ async def run_diagnostic_session_managed(
         memory_root=memory_root,
         session_mirrors=session_mirrors,
     )
-    session_state = SessionState.from_device(device_slug)
+    session_state = SessionState.from_device(device_slug, owner_ref=owner_ref)
 
     # Resolve which conversation within the repair this WS targets. Anonymous
     # sessions (no repair_id) skip conversation tracking — MA still persists
@@ -237,20 +277,67 @@ async def run_diagnostic_session_managed(
         # Read via the module so tests can monkeypatch
         # `_aux._GUARD_ACQUIRE_TIMEOUT_SECONDS` to a small value.
         wait_deadline = loop.time() + _aux._GUARD_ACQUIRE_TIMEOUT_SECONDS
-        while candidate_key in _active_diagnostic_keys:
-            if loop.time() >= wait_deadline:
-                await ws.accept()
-                await ws.send_json({
-                    "type": "error",
-                    "code": "session_already_open",
-                    "text": (
-                        "Another conversation is already open for this repair. "
-                        "Close it before opening a new one."
-                    ),
-                })
-                await ws.close(code=1008, reason="session already open")
-                return
-            await asyncio.sleep(0.05)
+        # Event-based wait (replaces the old 50 ms busy-poll): park on an
+        # asyncio.Event keyed by this triplet so the sibling's teardown
+        # (`_release_diagnostic_key`) wakes us the instant it releases,
+        # rather than after up to one poll tick. Register the waiter
+        # BEFORE the membership check so a release that fires between the
+        # check and the await can't be lost (the set() lands on an event
+        # we're already holding; the subsequent wait returns immediately).
+        release_event: asyncio.Event | None = None
+        try:
+            while candidate_key in _active_diagnostic_keys:
+                if release_event is None:
+                    release_event = asyncio.Event()
+                    _aux._guard_waiters.setdefault(candidate_key, []).append(
+                        release_event
+                    )
+                remaining = wait_deadline - loop.time()
+                if remaining <= 0:
+                    await ws.accept()
+                    await ws.send_json({
+                        "type": "error",
+                        "code": "session_already_open",
+                        "text": (
+                            "Another conversation is already open for this "
+                            "repair. Close it before opening a new one."
+                        ),
+                    })
+                    await ws.close(code=1008, reason="session already open")
+                    return
+                # Clear before waiting so a stale set() from a prior loop
+                # turn doesn't make us spin; the holder re-sets on release.
+                release_event.clear()
+                # Wake on the sibling's release event (instant), but cap the
+                # wait at one poll tick so a release that bypasses
+                # `_release_diagnostic_key` (e.g. a direct set.discard in a
+                # test, or any future code path that mutates the set without
+                # notifying) is still observed within ~50 ms. This keeps the
+                # event a pure fast-path optimization layered over the
+                # original poll's worst-case latency — never a correctness
+                # dependency on every releaser remembering to notify.
+                wait_slice = min(remaining, 0.05)
+                try:
+                    await asyncio.wait_for(
+                        release_event.wait(), timeout=wait_slice
+                    )
+                except TimeoutError:
+                    # Either the poll tick elapsed or the deadline did; loop
+                    # back to re-check membership and the deadline branch.
+                    continue
+        finally:
+            # Deregister our waiter from the shared registry regardless of
+            # how we left the loop (acquired, rejected, or errored) so the
+            # dict doesn't leak an event the holder would still try to set.
+            if release_event is not None:
+                waiters = _aux._guard_waiters.get(candidate_key)
+                if waiters is not None:
+                    try:
+                        waiters.remove(release_event)
+                    except ValueError:
+                        pass
+                    if not waiters:
+                        _aux._guard_waiters.pop(candidate_key, None)
         _active_diagnostic_keys.add(candidate_key)
         diagnostic_key = candidate_key
 
@@ -423,7 +510,9 @@ async def run_diagnostic_session_managed(
             # it. discard() is a no-op if the key was never claimed
             # (anonymous WS path).
             if diagnostic_key is not None:
-                _active_diagnostic_keys.discard(diagnostic_key)
+                _aux._release_diagnostic_key(
+                    diagnostic_key, _active_diagnostic_keys
+                )
             return
         # Save the link from this conv to the fresh MA session id NOW only
         # for already-materialized convs. Pending convs defer this until
@@ -584,12 +673,22 @@ async def run_diagnostic_session_managed(
             conv_id=resolved_conv_id,
         )
     else:
+        from api.agent.cousin_hint import build_cousin_line
+        from api.agent.manifest import _has_electrical_graph
         from api.agent.recovery_state import build_repair_state_block
         from api.profile.prompt import render_technician_block
         from api.profile.store import load_profile
 
         device_intro = build_session_intro(device_slug=device_slug, repair_id=repair_id)
-        tech_block = render_technician_block(load_profile())
+        # T9a Phase B: when this board has no schematic of its own, point the agent
+        # at a same-family sibling pack as an indicative fallback (parity with the
+        # direct runtime, which injects this into its system prompt). Best-effort.
+        cousin_block = (
+            await build_cousin_line(device_slug)
+            if not _has_electrical_graph(device_slug)
+            else None
+        )
+        tech_block = render_technician_block(load_profile(owner_ref))
         # Hard-fact snapshot from disk (measurements + protocol + outcome).
         # Surfaces what the tech actually has on record so a fresh MA agent
         # doesn't redo work or re-ask measurements that already exist on
@@ -603,6 +702,8 @@ async def run_diagnostic_session_managed(
         parts: list[str] = []
         if device_intro:
             parts.append(device_intro)
+        if cousin_block:
+            parts.append(cousin_block)
         if state_block:
             parts.append(state_block)
         parts.append(f"[TECHNICIAN CONTEXT]\n{tech_block}")
@@ -940,7 +1041,7 @@ async def run_diagnostic_session_managed(
         # immediately removes that window — the next reconnect on the same
         # triplet can claim cleanly.
         if diagnostic_key is not None:
-            _active_diagnostic_keys.discard(diagnostic_key)
+            _aux._release_diagnostic_key(diagnostic_key, _active_diagnostic_keys)
             diagnostic_key = None
         # Drain pending mirror tasks before tearing down the session so a
         # fast WS close doesn't cancel a mirror mid-flight. Default budget

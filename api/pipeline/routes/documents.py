@@ -24,11 +24,11 @@ from pathlib import Path
 from typing import Literal
 
 from anthropic import AsyncAnthropic
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 import api.pipeline as _pkg  # noqa: PLC0415 — module-attribute lookups for patchability
-from api.pipeline import sources
+from api.pipeline import events, live_graph, sources
 from api.pipeline.models import (
     DeleteSourceResponse,
     DocumentUploadResponse,
@@ -70,6 +70,45 @@ def _safe_filename(name: str) -> str:
     return cleaned or "upload"
 
 
+async def persist_upload(uploads_dir: Path, kind: str, file: UploadFile) -> tuple[Path, int]:
+    """Stream an UploadFile into uploads_dir as `{ts}-{kind}-{safe_name}`.
+
+    Chunked to disk (never holds the whole blob in memory) with the
+    `_MAX_UPLOAD_BYTES` cap. Returns (target_path, bytes_written). Pure
+    persistence — NO auto-pin / ingestion side effects (those stay in
+    post_pack_document). Intended for reuse by create_repair (a later task)
+    to stash a schematic attached at repair-creation time.
+    """
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    filename = _safe_filename(file.filename or "upload")
+    target = uploads_dir / f"{timestamp}-{kind}-{filename}"
+    total = 0
+    try:
+        with target.open("wb") as fh:
+            while True:
+                chunk = await file.read(1 << 20)  # 1 MiB
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > _MAX_UPLOAD_BYTES:
+                    fh.close()  # close before unlink (cross-platform safe; matches the original endpoint)
+                    target.unlink(missing_ok=True)
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"upload exceeds {_MAX_UPLOAD_BYTES // (1024 * 1024)} MiB cap",
+                    )
+                fh.write(chunk)
+    except HTTPException:
+        raise
+    except OSError as exc:
+        target.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"could not persist upload: {exc}") from exc
+    finally:
+        await file.close()
+    return target, total
+
+
 @router.post(
     "/packs/{device_slug}/documents",
     response_model=DocumentUploadResponse,
@@ -80,6 +119,7 @@ async def post_pack_document(
     kind: str = Form(...),
     description: str | None = Form(default=None),
     file: UploadFile = File(...),  # noqa: B008 — FastAPI dependency-injection idiom
+    x_owner_ref: str | None = Header(default=None, alias="X-Owner-Ref"),
 ) -> DocumentUploadResponse:
     """Persist a technician-supplied document under `memory/{slug}/uploads/`.
 
@@ -100,37 +140,8 @@ async def post_pack_document(
 
     settings = _pkg.get_settings()
     uploads_dir = Path(settings.memory_root) / slug / "uploads"
-    uploads_dir.mkdir(parents=True, exist_ok=True)
-
-    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     filename = _safe_filename(file.filename or "upload")
-    target = uploads_dir / f"{timestamp}-{kind}-{filename}"
-
-    # Stream the upload to disk in chunks so we never hold the entire
-    # blob in memory and we can abort cleanly on the size cap.
-    total = 0
-    try:
-        with target.open("wb") as fh:
-            while True:
-                chunk = await file.read(1 << 20)  # 1 MiB
-                if not chunk:
-                    break
-                total += len(chunk)
-                if total > _MAX_UPLOAD_BYTES:
-                    fh.close()
-                    target.unlink(missing_ok=True)
-                    raise HTTPException(
-                        status_code=413,
-                        detail=f"upload exceeds {_MAX_UPLOAD_BYTES // (1024 * 1024)} MiB cap",
-                    )
-                fh.write(chunk)
-    except HTTPException:
-        raise
-    except OSError as exc:
-        target.unlink(missing_ok=True)
-        raise HTTPException(status_code=500, detail=f"could not persist upload: {exc}") from exc
-    finally:
-        await file.close()
+    target, total = await persist_upload(uploads_dir, kind, file)
 
     if description:
         # Best-effort breadcrumb — failures don't fail the upload.
@@ -166,23 +177,41 @@ async def post_pack_document(
             # MUST run before reading existing uploads — once we've added
             # the new file, list_uploads_for_kind would no longer be empty.
             _archive_legacy_schematic_if_present(pack_dir)
-        pins = sources.read_active(pack_dir)
-        if not pins.get(kind):
-            pins[kind] = target.name
-            sources.write_active(pack_dir, pins)
+        # Auto-pin: the FIRST upload of a kind becomes active. "First" is
+        # per-owner in managed mode (each tenant pins its own first upload),
+        # global for self-host.
+        if x_owner_ref is not None:
+            owner_active = live_graph.read_owner_active(pack_dir, x_owner_ref)
+            already_pinned = bool(owner_active.get(kind))
+        else:
+            already_pinned = bool(sources.read_active(pack_dir).get(kind))
+
+        if not already_pinned:
             if kind == sources.SCHEMATIC_KIND:
-                # Materialise the pin we just wrote. Cache hit (rare here
-                # since this is a brand-new upload) → instant; cache miss
-                # → background ingestion. Either way, schematic.pdf on
-                # disk now matches the active pin.
+                # Pin-write asymmetry: in managed mode the per-owner pointer is
+                # written INSIDE `_apply_schematic_pin` (it needs the PDF hash);
+                # in self-host the CALLER writes the global root pin first, here,
+                # then calls the helper to materialise the graph. Cache hit (rare
+                # for a brand-new upload) → instant; miss → background ingestion.
+                if x_owner_ref is None:
+                    pins = sources.read_active(pack_dir)
+                    pins[kind] = target.name
+                    sources.write_active(pack_dir, pins)
                 try:
-                    _apply_schematic_pin(slug, pack_dir, target.name)
+                    _apply_schematic_pin(slug, pack_dir, target.name, owner_ref=x_owner_ref)
                 except OSError:
                     logger.warning(
                         "could not materialise schematic pin for %s",
                         target.name,
                         exc_info=True,
                     )
+            elif x_owner_ref is not None:
+                # Managé, kind sans graphe dérivé (boardview) — pin only.
+                live_graph.write_owner_active(pack_dir, x_owner_ref, kind, target.name, None)
+            else:
+                pins = sources.read_active(pack_dir)
+                pins[kind] = target.name
+                sources.write_active(pack_dir, pins)
 
     return DocumentUploadResponse(
         device_slug=slug,
@@ -234,7 +263,7 @@ async def list_pack_documents(device_slug: str) -> dict:
 
 # ─── Versioned sources — list + switch ─────────────────────────────────
 
-# Vision pipeline ~ wall-clock per page on Opus 4.7 with grounding +
+# Vision pipeline ~ wall-clock per page on Opus 4.8 with grounding +
 # fan-out parallelism: empirically 25-35s on iPhone X / MNT Reform sized
 # packs. We bias slightly high (35s) so the countdown rarely undershoots
 # the real completion. Updated value lives here so a single tweak
@@ -286,6 +315,65 @@ async def get_pack_sources(device_slug: str) -> SourcesResponse:
     )
 
 
+# ── Per-slug ingestion serialisation (T9 — cross-tenant cache safety) ────────
+#
+# In managed mode the slug ROOT (`memory/{slug}/schematic.pdf` + derived files)
+# is used as transient build scratch: clear → copy the target PDF → ingest →
+# `write_through_cache(root, hash)` snapshots the result into the shared hash
+# slot `.cache_schematic/{hash}/`. The root is SHARED across tenants on the same
+# slug, so two concurrent managed cache-misses (tenant A/PDF-A/hash hA and
+# tenant B/PDF-B/hash hB) would race: if B's copy clobbers the root before A's
+# background ingest reads it, `write_through_cache(hA)` snapshots B's graph into
+# hA's slot → silent cross-tenant corruption. Mirrors `_RUNNING` in repairs.py
+# (process-local, fine for the single-worker deploy; a multi-worker setup would
+# need a shared lock). The INVARIANT this guarantees: `write_through_cache(H)`
+# only ever snapshots artefacts ingested from the PDF whose hash is H — because
+# the clear+copy+ingest+write_through sequence is run to completion for one
+# build before the next build on the same slug starts (new requests CHAIN onto
+# the in-flight task instead of clobbering the root immediately).
+_INGESTING: dict[str, asyncio.Task] = {}
+
+
+def _schedule_managed_ingest(
+    slug: str, pack_dir: Path, target: Path, pdf_hash: str
+) -> None:
+    """Serialise the clear+copy+ingest of `target` for this slug (managed mode).
+
+    Chains onto any in-flight build for the same slug so the shared root is only
+    ever used by ONE build at a time. The clear+copy MUST live inside the chained
+    coroutine (not the caller) — otherwise a second sync call would clobber the
+    root before the first build's background ingest reads it.
+    """
+    prior = _INGESTING.get(slug)
+
+    async def _chained() -> None:
+        # Wait for any in-flight build on this slug to finish using the root.
+        if prior is not None and not prior.done():
+            try:
+                await prior
+            except Exception:  # noqa: BLE001 — prior build's own errors are logged there
+                pass
+        # The prior build may have produced THIS exact hash (same PDF, e.g. a
+        # double-click) — re-validate before re-ingesting so we don't redo work
+        # or clobber a freshly-cached slot.
+        if sources.is_cached(pack_dir, pdf_hash):
+            return
+        # Now we own the root exclusively for the duration of this build.
+        sources.clear_in_place_schematic(pack_dir)
+        shutil.copyfile(target, pack_dir / "schematic.pdf")
+        await _reingest_and_cache(slug, pack_dir, pack_dir / "schematic.pdf", pdf_hash)
+
+    task = asyncio.create_task(_chained())
+    _INGESTING[slug] = task
+
+    def _done(t: asyncio.Task, s: str = slug) -> None:
+        # Only drop our own entry — a newer chained build must survive.
+        if _INGESTING.get(s) is t:
+            _INGESTING.pop(s, None)
+
+    task.add_done_callback(_done)
+
+
 async def _reingest_and_cache(slug: str, pack_dir: Path, pdf_path: Path, pdf_hash: str) -> None:
     """Run the schematic vision pipeline then write-through to the hashed cache.
 
@@ -298,15 +386,22 @@ async def _reingest_and_cache(slug: str, pack_dir: Path, pdf_path: Path, pdf_has
         logger.error("[sources] cannot reingest without ANTHROPIC_API_KEY for %s", slug)
         return
     try:
-        _ck = {"api_key": api_key, "max_retries": 4}
-        if settings.anthropic_base_url:
-            _ck["base_url"] = settings.anthropic_base_url
-        client = AsyncAnthropic(**_ck)
+        client = AsyncAnthropic(api_key=api_key, max_retries=4)
+
+        # Publish only the per-page sub-steps onto the slug bus. The pipeline's
+        # wait-gate (orchestrator: expect_schematic) owns this phase's
+        # started/finished bracket — we just fill its live line with "page N/M"
+        # while it polls for electrical_graph.json to land.
+        async def _relay_page_step(ev: dict) -> None:
+            if ev.get("type") == "phase_step":
+                await events.publish(slug, ev)
+
         await _pkg.ingest_schematic(
             device_slug=slug,
             pdf_path=pdf_path,
             client=client,
             memory_root=Path(settings.memory_root),
+            on_event=_relay_page_step,
         )
         # Persist this version's artefacts so a future switch back is instant.
         sources.write_through_cache(pack_dir, pdf_hash)
@@ -368,24 +463,61 @@ def _archive_legacy_schematic_if_present(pack_dir: Path) -> str | None:
 
 
 def _apply_schematic_pin(
-    slug: str, pack_dir: Path, target_filename: str
+    slug: str, pack_dir: Path, target_filename: str, *, owner_ref: str | None = None
 ) -> tuple[Literal["cached", "rebuilding"], int | None, int | None]:
-    """Materialise a schematic_pdf pin in place. Returns (status, eta, pages).
+    """Materialise a schematic_pdf pin. Returns (status, eta, pages).
 
     Centralises the cache-vs-reingest decision shared by POST /documents
     auto-pin and PUT /sources/{kind}. Caller must already have:
       - validated the target file exists in `uploads/`
-      - written the new pin to `active_sources.json`
+      - written the new pin (root pin for self-host; the managed per-owner
+        pointer is written HERE, since it needs the PDF hash)
 
-    On `cached`: copies the cached artefacts back into place; the new
-    graph is live before the function returns.
-    On `rebuilding`: copies the source PDF to `memory/{slug}/schematic.pdf`,
-    drops stale derivatives, schedules a background ingestion task. ETA
-    is heuristic (page count × seconds-per-page).
+    Self-host (`owner_ref` None) — UNCHANGED:
+      On `cached`: copies the cached artefacts back into the root; the new
+      graph is live before the function returns.
+      On `rebuilding`: copies the source PDF to `memory/{slug}/schematic.pdf`,
+      drops stale derivatives, schedules a background ingestion task.
+
+    Managé (`owner_ref` set) — T9 per-owner, NO root clobber:
+      Writes the per-owner pointer (_sources/{owner}/) mapping schematic_pdf →
+      {filename, hash}; readers (Task 3) resolve owner→hash→.cache_schematic/
+      {hash}/ directly. On a cache hit we do NOT restore to the root (that root
+      copy is exactly what clobbered cross-tenant). On a miss we still ingest
+      via the SAME background task — the root is mere build scratch in managed
+      mode, snapshotted to the shared hash-cache by `write_through_cache`; the
+      per-slug stampede guard serialises concurrent builds.
+
+    Managed root = transient build scratch: the managed cache-miss path wipes the
+    slug root via `clear_in_place_schematic` and uses it as scratch for the vision
+    pipeline (serialised per slug by `_schedule_managed_ingest`). Self-host and
+    managed tenants therefore MUST NOT coexist on the same slug — a deployment is
+    managed-only or self-host-only (the root pin/derivatives belong to one model).
     """
     target = pack_dir / "uploads" / target_filename
     pdf_hash = sources.hash_pdf(target)
 
+    if owner_ref is not None:
+        # Managé — pointeur per-owner (le hash y est stocké pour la résolution
+        # owner→hash→cache partagé). Jamais de restore vers la racine.
+        live_graph.write_owner_active(
+            pack_dir, owner_ref, sources.SCHEMATIC_KIND, target_filename, pdf_hash
+        )
+        if sources.is_cached(pack_dir, pdf_hash):
+            return "cached", None, None
+        # Cache miss — la racine sert de scratch de build PARTAGÉ entre tenants ;
+        # on sérialise le clear+copy+ingest per-slug (mirror de _RUNNING) pour que
+        # write_through_cache(hash) ne snapshote que les artefacts de CE PDF.
+        # Le clear+copy vit DANS la tâche chaînée (pas ici) — sinon un 2e appel
+        # sync écraserait la racine avant que le 1er build ne l'ait lue.
+        _schedule_managed_ingest(slug, pack_dir, target, pdf_hash)
+        # On compte les pages depuis l'upload (la racine peut ne pas encore
+        # contenir le PDF tant que la tâche chaînée n'a pas démarré).
+        pages = _count_pdf_pages(target)
+        eta = pages * _VISION_SECONDS_PER_PAGE if pages else None
+        return "rebuilding", eta, pages
+
+    # Self-host (owner None) — comportement racine inchangé.
     if sources.is_cached(pack_dir, pdf_hash):
         sources.restore_from_cache(pack_dir, pdf_hash)
         return "cached", None, None
@@ -411,6 +543,7 @@ async def switch_pack_source(
     device_slug: str,
     kind: str,
     payload: SwitchSourceRequest,
+    x_owner_ref: str | None = Header(default=None, alias="X-Owner-Ref"),
 ) -> SwitchSourceResponse:
     """Pin a different uploaded version as the active source for this kind.
 
@@ -451,11 +584,19 @@ async def switch_pack_source(
             detail=f"filename does not match kind={kind!r}",
         )
 
-    pins = sources.read_active(pack_dir)
-    pins[kind] = payload.filename
-    sources.write_active(pack_dir, pins)
+    # Pin write. Managé (owner set) → per-owner pointer ; pour schematic le
+    # hash est écrit par le helper, donc on n'écrit ici que le boardview
+    # (pin-only). Self-host → pin racine global, inchangé.
+    if x_owner_ref is None:
+        pins = sources.read_active(pack_dir)
+        pins[kind] = payload.filename
+        sources.write_active(pack_dir, pins)
 
     if kind == sources.BOARDVIEW_KIND:
+        if x_owner_ref is not None:
+            live_graph.write_owner_active(
+                pack_dir, x_owner_ref, sources.BOARDVIEW_KIND, payload.filename, None
+            )
         return SwitchSourceResponse(
             device_slug=slug,
             kind=kind,
@@ -465,9 +606,10 @@ async def switch_pack_source(
         )
 
     # schematic_pdf — delegate to the shared helper so the cache-or-reingest
-    # logic stays consistent between explicit switch and auto-pin paths.
+    # logic stays consistent between explicit switch and auto-pin paths. In
+    # managed mode the helper writes the per-owner pointer (with the hash).
     try:
-        status, eta, pages = _apply_schematic_pin(slug, pack_dir, payload.filename)
+        status, eta, pages = _apply_schematic_pin(slug, pack_dir, payload.filename, owner_ref=x_owner_ref)
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"could not apply pin: {exc}") from exc
 
@@ -498,6 +640,7 @@ async def delete_pack_source_version(
     device_slug: str,
     kind: str,
     filename: str,
+    x_owner_ref: str | None = Header(default=None, alias="X-Owner-Ref"),
 ) -> DeleteSourceResponse:
     """Drop one uploaded version of a source. Auto-switches the pin on active deletes.
 
@@ -534,9 +677,6 @@ async def delete_pack_source_version(
             detail=f"upload {filename!r} not found in {slug!r}/uploads",
         )
 
-    pins = sources.read_active(pack_dir)
-    was_active = pins.get(kind) == filename
-
     sidecar = pack_dir / "uploads" / f"{filename}.description.txt"
     try:
         target.unlink()
@@ -544,6 +684,38 @@ async def delete_pack_source_version(
             sidecar.unlink()
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"could not delete upload: {exc}") from exc
+
+    # Managé (owner set) — la suppression d'une version n'est pas le vecteur de
+    # fuite (le clobber racine l'est) ; on garde simple : si le fichier supprimé
+    # était le pin actif de CE tenant, on le retire de son pointeur per-owner.
+    # Pas de réingestion automatique ni de pin racine partagé.
+    if x_owner_ref is not None:
+        owner_active = live_graph.read_owner_active(pack_dir, x_owner_ref)
+        owner_entry = owner_active.get(kind) or {}
+        if owner_entry.get("filename") == filename:
+            live_graph.clear_owner_active(pack_dir, x_owner_ref, kind)
+            return DeleteSourceResponse(
+                device_slug=slug,
+                kind=kind,
+                deleted_filename=filename,
+                new_active=None,
+                status="cleared",
+                detail="active version dropped; per-owner pin cleared.",
+            )
+        return DeleteSourceResponse(
+            device_slug=slug,
+            kind=kind,
+            deleted_filename=filename,
+            new_active=(owner_active.get(kind) or {}).get("filename"),
+            status="deleted",
+            detail="non-active version dropped; per-owner pin unchanged.",
+        )
+
+    # Self-host only — the managed path returned above, so the root pin read is
+    # dead work for managed tenants (they have no shared root pin). Compute it
+    # here so it runs solely on the self-host branch.
+    pins = sources.read_active(pack_dir)
+    was_active = pins.get(kind) == filename
 
     if not was_active:
         return DeleteSourceResponse(

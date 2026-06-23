@@ -16,11 +16,12 @@ from typing import Any
 
 # Per-million-token rates in USD, sourced from
 # https://platform.claude.com/docs/en/about-claude/pricing (April 2026).
-# Opus dropped from the legacy $15/$75 tier at Opus 4.5; 4.7 stays at $5/$25.
+# Opus dropped from the legacy $15/$75 tier at Opus 4.5; 4.7/4.8 stay at $5/$25.
 MODEL_PRICING: dict[str, dict[str, float]] = {
     "claude-haiku-4-5":  {"input": 1.00, "output": 5.00},
     "claude-sonnet-4-6": {"input": 3.00, "output": 15.00},
     "claude-opus-4-7":   {"input": 5.00, "output": 25.00},
+    "claude-opus-4-8":   {"input": 5.00, "output": 25.00},
 }
 
 # Cache tier multipliers applied to the base input rate.

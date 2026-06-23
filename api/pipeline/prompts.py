@@ -206,6 +206,31 @@ they distinguish "Scout enriched by documents" from "Scout fabricates":
 """
 
 
+_DEVICE_KIND_LABELS = {
+    "gpu_card": "a discrete GPU graphics card",
+    "laptop_logic_board": "a laptop logic board / motherboard",
+    "phone_logic_board": "a smartphone logic board",
+    "desktop_motherboard": "a desktop PC motherboard",
+    "sbc_board": "a single-board computer (SBC) mainboard",
+    "power_charging_board": "a power / charging daughterboard",
+    "other": "an electronic board",
+    "unknown": "an electronic board",
+}
+
+
+def device_kind_constraint(device_kind: str | None) -> str:
+    """An authoritative device-class constraint block to append to a research/extraction prompt, or '' when the kind is unknown/unset."""
+    if not device_kind or device_kind == "unknown":
+        return ""
+    desc = _DEVICE_KIND_LABELS.get(device_kind, "an electronic board")
+    return (
+        f"\n\nDEVICE CLASS (authoritative — derived from the schematic): this board "
+        f"is {desc} (device_kind={device_kind}). Research ONLY failure modes for this "
+        f"class; ignore other uses of the same board code. Any taxonomy you output "
+        f"MUST be consistent with this class."
+    )
+
+
 SCOUT_USER_TEMPLATE = """\
 Research the following device and produce the Markdown dump defined in your system prompt.
 
@@ -437,23 +462,31 @@ CARTOGRAPHE_TASK = """\
 Produce a typed knowledge graph of the device domain via `submit_knowledge_graph`.
 
 This graph powers a RAIL-DIAGNOSIS workflow on a microsoldering bench. A tech starts
-from a dead symptom, follows `causes` edges to suspect components, then `powers` /
-`decouples` / `measured_at` edges to find which rail to probe and where. Draw the
+from a dead symptom, follows `caused_by` edges to suspect components, then `powers` /
+`drives` / `senses` edges to find which rail to probe and where. Draw the
 graph that enables that walk.
 
-- Nodes: components (id: 'comp:<canonical_name>'), symptoms (id: 'sym:<slug>'),
-  and nets (id: 'net:<canonical_name>').
-- Edges — use the relation that carries the most diagnostic signal:
-    - `causes` (component → symptom) — failure chain.
-    - `powers` (component → net) — the component IS THE SOURCE of the rail (PMIC,
-      LDO, buck regulator). PRIORITY for rail-death diagnosis.
-    - `decouples` (component → net) — a cap/bead on the rail. These are where
-      diode-mode probing happens; include them when the sources cite the refdes.
-    - `measured_at` (net → test point component) — the canonical probe point for
-      the net.
-    - `connects` (component → component / component → net) — physical connection
-      without a power/decouple role.
-    - `part_of` (component → parent block) — keep sparingly, only for clarity.
+- Nodes (id format OBLIGATOIRE) :
+    - composants  → id: 'N-<canonical_name>'          ex. 'N-U7', 'N-U3101'
+    - symptômes   → id: 'N-S_<SLUG_MAJUSCULES>'       ex. 'N-S_NO_CHARGE', 'N-S_DEAD'
+    - nets/rails  → id: 'N-NET_<canonical_name>'      ex. 'N-NET_PP3V0', 'N-NET_VDD_MAIN'
+  Le pattern accepté est `^N-[A-Z0-9_-]{1,48}$` — tout autre format échoue la
+  validation Pydantic et le graph est rejeté.
+- Relations — utilise celle qui porte le signal diagnostique le plus fort :
+    - `powers`     (composant → net) — la source du rail (PMIC, LDO, buck). PRIORITÉ
+                   pour le diagnostic rail mort.
+    - `drives`     (composant → composant / composant → net) — signal numérique ou
+                   analogique piloté (remplace l'ancien `connects` pour les signaux).
+    - `senses`     (net → composant test-point) — point de mesure canonique du net
+                   (remplace `measured_at`).
+    - `grounds`    (composant → GND) — retour masse explicite (remplace `connects` vers GND).
+    - `shares_net` (composant → composant) — deux nœuds sur le même net électrique,
+                   sans rôle source/sink défini (remplace `connects` générique).
+    - `caused_by`  (symptôme → composant) — chaîne de panne : le symptôme est causé
+                   par la défaillance du composant (remplace `causes`, argument INVERSÉ).
+    - `indicates`  (test-point → symptom) — un test-point ou une mesure indique un
+                   symptôme diagnostique (kind=symptom) — p.ex. tension à 0V indique
+                   rail mort (N-S_DEAD_RAIL). Cible obligatoirement un nœud symptôme.
 - Keep the graph compact — nodes and edges should correspond to what the dump
   actually supports. Do not pad with speculative edges. Do not invent rails or
   test points the dump doesn't name.
@@ -471,7 +504,7 @@ Emit via `submit_rules`. No other output.
 
 ## Shape of a rule
 
-- `id` — stable e.g. 'rule-pp1v1-dead-001'.
+- `id` — stable, pattern `R-[A-Z0-9_-]{1,48}` e.g. 'R-PP1V1-DEAD-001'.
 - `symptoms` — 1–3 short sentences the user/tech observes. Copy the wording the
   sources use when possible ("No backlight", "Stuck at Apple logo then shutdown",
   "Kernel panic on USB device insert").
@@ -598,6 +631,19 @@ Output policy:
 - consistency_score ∈ [0, 1], reflects your overall confidence (1.0 iff APPROVED).
 - revision_brief must be actionable: tell the writer exactly which IDs to remove or
   rename, and which missing content to add. Empty only when APPROVED.
+
+Schematic ground truth (when a "# Schematic ground truth" block and the
+`query_graph` tool are present):
+- The electrical graph was extracted from the device's REAL schematic. It is
+  the authority on EXISTENCE: components, nets, rails, voltages, sources.
+- NEVER call an identifier fabricated/unknown/undefined when the ground-truth
+  block marks it "present" — the registry is a small web-derived subset and
+  WILL be missing real parts. Registry absence alone is NOT drift.
+- When unsure about an identifier, a rail voltage, or who sources a net,
+  query the graph BEFORE flagging. Use `search` for near-miss spellings.
+- Your revision_brief must NEVER instruct edits to the registry (writers
+  cannot modify it). Ask for a removal only when the identifier is absent
+  from BOTH the registry and the schematic graph.
 """
 
 
@@ -609,7 +655,7 @@ Audit the following knowledge pack for device: {device_label}
 {precomputed_drift_json}
 ```
 
-# Registry
+{ground_truth_block}# Registry
 ```json
 {registry_json}
 ```
@@ -644,16 +690,56 @@ own cross-file coherence and plausibility findings, and submit your verdict via
 # System prompt stays WRITER_SYSTEM; the user message frames the task.
 
 REVISER_USER_TEMPLATE = """\
-Revise the previous output for this writer role, based on the auditor's brief.
+Revise one writer artefact based on the auditor's brief. You do NOT re-emit the
+whole file — you emit a SURGICAL PATCH: only the records you add, update, or
+remove. Everything you do not name is preserved exactly as it is below.
 
 # Revision brief (from auditor)
 {revision_brief}
+{ground_truth_block}
+# Current sibling files (READ-ONLY — align with them, you cannot edit them)
+{siblings_block}
 
-# Your previous output (to revise)
+# Current artefact you are patching
 ```json
 {previous_output_json}
 ```
 
-Re-emit the complete, corrected output via `{tool_name}`. Preserve anything the brief
-doesn't flag; fix only what is flagged.
+# How to patch
+{ops_help}
+
+Emit the patch via `{tool_name}`.
+- Touch ONLY what the brief requires. Address records by the stable identifier
+  exactly as it appears in the current artefact above.
+- An empty patch is valid and means "no change is needed".
+- To change a record, use the update op — it fully replaces that ONE record by
+  its identifier. Never re-emit records you are not changing.
+- Align any new cross-file reference against the CURRENT sibling files, not
+  against memory.
+- When a `query_graph` tool is available, verify any doubtful identifier (refdes,
+  net, rail, voltage, source) against the real schematic BEFORE adding it.
 """
+
+
+# Per-artefact op cheatsheet injected as `{ops_help}` above. Keyed by file_name.
+REVISER_OPS_HELP = {
+    "knowledge_graph": (
+        "- add_nodes / update_nodes (matched by `id`) / remove_node_ids\n"
+        "- add_edges / remove_edges (matched on source_id + target_id + relation)\n"
+        "Every edge endpoint must reference a node that exists after the patch. To\n"
+        "connect an orphan node, add_edges linking it to an existing node — do NOT\n"
+        "re-emit the node itself. To drop a node, also remove_edges for any edge that\n"
+        "touches it, or the patch dangles and is rejected."
+    ),
+    "rules": (
+        "- add_rules / update_rules (matched by `id`) / remove_rule_ids\n"
+        "To fix a rule (drop a wrong cause, reconcile a value, edit a step),\n"
+        "update_rules with the COMPLETE corrected rule under the same `id`."
+    ),
+    "dictionary": (
+        "- add_entries / update_entries (matched by `canonical_name`) /\n"
+        "  remove_entry_names\n"
+        "To fix a sheet, update_entries with the COMPLETE corrected sheet under the\n"
+        "same `canonical_name`."
+    ),
+}

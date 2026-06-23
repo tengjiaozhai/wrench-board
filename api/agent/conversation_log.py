@@ -29,7 +29,11 @@ from typing import Any, Literal
 
 from anthropic import AsyncAnthropic
 
-from api.agent.memory_stores import ensure_memory_store, upsert_memory
+from api.agent.memory_stores import (
+    ensure_memory_store,
+    ensure_repair_store,
+    upsert_memory,
+)
 from api.config import get_settings
 
 logger = logging.getLogger("wrench_board.agent.conversation_log")
@@ -168,8 +172,14 @@ def _parse_log(path: Path) -> SessionLog | None:
         return None
 
 
-def _logs_dir(device_slug: str, memory_root: Path) -> Path:
-    return memory_root / device_slug / "conversation_log"
+def _logs_dir(device_slug: str, memory_root: Path, owner_ref: str | None = None) -> Path:
+    """Where a session log lives on disk. Session logs are the agent's PRIVATE
+    cross-repair working memory, so when an owner (tenant) is set they live under
+    a per-owner subdir — a tenant only ever globs/lists its OWN past sessions.
+    Ownerless (standalone / self-host) keeps the flat path, single-tenant as before.
+    """
+    base = memory_root / device_slug / "conversation_log"
+    return base / "_owners" / _slug(owner_ref, 64) if owner_ref else base
 
 
 def _slug(text: str, max_len: int = 40) -> str:
@@ -191,11 +201,18 @@ async def record_session_log(
     next_steps: str | None = None,
     lesson: str | None = None,
     memory_root: Path | None = None,
+    owner_ref: str | None = None,
 ) -> dict[str, Any]:
     """Append (idempotent overwrite per conv_id) one session log.
 
     JSON-first; MA mirror when the flag is on. Returns a status dict.
     Never raises — MA mirror failure leaves the JSON record intact.
+
+    `owner_ref` (the tenant, from the cloud's X-Owner-Ref) scopes this PRIVATE
+    working memory: the on-disk log lands under a per-owner subdir and the MA
+    mirror targets the per-repair (tenant-private) store instead of the
+    device-shared one — so one tenant's session narrative is never readable by
+    another. Ownerless = standalone/self-host (flat path + device store, unchanged).
     """
     if outcome not in OUTCOME_VALUES:
         return {
@@ -228,7 +245,7 @@ async def record_session_log(
     )
     markdown = log.to_markdown()
 
-    logs_dir = _logs_dir(device_slug, memory_root)
+    logs_dir = _logs_dir(device_slug, memory_root, owner_ref)
     logs_dir.mkdir(parents=True, exist_ok=True)
     # Per-conv filename (NOT per-call) — same conv_id rewrites in place.
     conv_filename = f"{_slug(repair_id, 24)}_{_slug(conv_id, 24)}.md"
@@ -256,8 +273,10 @@ async def record_session_log(
     status["ma_mirror_status"] = await _mirror_to_managed_agents(
         client=client,
         device_slug=device_slug,
+        repair_id=repair_id,
         conv_filename=conv_filename,
         markdown=markdown,
+        owner_ref=owner_ref,
     )
     return status
 
@@ -266,10 +285,20 @@ async def _mirror_to_managed_agents(
     *,
     client: AsyncAnthropic,
     device_slug: str,
+    repair_id: str,
     conv_filename: str,
     markdown: str,
+    owner_ref: str | None = None,
 ) -> str:
-    store_id = await ensure_memory_store(client, device_slug)
+    # Tenant (owner_ref) → the per-repair store, which is tenant-private (the
+    # device store is shared across tenants, so mirroring a private session
+    # narrative there would let another tenant's agent grep it). Ownerless
+    # (self-host) keeps the device store = the tech's own cross-repair memory.
+    store_id = await (
+        ensure_repair_store(client, device_slug=device_slug, repair_id=repair_id)
+        if owner_ref
+        else ensure_memory_store(client, device_slug)
+    )
     if store_id is None:
         return "skipped:no_store"
 
@@ -293,11 +322,13 @@ def list_session_logs(
     device_slug: str,
     memory_root: Path | None = None,
     limit: int = 50,
+    owner_ref: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Return logs sorted newest-first. Pure disk read."""
+    """Return logs sorted newest-first. Pure disk read, scoped to the owner
+    (a tenant lists only its own past sessions; ownerless = the flat path)."""
     settings = get_settings()
     memory_root = memory_root or Path(settings.memory_root)
-    logs_dir = _logs_dir(device_slug, memory_root)
+    logs_dir = _logs_dir(device_slug, memory_root, owner_ref)
     if not logs_dir.exists():
         return []
 

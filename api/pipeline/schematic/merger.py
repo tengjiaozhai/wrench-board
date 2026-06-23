@@ -72,6 +72,7 @@ def merge_pages(
 
         ambiguities.extend(page.ambiguities)
 
+    _backfill_pins_from_net_connects(components, nets)
     ambiguities.extend(_detect_orphan_cross_page_refs(pages, nets))
 
     return SchematicGraph(
@@ -186,6 +187,37 @@ def _merge_net(nets: dict[str, NetNode], net: PageNet) -> None:
             existing.connects.append(conn)
     existing.is_power = existing.is_power or net.is_power
     existing.is_global = existing.is_global or net.is_global
+
+
+def _backfill_pins_from_net_connects(
+    components: dict[str, ComponentNode], nets: dict[str, NetNode]
+) -> None:
+    """Reconstruct `node.pins` from net-side connectivity (`net.connects`).
+
+    The vision pass uses two interchangeable conventions for connectivity:
+    pin-side (`node.pins[*].net_label`) and net-side (`net.connects` entries
+    shaped `"<refdes>.<pin>"`). It routinely picks the net-side form for a wall
+    of decoupling caps drawn in a row — leaving `node.pins` empty even though
+    the connectivity is fully captured on the rail/GND nets. Everything
+    downstream (compiler rail derivation, simulator, hypothesize) reads
+    `component.pins`, so a pin only present on `net.connects` is invisible.
+
+    This pass mirrors each `net.connects` entry back onto its component as a
+    PagePin, unless that pin number already exists (an explicit vision pin wins
+    — it carries the real role/name; the synthetic back-fill cannot). The role
+    is left `"unknown"` because net-side connectivity does not encode it.
+    """
+    for net in nets.values():
+        for conn in net.connects:
+            refdes, _, pin_number = conn.rpartition(".")
+            if not refdes or not pin_number:
+                continue
+            comp = components.get(refdes)
+            if comp is None:
+                continue
+            if any(p.number == pin_number for p in comp.pins):
+                continue
+            comp.pins.append(PagePin(number=pin_number, net_label=net.label))
 
 
 def _detect_orphan_cross_page_refs(

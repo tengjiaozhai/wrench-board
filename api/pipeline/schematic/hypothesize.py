@@ -1484,7 +1484,22 @@ def _enumerate_single_fault(
                 tp_mult=tp_mult,
             )
             ranked.append((refdes, mode, score, metrics, diff))
-    ranked.sort(key=lambda t: -t[2])
+
+    def _failure_prior_rank(refdes: str) -> int:
+        """Tie-break prior. A rail-short observation is explained identically
+        (same score, tp_c=0) by every component on the rail — dozens of caps
+        plus its ICs. Score alone can't separate them, so the order falls to
+        component enumeration, which arbitrarily favours ICs. A passive failure
+        (a decoupling/bulk cap shorting its rail, a resistor opening) is the
+        more likely root cause than a catastrophic IC short, so it wins ties.
+        Only ever consulted at equal score — a candidate that explains the
+        observation better still outranks on the primary key.
+        """
+        comp = electrical.components.get(refdes)
+        kind = getattr(comp, "kind", "ic") or "ic"
+        return 0 if kind.startswith("passive") else 1
+
+    ranked.sort(key=lambda t: (-t[2], _failure_prior_rank(t[0])))
     return cascades_cache, ranked
 
 

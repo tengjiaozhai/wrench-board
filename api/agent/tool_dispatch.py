@@ -42,6 +42,7 @@ from anthropic import AsyncAnthropic
 
 from api.agent._session_mirrors import SessionMirrors
 from api.agent.dispatch_bv import dispatch_bv
+from api.agent.session_caps import current_can_expand
 from api.agent.tools import (
     mb_expand_knowledge,
     mb_get_component,
@@ -499,6 +500,16 @@ async def _mb_validate_finding(payload: dict, ctx: ToolContext) -> dict:
 
 
 async def _mb_expand_knowledge(payload: dict, ctx: ToolContext) -> dict:
+    # Plan gate (defence in depth): free tenants don't get this tool in the
+    # manifest, but refuse here too so a baked managed manifest — or any stray
+    # call — can never spend on a paid enrichment for a non-entitled tenant.
+    if not current_can_expand():
+        return {
+            "ok": False,
+            "expanded": False,
+            "reason": "plan_gated",
+            "error": "Pack enrichment requires a paid plan.",
+        }
     return await mb_expand_knowledge(
         client=ctx.client,
         device_slug=ctx.device_slug,
@@ -552,6 +563,18 @@ async def dispatch_tool(name: str, payload: dict, ctx: ToolContext) -> dict:
     4. Anything else → structured ``unknown-tool`` error, logged at WARNING
        to mirror the legacy log line.
     """
+    if name.startswith("bv_"):
+        # The board is a one-time snapshot taken at WS open
+        # (SessionState.from_device). A boardview uploaded or switched
+        # mid-session is otherwise invisible to bv_* tools — the tech sees the
+        # board in the viewer (which reads disk live, per request) while the
+        # agent reports no-board-loaded. Re-resolve the active per-owner
+        # boardview and reload if it changed; cheap no-op when unchanged.
+        # Mirrors the live-from-disk pattern the schematic graph already uses.
+        # Covers the bv_* protocol bridges in _HANDLERS too (they read
+        # ctx.session.board), so it runs before the table lookup below.
+        ctx.session.refresh_board_if_changed()
+
     if name.startswith("profile_"):
         return await _dispatch_profile(name, payload, ctx)
 

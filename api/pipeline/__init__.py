@@ -15,9 +15,9 @@ Endpoint groups:
 
 Re-exports preserved for backward compatibility:
     `router`                    — mounted by `api.main`
-    `_find_boardview`           — used by `api.board.router`
-    `_run_pipeline_with_events` — used by tests/pipeline/test_pipeline_events_narration
-    `generate_knowledge_pack`, `narrate_phase`, `get_settings`,
+    `_find_boardview`, `_find_owner_boardview` — used by `api.board.router`
+    `_run_pipeline_with_events` — used by tests/pipeline/test_pipeline_events
+    `generate_knowledge_pack`, `get_settings`,
     `ingest_schematic`, `classify_nets`, `expand_pack`,
     `_maybe_check_coverage`     — used as `patch("api.pipeline.X")` targets in
         the test suite. The route modules look them up dynamically via
@@ -35,11 +35,14 @@ from api.config import get_settings  # noqa: F401
 from api.pipeline import events, sources  # noqa: F401
 from api.pipeline.expansion import expand_pack  # noqa: F401
 from api.pipeline.orchestrator import generate_knowledge_pack  # noqa: F401
-from api.pipeline.phase_narrator import narrate_phase  # noqa: F401
+from api.pipeline.routes.board_delta import router as _board_delta_router
 from api.pipeline.routes.documents import router as _documents_router
 from api.pipeline.routes.generate import router as _generate_router
 from api.pipeline.routes.measurements import router as _measurements_router
-from api.pipeline.routes.packs import _find_boardview  # noqa: F401
+from api.pipeline.routes.packs import (
+    _find_boardview,  # noqa: F401
+    _find_owner_boardview,  # noqa: F401
+)
 from api.pipeline.routes.packs import router as _packs_router
 from api.pipeline.routes.progress import router as _progress_router
 from api.pipeline.routes.repairs import (
@@ -54,6 +57,7 @@ from api.pipeline.schematic.orchestrator import ingest_schematic  # noqa: F401
 logger = logging.getLogger("wrench_board.pipeline.api")
 
 router = APIRouter(prefix="/pipeline", tags=["pipeline"])
+router.include_router(_board_delta_router)
 router.include_router(_generate_router)
 router.include_router(_schematic_router)
 router.include_router(_packs_router)

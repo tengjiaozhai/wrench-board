@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from fastapi import WebSocket
 
+from api._token_check import extract_bearer, token_matches
 from api.config import get_settings
 
 
@@ -65,4 +66,39 @@ async def enforce_ws_origin(websocket: WebSocket) -> bool:
         return True
 
     await websocket.close(code=1008, reason="Forbidden origin")
+    return False
+
+
+async def enforce_ws_service_token(websocket: WebSocket) -> bool:
+    """Require the cloud gateway's service token on the WebSocket handshake.
+
+    The Origin check above stops cross-origin *browsers* but accepts any
+    non-browser client (no Origin header) — including ``websocat``. Once the
+    engine is deployed behind wrenchboard-cloud that's a hole: anyone who
+    learns the engine URL can open a diagnostic session directly, skipping the
+    cloud's auth + quota and spending Anthropic credits. This check closes it.
+
+    Policy (permissive by default, mirroring ``enforce_ws_origin``):
+
+    1. ``settings.engine_service_token`` empty → enforcement off (standalone
+       workbench / dev — a browser can't set the Authorization header, so the
+       direct-to-engine dev flow runs with the token unset).
+    2. Token configured and the request carries ``Authorization: Bearer
+       <token>`` matching it → accept.
+    3. Token configured and the header is missing, malformed (no ``Bearer``
+       scheme), or carries the wrong value → close with code 1008 and return
+       ``False``. The caller MUST stop processing (the socket is already
+       closed).
+
+    The token comparison is constant-time (``secrets.compare_digest``) so a
+    rejected attempt leaks nothing about how many leading bytes matched.
+    """
+    expected = get_settings().engine_service_token
+    if not expected:
+        return True
+
+    if token_matches(extract_bearer(websocket.headers.get("authorization", "")), expected):
+        return True
+
+    await websocket.close(code=1008, reason="Forbidden: service token required")
     return False

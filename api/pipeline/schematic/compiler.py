@@ -22,8 +22,10 @@ from api.pipeline.schematic.passive_classifier import classify_passives_heuristi
 from api.pipeline.schematic.schemas import (
     Ambiguity,
     BootPhase,
+    ComponentNode,
     ElectricalGraph,
     NetNode,
+    PagePin,
     PowerRail,
     SchematicGraph,
     SchematicQualityReport,
@@ -40,7 +42,10 @@ def compile_electrical_graph(
     *,
     page_confidences: dict[int, float] | None = None,
 ) -> ElectricalGraph:
+    graph = _mark_untraced_components(graph)
     power_rails, rail_alias_map = _derive_power_rails(graph)
+    graph = _rewrite_pin_nets_through_aliases(graph, rail_alias_map)
+    graph = _synthesize_pins_for_edge_only_consumers(graph, power_rails)
     depends_on = _derive_depends_on_edges(graph, power_rails)
     boot_sequence, cycle_refs = _compute_boot_sequence(
         graph, power_rails, depends_on
@@ -123,6 +128,33 @@ def compile_electrical_graph(
         quality=quality,
         hierarchy=graph.hierarchy,
     )
+
+
+def _mark_untraced_components(graph: SchematicGraph) -> SchematicGraph:
+    """Stamp `evidence="untraced"` on components with no pin-level connectivity.
+
+    A component arriving from the merger with zero pins was never traced to a
+    wire on any page — no pin-side `net_label`, and no net-side `connects`
+    entry either (the merger back-fills those). Its existence rests entirely
+    on typed edges or a bare symbol/title mention, which vision passes emit
+    for section headings on power-alias pages (seen on macbook-air-m1:
+    'U7000' is a page-79 section title that sourced 7 always-on rails in the
+    compiled graph, yet is not a placed part on the physical board).
+
+    Must run BEFORE `_synthesize_pins_for_edge_only_consumers` so synthetic
+    `number="?"` pins don't masquerade as traced evidence. Downstream
+    consumers (boot analyzer, `mb_schematic_graph`, parts index) treat these
+    refdes as unverified rather than physical truth.
+    """
+    untraced = [r for r, c in graph.components.items() if not c.pins]
+    if not untraced:
+        return graph
+    new_components = dict(graph.components)
+    for refdes in untraced:
+        new_components[refdes] = new_components[refdes].model_copy(
+            update={"evidence": "untraced"}
+        )
+    return graph.model_copy(update={"components": new_components})
 
 
 # ----------------------------------------------------------------------
@@ -226,6 +258,12 @@ def _derive_power_rails(
             rail = rails.get(edge.dst)
             if rail is None or edge.src not in graph.components:
                 continue
+            # Rule 1: a pass element (fuse / series-R / ferrite / inductor) is
+            # never a producer — vision routinely mislabels the in-line element
+            # adjacent to a rail as its source. Skip it; the real source is
+            # resolved through the bridge below.
+            if _is_pass_element(graph, edge.src):
+                continue
             if rail.source_refdes is None:
                 rail.source_refdes = edge.src
                 rail.source_type = _infer_source_type(graph, edge.src)
@@ -259,6 +297,15 @@ def _derive_power_rails(
     _propagate_sources_through_rail_aliases(rails, graph)
     _propagate_sources_through_consumer_topology(rails, graph)
     _augment_sources_from_external_connectors(rails, graph)
+    # Re-run the pass-element bridge now that every augmentation has assigned its
+    # sources: a producer found late (e.g. a buck FET sourcing a `_REG` node)
+    # still needs to flow across its in-line fuse / series resistor to the named
+    # rail. Idempotent — only fills non-active sides from active ones.
+    _propagate_sources_through_passive_bridges(rails, graph)
+    # Push any rail sourced by a controlled load-switch FET to its driving IC
+    # (recursively through a FET→FET cascade). Runs after every source-setting
+    # augmentation so it catches transistor sources from all of them.
+    _resolve_controlled_fet_sources(rails, graph)
     rail_alias_map = _coalesce_rails_via_shared_cap_pins(rails, graph)
 
     # Final scrub: a regulator never consumes its own output. The vision pass
@@ -277,7 +324,122 @@ def _derive_power_rails(
     for rail in rails.values():
         if rail.source_refdes is not None and rail.source_refdes in rail.consumers:
             rail.consumers.remove(rail.source_refdes)
+
+    _scrub_phantom_consumers(rails, graph, rail_alias_map)
+    _finalize_source_provenance(rails, graph)
     return rails, rail_alias_map
+
+
+def _rewrite_pin_nets_through_aliases(
+    graph: SchematicGraph, rail_alias_map: dict[str, str]
+) -> SchematicGraph:
+    """Rewrite component `pin.net_label` from a coalesced alias to its canonical
+    rail label.
+
+    `_coalesce_rails_via_shared_cap_pins` merges two labels that denote one
+    physical rail (the Apple PP_/VDD_ die/package convention) and drops the
+    non-canonical one from `power_rails`. But the pins of components attached to
+    the dropped label still carry it — so a consumer drawing power on the alias
+    points at a net that is no longer a rail. The simulator and hypothesize both
+    read `pin.net_label`, so that consumer never dies with the surviving rail
+    (breaking INV-5) and is invisible to reverse diagnosis. Routing the pins
+    through the alias map restores pin↔rail coherence; it is semantically sound
+    because the coalescer already asserted the two labels are one rail.
+
+    Returns the same graph unchanged when no aliases exist (the common case).
+    """
+    if not rail_alias_map:
+        return graph
+    new_components: dict[str, ComponentNode] = {}
+    for refdes, comp in graph.components.items():
+        if not any(p.net_label in rail_alias_map for p in comp.pins):
+            new_components[refdes] = comp
+            continue
+        new_pins = [
+            p.model_copy(
+                update={"net_label": rail_alias_map.get(p.net_label, p.net_label)}
+            )
+            for p in comp.pins
+        ]
+        new_components[refdes] = comp.model_copy(update={"pins": new_pins})
+    return graph.model_copy(update={"components": new_components})
+
+
+def _synthesize_pins_for_edge_only_consumers(
+    graph: SchematicGraph, rails: dict[str, PowerRail]
+) -> SchematicGraph:
+    """Materialize a synthetic `power_in` pin for pin-less consumers.
+
+    `_scrub_phantom_consumers` deliberately keeps a consumer with NO pin data
+    ("trust the edge" — the pin-sparse vision case the consumer aggregation
+    exists for). But every downstream death-propagation path is pin-driven:
+    the simulator cascade (steps 2/4), hypothesize, and the invariant-suite
+    justification chain all walk `power_in` pins — a pin-less consumer can
+    never die with its rail, breaking dead-rail-implies-dead-consumers
+    (INV-5) on the first pack where vision emits edge-only wiring (seen on
+    macbook-air-m1: U7550 `powered_by PPBUS_AON`, zero pins on page 79).
+
+    Same family of fix as `_rewrite_pin_nets_through_aliases`: restore
+    pin↔rail coherence in the compiled artefact once, instead of
+    special-casing edge-only consumers in every consumer-of-dead-rail walk
+    downstream. Components that already carry pins are never touched — for
+    those, pin data is the truth and the scrub has already arbitrated.
+    """
+    rails_by_consumer: dict[str, list[str]] = {}
+    for rail in rails.values():
+        for refdes in rail.consumers:
+            comp = graph.components.get(refdes)
+            if comp is not None and not comp.pins:
+                rails_by_consumer.setdefault(refdes, []).append(rail.label)
+    if not rails_by_consumer:
+        return graph
+    new_components = dict(graph.components)
+    for refdes, rail_labels in rails_by_consumer.items():
+        synthetic = [
+            PagePin(number="?", role="power_in", net_label=label)
+            for label in sorted(rail_labels)
+        ]
+        new_components[refdes] = new_components[refdes].model_copy(
+            update={"pins": synthetic}
+        )
+    return graph.model_copy(update={"components": new_components})
+
+
+def _scrub_phantom_consumers(
+    rails: dict[str, PowerRail],
+    graph: SchematicGraph,
+    rail_alias_map: dict[str, str],
+) -> None:
+    """Drop consumers a `powered_by` edge wired onto a rail they don't draw
+    power from. The simulator kills a consumer only when a `power_in` pin of
+    its sits on a dead rail; a consumer with pins but no `power_in` on the rail
+    can never die with it, breaking the dead-rail-implies-dead-consumers
+    contract (simulator invariant INV-5). The vision pass produces these two
+    ways: a feedback/divider component tapping a rail through a non-`power_in`
+    pin (e.g. a resistor on a VREF feedback net), and a plain edge misread onto
+    a rail the component has no pin on at all.
+
+    A consumer with NO pin data is left untouched — edge-only wiring stays
+    supported (the pin-sparse vision case the consumer aggregation exists for).
+    Pin labels are resolved through `rail_alias_map` so a `power_in` pin on a
+    coalesced alias label still counts toward its canonical rail.
+    """
+    for rail in rails.values():
+        kept: list[str] = []
+        for refdes in rail.consumers:
+            comp = graph.components.get(refdes)
+            if comp is None or not comp.pins:
+                kept.append(refdes)  # no contradiction — trust the edge
+                continue
+            draws_here = any(
+                pin.role == "power_in"
+                and pin.net_label
+                and rail_alias_map.get(pin.net_label, pin.net_label) == rail.label
+                for pin in comp.pins
+            )
+            if draws_here:
+                kept.append(refdes)
+        rail.consumers = kept
 
 
 _CONSUMER_COMPONENT_TYPES = frozenset(
@@ -288,6 +450,26 @@ _PRODUCER_COMPONENT_TYPES = frozenset(
 )
 _POWER_PIN_ROLES = frozenset({"power_in"})
 _PRODUCER_PIN_ROLES = frozenset({"power_out", "switch_node"})
+
+# In-line 2-terminal pass elements: they CARRY a rail, they never GENERATE it.
+# A rail whose source resolves to one of these is shallow — the real producer
+# is the active stage upstream. (Key off `type`, not `kind`: a fuse carries
+# type="fuse" but kind="ic" in the vision taxonomy.)
+_PASS_ELEMENT_TYPES = frozenset({"fuse", "resistor", "ferrite", "inductor"})
+# Subset SAFE to trace a source ACROSS. An inductor is the energy-storage element
+# of a switching converter — it sits between the input rail and the switch node,
+# so bridging through it back-propagates the downstream converter onto its INPUT
+# rail (the iphone-11 PP_VDD_MAIN→boost-IC bug). The buck/inductor topology is
+# handled separately and correctly by `_promote_ic_owning_switch_node_over_inductor`
+# via switch_node pins. Fuses, series sense resistors and ferrites are true
+# bidirectional in-line pass elements.
+_BRIDGEABLE_PASS_TYPES = frozenset({"fuse", "resistor", "ferrite"})
+# Components that can actually PRODUCE a rail — the boundary a source trace stops
+# at. A transistor (load switch) qualifies, but is then pushed to its
+# controlling IC by _resolve_controlled_fet_sources.
+_ACTIVE_SOURCE_TYPES = frozenset({"ic", "module", "transistor"})
+# typed_edge kinds that mean "src controls dst" — an IC enabling / driving a FET.
+_FET_CONTROL_KINDS = frozenset({"enables", "drives"})
 
 
 def _augment_consumers_from_pins(
@@ -408,29 +590,53 @@ def _augment_sources_from_producer_pins(
         rail.source_type = _infer_source_type(graph, rail.source_refdes)
 
 
+def _is_pass_element(graph: SchematicGraph, refdes: str) -> bool:
+    """True for an in-line 2-terminal pass element (fuse / series-R / ferrite /
+    inductor) — carries a rail, never generates it."""
+    comp = graph.components.get(refdes)
+    return comp is not None and comp.type in _PASS_ELEMENT_TYPES
+
+
+def _is_active_source(rail: PowerRail, graph: SchematicGraph) -> bool:
+    """True when a rail already has a source-capable (ic/module/transistor)
+    producer — the trace boundary. A None or pass-element source is NOT active
+    and stays eligible to be overridden by an upstream active producer."""
+    if rail.source_refdes is None:
+        return False
+    comp = graph.components.get(rail.source_refdes)
+    return comp is not None and comp.type in _ACTIVE_SOURCE_TYPES
+
+
 def _propagate_sources_through_passive_bridges(
     rails: dict[str, PowerRail], graph: SchematicGraph
 ) -> None:
-    """Forward-propagate `source_refdes` across 2-pin ferrite / inductor bridges.
+    """Resolve a rail's source THROUGH 2-pin in-line pass elements to the active
+    producer upstream.
 
-    Apple-style schematics route an IC's clean output rail (e.g. PP1V8_AON)
-    through a ferrite to a downstream filtered sub-rail (e.g.
-    PP1V8_AON_CAM_CONN). Vision sometimes emits the `powers` edge on the
-    upstream rail only, leaving the downstream sub-rail unsourced — but
-    physically a ferrite or air-core inductor doesn't generate power, it
-    just filters / smooths it. Both rails share the same upstream producer.
+    Apple-style schematics route a regulator output through a fuse / series
+    sense resistor / ferrite / inductor to the named system rail (e.g.
+    PPVBAT_G3H_CHGR_REG --F7000--> PPBUS_G3H, or PP3V3_G3H_VR --R6999-->
+    PP3V3_G3H). Vision then labels the pass element itself as the producer, or
+    sources only the upstream side. A pass element does not generate power, so
+    when one side of the bridge has an ACTIVE source (ic/module/transistor) and
+    the other does not, the active source flows across — OVERRIDING a passive /
+    None source, not just filling a missing one.
 
-    This is intentionally restricted to inductor / ferrite bridges with
-    exactly two pins, both labelled with rails. Resistors and capacitors
-    are excluded — a cap is a decoupler, not a power path; a resistor on a
-    power path is a sense / bleed component, not a clean filter. Iterating
-    to a fixed point handles chains FL_a -> FL_b -> FL_c.
+    Restricted to `_BRIDGEABLE_PASS_TYPES` (fuse / series resistor / ferrite —
+    NOT inductor, which is directional in a switcher) with exactly two pins, BOTH
+    on power rails. Capacitors and diodes are excluded (a cap decouples; a diode
+    is a one-way junction). The both-pins-on-rails guard keeps a pull-up / divider
+    resistor — whose other pin is a signal net absent from `rails` — out. A
+    DIRECTION guard refuses to propagate a producer onto a rail it is known to
+    CONSUME (the producer is in that rail's consumers), so we never name a
+    downstream converter as the source of its own input. Iterates to a fixed point
+    for chains (REG --R--> A --FL--> B).
     """
     changed = True
     while changed:
         changed = False
         for component in graph.components.values():
-            if component.type not in {"inductor", "ferrite"}:
+            if component.type not in _BRIDGEABLE_PASS_TYPES:
                 continue
             if len(component.pins) != 2:
                 continue
@@ -442,16 +648,90 @@ def _propagate_sources_through_passive_bridges(
             r2 = rails.get(n2)
             if r1 is None or r2 is None:
                 continue
-            if r1.source_refdes and not r2.source_refdes:
-                r2.source_refdes = r1.source_refdes
-                if r1.source_type:
-                    r2.source_type = r1.source_type
+            for dst, src in ((r1, r2), (r2, r1)):
+                if _is_active_source(dst, graph) or not _is_active_source(src, graph):
+                    continue
+                # Direction guard: the candidate producer must not CONSUME the
+                # destination rail (else it is downstream, not the source).
+                if src.source_refdes in dst.consumers:
+                    continue
+                dst.source_refdes = src.source_refdes
+                dst.source_type = src.source_type
+                dst.source_provenance = "through_pass_element"
+                dst.source_confidence = "high"
                 changed = True
-            elif r2.source_refdes and not r1.source_refdes:
-                r1.source_refdes = r2.source_refdes
-                if r2.source_type:
-                    r1.source_type = r2.source_type
-                changed = True
+
+
+def _fet_controller(transistor: str, graph: SchematicGraph) -> str | None:
+    """The active component (ic/module/transistor) that controls this FET — an
+    `enables`/`drives` edge whose dst is the FET. None when uncontrolled."""
+    for edge in graph.typed_edges:
+        if edge.dst != transistor or edge.kind not in _FET_CONTROL_KINDS:
+            continue
+        ctrl = graph.components.get(edge.src)
+        if ctrl is not None and ctrl.type in _ACTIVE_SOURCE_TYPES:
+            return edge.src
+    return None
+
+
+def _walk_fet_to_controller(refdes: str, graph: SchematicGraph) -> str:
+    """Walk a controlled-FET chain to the first ic/module controller. Returns the
+    original refdes when it isn't a controlled FET (graceful: an uncontrolled
+    load switch stays the source). Visited-set guards a control cycle."""
+    seen: set[str] = set()
+    cur = refdes
+    while True:
+        comp = graph.components.get(cur)
+        if comp is None or comp.type != "transistor" or cur in seen:
+            return cur
+        seen.add(cur)
+        controller = _fet_controller(cur, graph)
+        if controller is None:
+            return cur  # uncontrolled FET → it is the source
+        ctrl = graph.components.get(controller)
+        if ctrl is not None and ctrl.type in {"ic", "module"}:
+            return controller  # reached the driving IC
+        cur = controller  # controller is another FET → recurse
+
+
+def _resolve_controlled_fet_sources(
+    rails: dict[str, PowerRail], graph: SchematicGraph
+) -> None:
+    """Push a rail sourced by a controlled load-switch FET to its driving IC.
+    A FET is the pass element; the IC that `enables`/`drives` it is the
+    meaningful 'who powers this rail'. Recurses through a FET→FET cascade."""
+    for rail in rails.values():
+        if rail.source_refdes is None:
+            continue
+        resolved = _walk_fet_to_controller(rail.source_refdes, graph)
+        if resolved != rail.source_refdes:
+            rail.source_refdes = resolved
+            rail.source_type = _infer_source_type(graph, resolved)
+            rail.source_provenance = "fet_controller"
+            rail.source_confidence = "medium"
+
+
+def _finalize_source_provenance(
+    rails: dict[str, PowerRail], graph: SchematicGraph
+) -> None:
+    """Tag every rail's source provenance/confidence after resolution.
+
+    A pass-element source that survived (no active producer reachable across the
+    bridge) is nulled — Rule 1 is absolute: a fuse/series-R is never a source.
+    A rail with a source but no provenance was set by a direct producer
+    edge/pin → 'direct'/'high'. A sourceless rail is 'unresolved'."""
+    for rail in rails.values():
+        if rail.source_refdes is not None and _is_pass_element(
+            graph, rail.source_refdes
+        ):
+            rail.source_refdes = None
+            rail.source_type = None
+        if rail.source_refdes is None:
+            rail.source_provenance = "unresolved"
+            rail.source_confidence = None
+        elif rail.source_provenance is None:
+            rail.source_provenance = "direct"
+            rail.source_confidence = "high"
 
 
 _PASSIVE_TYPES = frozenset(
@@ -1401,10 +1681,18 @@ def _build_quality_report(
     ambiguities: list[Ambiguity],
     page_confidences: dict[int, float],
 ) -> SchematicQualityReport:
+    # Count only genuinely unstitched cross-page connectors — the ambiguities
+    # the merger emits in `_detect_orphan_cross_page_refs` (an off-page ref with
+    # no matching net or counter-ref, or one with an unreadable label). The
+    # earlier `or a.related_nets` clause swept in every honest net-naming note
+    # the vision pass produces ("GND symbol drawn but no GND label", "PP04xx are
+    # probe pads"); each names a net but none is a broken connector. That
+    # inflated iphone-11 to 222 (5 real) and falsely tripped DEGRADED.
     orphan_cross_page = sum(
         1
         for a in ambiguities
-        if "cross-page" in a.description.lower() or a.related_nets
+        if "no matching net or counter-ref" in a.description
+        or "cross-page connector with unreadable label" in a.description.lower()
     )
     nets_unresolved = sum(1 for n in graph.nets.values() if not n.connects)
     comps_without_value = sum(
@@ -1414,6 +1702,9 @@ def _build_quality_report(
         1
         for c in graph.components.values()
         if c.value is None or c.value.mpn is None
+    )
+    comps_untraced = sum(
+        1 for c in graph.components.values() if c.evidence == "untraced"
     )
 
     if page_confidences:
@@ -1430,6 +1721,7 @@ def _build_quality_report(
         nets_unresolved=nets_unresolved,
         components_without_value=comps_without_value,
         components_without_mpn=comps_without_mpn,
+        components_untraced=comps_untraced,
         confidence_global=confidence_global,
         degraded_mode=degraded,
     )

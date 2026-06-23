@@ -31,6 +31,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from api.agent.reliability import load_reliability_line
+from api.agent.session_caps import current_can_expand
 from api.config import get_settings
 from api.profile.prompt import render_technician_block
 from api.profile.store import load_profile
@@ -1064,7 +1065,7 @@ CONSULT_TOOLS: list[dict] = [
                     "description": (
                         "Specialist tier. `fast`=Haiku 4.5 (cheap quick "
                         "lookups), `normal`=Sonnet 4.6 (balanced), "
-                        "`deep`=Opus 4.7 (best multi-step reasoning). "
+                        "`deep`=Opus 4.8 (best multi-step reasoning). "
                         "Don't pick your own tier — the dispatcher will reject "
                         "self-consultation."
                     ),
@@ -1088,6 +1089,68 @@ CONSULT_TOOLS: list[dict] = [
 ]
 
 
+# Direct-mode memory recall (parity with the managed agent's FUSE-mounted
+# stores). Read-only wrappers over `api.agent.recall`. Always present — the
+# direct agent has no FUSE mount, so these are its only window onto field
+# reports / patterns / playbooks. Managed mode does NOT use this manifest.
+RECALL_TOOLS: list[dict] = [
+    {
+        "type": "custom",
+        "name": "mb_recall_field_reports",
+        "description": (
+            "Recall confirmed findings from PAST repairs of THIS device "
+            "(per-device memory that grows over time). Call it before "
+            "concluding, to check whether this exact fault was already "
+            "diagnosed here. Filter by free-text `query` and/or `refdes`."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Keyword(s) matched across symptom/cause/refdes.",
+                },
+                "refdes": {"type": "string", "description": "Restrict to one component."},
+                "limit": {"type": "integer", "default": 8},
+            },
+        },
+    },
+    {
+        "type": "custom",
+        "name": "mb_search_patterns",
+        "description": (
+            "Search global cross-device failure archetypes (short-to-GND, "
+            "thermal cascade, BGA lift, bench anti-patterns). Call it to "
+            "recognise the TYPE of fault and how to reason about it."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "required": ["query"],
+        },
+    },
+    {
+        "type": "custom",
+        "name": "mb_search_playbooks",
+        "description": (
+            "Search global diagnostic protocol templates by symptom. ALWAYS "
+            "call this BEFORE bv_propose_protocol: if a playbook matches, lift "
+            "its validated step sequence instead of reinventing one."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "symptom": {
+                    "type": "string",
+                    "description": "Symptom keyword, e.g. no-power, no-boot, usb-no-charge.",
+                },
+            },
+            "required": ["symptom"],
+        },
+    },
+]
+
+
 def build_tools_manifest(session: SessionState) -> list[dict]:
     """Return the tools list for `session` in DIRECT mode. `profile_*` and
     `protocol_*` always present; `bv_*` only when a board is loaded; `cam_*`
@@ -1100,24 +1163,45 @@ def build_tools_manifest(session: SessionState) -> list[dict]:
     tool would let the agent call something with no dispatcher behind it.
     The MA runtime bakes CONSULT_TOOLS into each tier-scoped agent at
     bootstrap time (see `scripts/bootstrap_managed_agent.py`)."""
-    manifest: list[dict] = list(MB_TOOLS) + list(PROFILE_TOOLS) + list(STOCK_TOOLS) + list(PROTOCOL_TOOLS)
+    manifest: list[dict] = (
+        list(MB_TOOLS) + list(RECALL_TOOLS) + list(PROFILE_TOOLS)
+        + list(STOCK_TOOLS) + list(PROTOCOL_TOOLS)
+    )
     if session.board is not None:
         manifest.extend(BV_TOOLS)
     if session.has_camera:
         manifest.extend(CAM_TOOLS)
+    # Plan gate (cloud capability): a free tenant may NOT trigger a paid pack
+    # enrichment, so drop mb_expand_knowledge entirely — the agent never sees
+    # it, never proposes it (no dead CTA). Pro / self-host keep it. The
+    # execution path is gated too (defence in depth) for the managed runtime,
+    # whose manifest is baked at agent bootstrap and can't be filtered here.
+    if not current_can_expand():
+        manifest = [t for t in manifest if t.get("name") != "mb_expand_knowledge"]
     return manifest
 
 
 def _has_electrical_graph(device_slug: str) -> bool:
+    # T9 — per-owner : présence du graphe pour le tenant courant (son PDF
+    # actif), pas la racine partagée du slug. owner None → racine, inchangé.
+    from api.agent.owner_ref import current_owner_ref
+    from api.pipeline import live_graph
+
     root = Path(get_settings().memory_root)
-    return (root / device_slug / "electrical_graph.json").exists()
+    return live_graph.resolve_graph_path(root / device_slug, current_owner_ref()) is not None
 
 
-def render_system_prompt(session: SessionState, *, device_slug: str) -> str:
+def render_system_prompt(
+    session: SessionState, *, device_slug: str, cousin_line: str | None = None
+) -> str:
     """Build the system prompt for the DIRECT runtime only.
 
     The Managed runtime carries its prompt server-side via managed_ids.json
     and doesn't call this function.
+
+    ``cousin_line`` (T9a Phase B): when this board has no schematic of its own,
+    the caller may pass a one-line hint pointing the agent at a sibling pack
+    (same family) it can lean on as an indicative reference.
     """
     boardview_status = "✅" if session.board is not None else "❌ (no board file loaded)"
     schematic_status = (
@@ -1125,12 +1209,24 @@ def render_system_prompt(session: SessionState, *, device_slug: str) -> str:
         if _has_electrical_graph(device_slug)
         else "❌ (not yet parsed)"
     )
-    technician_block = render_technician_block(load_profile())
+    from api.agent.owner_ref import current_owner_ref
+    technician_block = render_technician_block(load_profile(current_owner_ref()))
     reliability_line = load_reliability_line(device_slug)
     reliability_block = (
         f"\n{reliability_line}\n"
         if reliability_line
         else ""
+    )
+    cousin_block = f"\n{cousin_line}\n" if cousin_line else ""
+    # mb_expand_knowledge is plan-gated (dropped from the manifest for free
+    # tenants) — keep the advertised capability line in sync so the agent isn't
+    # told about a tool it doesn't have.
+    mb_tools_line = (
+        "mb_get_component, mb_get_rules_for_symptoms, mb_record_finding, "
+        "mb_record_session_log, mb_expand_knowledge"
+        if current_can_expand()
+        else "mb_get_component, mb_get_rules_for_symptoms, mb_record_finding, "
+        "mb_record_session_log"
     )
     return f"""\
 You are a calm, methodical board-level diagnostics assistant for a
@@ -1138,11 +1234,11 @@ microsoldering technician. Address the technician directly, in a
 direct and pedagogical tone.
 
 Current device: {device_slug}.
-{reliability_block}
+{reliability_block}{cousin_block}
 {technician_block}
 
 Capabilities for this session:
-  - memory bank ✅ (mb_get_component, mb_get_rules_for_symptoms, mb_record_finding, mb_record_session_log, mb_expand_knowledge)
+  - memory bank ✅ ({mb_tools_line})
   - profile ✅ (profile_get, profile_check_skills, profile_track_skill)
   - filesystem ✅ (read, write, edit, grep, glob — for the /mnt/memory/ mounts)
   - boardview {boardview_status}

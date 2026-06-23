@@ -10,7 +10,11 @@ from typing import TYPE_CHECKING
 
 from anthropic import AsyncAnthropic
 
-from api.pipeline.prompts import REGISTRY_SYSTEM, REGISTRY_USER_TEMPLATE
+from api.pipeline.prompts import (
+    REGISTRY_SYSTEM,
+    REGISTRY_USER_TEMPLATE,
+    device_kind_constraint,
+)
 from api.pipeline.schemas import Registry
 from api.pipeline.tool_call import call_with_forced_tool
 
@@ -42,6 +46,7 @@ async def run_registry_builder(
     model: str,
     device_label: str,
     raw_dump: str,
+    device_kind: str | None = None,
     stats: PhaseTokenStats | None = None,
 ) -> Registry:
     """Execute Phase 2 — return a validated `Registry` Pydantic model."""
@@ -51,6 +56,7 @@ async def run_registry_builder(
         device_label=device_label,
         raw_dump=raw_dump,
     )
+    user_prompt = user_prompt + device_kind_constraint(device_kind)
 
     registry = await call_with_forced_tool(
         client=client,

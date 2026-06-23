@@ -17,12 +17,15 @@ from typing import Any
 from anthropic import AsyncAnthropic
 from fastapi import WebSocket, WebSocketDisconnect
 
+from api.agent import cloud_metering
 from api.agent import runtime_managed as _rm
 from api.agent._session_mirrors import SessionMirrors as _SessionMirrors
 from api.agent.chat_history import (
     append_event,
     touch_conversation,
 )
+from api.agent.owner_ref import current_owner_ref
+from api.agent.session_caps import current_can_expand
 from api.agent.pricing import compute_turn_cost
 from api.agent.runtime._aux import (
     TierLiteral,
@@ -325,8 +328,26 @@ async def _forward_ws_to_session(
                 from api.agent.chat_history import touch_status
 
                 touch_status(device_slug=device_slug, repair_id=repair_id, status="in_progress")
-        if ctx_tag:
-            text = ctx_tag + "\n\n" + text
+        # The board is a snapshot taken at WS open. The pre-dispatch refresh
+        # in `dispatch_tool` makes a mid-session import visible to bv_* calls,
+        # but an agent told "no board" at session start never CALLS bv_* — so
+        # re-resolve on every user turn and, when the active board actually
+        # changed, tell the agent inline. The note stacks under the ctx tag
+        # as one leading block that `strip_ctx_tag` removes from replays.
+        board_note: str | None = None
+        if session_state is not None and session_state.refresh_board_if_changed():
+            from api.agent.chat_history import build_board_refresh_note
+
+            board_note = build_board_refresh_note(
+                session_state.board, session_state.board_source
+            )
+            logger.info(
+                "[Diag-MA] board (re)loaded mid-session from %s",
+                session_state.board_source,
+            )
+        prefix = "\n".join(line for line in (ctx_tag, board_note) if line)
+        if prefix:
+            text = prefix + "\n\n" + text
         await client.beta.sessions.events.send(
             session_id,
             events=[
@@ -374,18 +395,33 @@ async def _forward_session_to_ws(
     used as a fallback when MA's span.model_request_end doesn't carry a
     model name on its model_usage payload.
     """
-    # AsyncAnthropic: `.stream(...)` returns a coroutine resolving to an
-    # `AsyncStream[...]`. We must await first, then use it as an async
-    # context manager — otherwise we get `TypeError: 'coroutine' object
-    # does not support the asynchronous context manager protocol`.
-    stream_ctx = await client.beta.sessions.events.stream(session_id)
     # Deduplicate tool-use responses. MA can re-emit `session.status_idle`
     # with `stop_reason=requires_action` carrying the SAME event_ids after
     # we've already sent their `user.custom_tool_result` — a naive re-dispatch
     # then posts a duplicate response, which MA rejects with 400
     # ("Invalid user.custom_tool_result event [...] waiting on responses to
     # events [...]") and tears down the stream. Track ids we've answered.
+    #
+    # responded_tool_ids + events_by_id + pending_tool_results live OUTSIDE
+    # the reconnect loop below so they survive a stream drop+resume: the
+    # tool-dispatch dedup contract must hold across the gap, otherwise a
+    # reconnect would re-dispatch a tool the agent already got an answer to.
     responded_tool_ids: set[str] = set()
+    # Lossless-reconnect dedup. The MA SSE stream has NO replay: if the
+    # connection drops (watchdog timeout, transport reset, or the stream
+    # ending without a terminal `session.status_terminated`), every event
+    # emitted during the gap is gone. Worse, a `requires_action` that fired
+    # in the gap leaves the session waiting forever on a
+    # `user.custom_tool_result` we never sent — a deadlock. The official MA
+    # consolidation pattern (event-stream.md "Reconnecting / replaying")
+    # closes this: on every (re)connect we first `events.list(session_id)`
+    # to pull the full server-side history and re-process anything whose id
+    # we haven't seen, THEN tail the live stream deduping on the same set.
+    # The set gates only applicative RE-processing (re-render, re-mirror);
+    # the terminal/control branches (terminated, requires_action dispatch,
+    # tool-result telemetry) always run so a terminal event present only in
+    # the catch-up history is never skipped.
+    seen_event_ids: set[str] = set()
     # Tool-result processing telemetry. Every event MA streams back carries
     # `processed_at` (ISO 8601 — null while queued, populated once the agent
     # picks it up). For our `user.custom_tool_result` events the round-trip
@@ -406,67 +442,163 @@ async def _forward_session_to_ws(
     # with adaptive thinking can spend a minute before its first chunk.
     settings_for_watchdog = _rm.get_settings()
     stream_timeout = settings_for_watchdog.ma_stream_event_timeout_seconds
-    async with stream_ctx as stream:
-        stream_iter = stream.__aiter__()
+    # Bound consecutive recovery reconnects so a genuinely-dead session can't
+    # spin forever. A clean run (no drop) never touches this budget. Each
+    # successful event delivery resets it — only *consecutive* drops count.
+    max_reconnects = getattr(
+        settings_for_watchdog, "ma_stream_max_reconnects", 4
+    )
+
+    async def _resilient_events():
+        """Yield MA events with lossless reconnect across recoverable drops.
+
+        On the first iteration and on every reconnect, pull the server-side
+        history via `events.list` and yield it (the caller dedupes via
+        `seen_event_ids`) so the gap created by the drop is filled, THEN
+        tail the live stream. On a recoverable drop (watchdog timeout,
+        transport error, or the stream ending without a terminal event) we
+        reconnect up to `max_reconnects` consecutive times. A clean
+        `session.status_terminated` (signalled by the caller setting
+        `terminal_seen`) or budget exhaustion ends the generator.
+
+        WebSocketDisconnect is re-raised (client gone — not an MA fault).
+        """
+        reconnects = 0
+        first_connect = True
         while True:
-            try:
-                event = await asyncio.wait_for(
-                    stream_iter.__anext__(), timeout=stream_timeout,
-                )
-            except StopAsyncIteration:
-                break
-            except TimeoutError:
-                logger.warning(
-                    "[Diag-MA] stream inactive for %.0fs — closing session=%s",
-                    stream_timeout,
-                    session_id,
-                )
+            # --- Catch-up pass: replay server-side history to fill any gap.
+            # SKIPPED on the very first connect: session.py already replayed
+            # the resumed session's history to the WS (via
+            # `_replay_ma_history_to_ws`) before this forwarder started, and
+            # the live stream only carries events emitted after it attaches —
+            # so on first connect there's nothing to catch up, and re-listing
+            # would re-render the just-replayed bubbles. On a RECONNECT it is
+            # the ONLY way to recover events emitted during the gap, including
+            # a pending requires_action that would otherwise deadlock the
+            # session. `seen_event_ids` dedups any overlap with the live tail.
+            if not first_connect:
                 try:
-                    await ws.send_json(
-                        {
-                            "type": "stream_timeout",
-                            "session_id": session_id,
-                            "timeout_seconds": stream_timeout,
-                        }
+                    hist = client.beta.sessions.events.list(session_id)
+                    if hasattr(hist, "__aiter__"):
+                        async for hev in hist:
+                            yield hev
+                    else:
+                        page = await hist  # type: ignore[misc]
+                        for hev in (getattr(page, "data", None) or list(page)):
+                            yield hev
+                except WebSocketDisconnect:
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    # events.list is best-effort catch-up; a failure here just
+                    # means we lean on the live stream. Log and continue.
+                    logger.warning(
+                        "[Diag-MA] events.list catch-up failed session=%s: %s",
+                        session_id, exc,
                     )
-                except Exception:  # noqa: BLE001
-                    pass
-                break
+            first_connect = False
+
+            # --- Live tail.
+            dropped = False
+            try:
+                stream_ctx = await client.beta.sessions.events.stream(session_id)
+                async with stream_ctx as stream:
+                    stream_iter = stream.__aiter__()
+                    while True:
+                        try:
+                            ev = await asyncio.wait_for(
+                                stream_iter.__anext__(), timeout=stream_timeout,
+                            )
+                        except StopAsyncIteration:
+                            # Stream ended. If the caller already saw a
+                            # terminal event, this is a clean end — stop.
+                            # Otherwise treat it as a recoverable drop and
+                            # reconnect (the session may still be live with
+                            # a pending action).
+                            dropped = not _terminal_seen["v"]
+                            break
+                        except TimeoutError:
+                            logger.warning(
+                                "[Diag-MA] stream inactive for %.0fs — "
+                                "session=%s; attempting lossless reconnect",
+                                stream_timeout, session_id,
+                            )
+                            dropped = True
+                            break
+                        reconnects = 0  # a delivered event resets the budget
+                        yield ev
             except WebSocketDisconnect:
                 # Client window closed mid-stream — bubble up so the caller's
-                # asyncio.wait observes the task completion and the symmetric
-                # WS→session forwarder can shut down too. Not an MA-side error.
+                # asyncio.wait observes completion and the symmetric forwarder
+                # shuts down too. Not an MA-side error.
                 raise
             except Exception as exc:  # noqa: BLE001 — SSE transport collapse
-                # Anything else from the SSE iterator is a transport-level
-                # failure (TLS reset, ConnectionError, anthropic.APIStatusError
-                # mid-stream, etc.). Without an explicit catch the task ended
-                # silently, the WS client kept its socket open expecting
-                # `agent.message` chunks that never arrived, and the technician
-                # saw a frozen UI with no signal. Surface it to the WS so the
-                # frontend can render a "session lost — reconnect" hint, then
-                # break cleanly so the orchestrator's finally block runs.
-                logger.exception(
-                    "[Diag-MA] stream iterator failed session=%s exc=%s",
-                    session_id,
-                    type(exc).__name__,
+                # Transport-level failure (TLS reset, ConnectionError,
+                # APIStatusError mid-stream). Recoverable: reconnect.
+                logger.warning(
+                    "[Diag-MA] stream transport failed session=%s exc=%s — "
+                    "attempting lossless reconnect",
+                    session_id, type(exc).__name__,
+                )
+                dropped = True
+
+            if _terminal_seen["v"]:
+                return
+            if not dropped:
+                return
+            reconnects += 1
+            if reconnects > max_reconnects:
+                logger.warning(
+                    "[Diag-MA] exhausted %d reconnect attempts session=%s — "
+                    "giving up; session may be dead",
+                    max_reconnects, session_id,
                 )
                 try:
-                    await ws.send_json(
-                        {
-                            "type": "stream_error",
-                            "session_id": session_id,
-                            "error": type(exc).__name__,
-                            "message": str(exc)[:500],
-                        }
-                    )
+                    await ws.send_json({
+                        "type": "stream_error",
+                        "session_id": session_id,
+                        "error": "reconnect_exhausted",
+                        "message": (
+                            f"Stream dropped and {max_reconnects} reconnect "
+                            "attempts failed — session may be lost."
+                        ),
+                    })
                 except Exception:  # noqa: BLE001
                     pass
-                break
+                return
+            logger.info(
+                "[Diag-MA] reconnecting stream session=%s (attempt %d/%d)",
+                session_id, reconnects, max_reconnects,
+            )
 
+    # Caller-visible terminal flag, mutated from inside the dispatch chain so
+    # `_resilient_events` knows a `session.status_terminated` arrived and a
+    # subsequent StopAsyncIteration is a clean end, not a recoverable drop.
+    # A 1-element dict so the closure can mutate it without `nonlocal`.
+    _terminal_seen = {"v": False}
+
+    async for event in _resilient_events():
             etype = getattr(event, "type", None)
 
+            # Lossless-reconnect dedup gate. `_already_seen` is True when this
+            # exact event id was already processed (live or in an earlier
+            # catch-up pass). Applicative RENDER branches below skip on a
+            # repeat; terminal/control branches ignore this flag and always
+            # run (so a terminal or pending-action event present only in the
+            # catch-up history is never dropped). Events without an id (rare
+            # span markers) always process — they carry no dedup key.
+            _eid_for_dedup = getattr(event, "id", None)
+            if _eid_for_dedup is not None and _eid_for_dedup in seen_event_ids:
+                _already_seen = True
+            else:
+                _already_seen = False
+                if _eid_for_dedup is not None:
+                    seen_event_ids.add(_eid_for_dedup)
+
             if etype == "agent.message":
+                if _already_seen:
+                    # Catch-up replay of an already-rendered turn — don't
+                    # double-post the bubble or re-mirror it to JSONL.
+                    continue
                 for block in getattr(event, "content", None) or []:
                     if getattr(block, "type", None) == "text":
                         clean, unknown = sanitize_agent_text(block.text, session_state.board)
@@ -485,8 +617,10 @@ async def _forward_session_to_ws(
                         )
 
             elif etype == "agent.thinking":
+                if _already_seen:
+                    continue
                 # MA surfaces summarized thinking text on this event when the
-                # configured model supports adaptive thinking (Opus 4.6/4.7,
+                # configured model supports adaptive thinking (Opus 4.6/4.7/4.8,
                 # Sonnet 4.6 — all enabled by default server-side; the agent
                 # config doesn't expose a `thinking` knob, see bootstrap docs).
                 # Empty `text` means MA emitted the marker but the model chose
@@ -496,10 +630,15 @@ async def _forward_session_to_ws(
                     await ws.send_json({"type": "thinking", "text": text})
 
             elif etype == "span.model_request_end":
+                if _already_seen:
+                    # Don't re-emit turn_cost on catch-up — it would
+                    # double-count the lifetime cost chip and re-touch the
+                    # conv's accumulated cost on disk.
+                    continue
                 # MA attaches token usage to the span terminator. The model
                 # name may or may not be carried on model_usage across SDK
                 # versions — fall back to the tier-configured agent model
-                # (claude-haiku-4-5 / sonnet-4-6 / opus-4-7) so pricing still
+                # (claude-haiku-4-5 / sonnet-4-6 / opus-4-8) so pricing still
                 # resolves.
                 usage = getattr(event, "model_usage", None)
                 if usage is not None:
@@ -523,6 +662,7 @@ async def _forward_session_to_ws(
                     # to confirm the warm-up + 4-store layered prompt actually
                     # pays off across resumed sessions.
                     total_prompt = in_tok + cache_read + cache_write
+                    hit_rate: float | None = None
                     if total_prompt > 0:
                         hit_rate = (cache_read / total_prompt) * 100.0
                         logger.info(
@@ -533,7 +673,18 @@ async def _forward_session_to_ws(
                             cache_read,
                             total_prompt,
                         )
-                    await ws.send_json({"type": "turn_cost", **cost})
+                    # Surface the per-turn cache hit rate so the front can render
+                    # a cache-hit chip. `cost` already carries the raw
+                    # cache_read/creation token counts (from compute_turn_cost);
+                    # this adds the derived ratio (percent, 0-100, null when no
+                    # prompt tokens). Additive only — no existing key is touched.
+                    cost_with_cache = {
+                        **cost,
+                        "cache_hit_rate": (
+                            round(hit_rate, 1) if hit_rate is not None else None
+                        ),
+                    }
+                    await ws.send_json({"type": "turn_cost", **cost_with_cache})
                     if repair_id and conv_id:
                         # Defensive: in normal flow `_forward_ws_to_session`
                         # has already materialized on the user message that
@@ -549,11 +700,46 @@ async def _forward_session_to_ws(
                             model=model_label,
                             memory_root=memory_root,
                         )
+                    # T13 — report this LLM call's raw token usage to the cloud
+                    # (the tenant-private billing unit). Best-effort + no-op when
+                    # unconfigured (self-host never phones home). The catch-up
+                    # replay path already `continue`d above on `_already_seen`, so
+                    # a re-seen span never double-reports; the cloud also dedups on
+                    # the {session_id}:{event.id} event_id as a second guard.
+                    # Only report a span that carries an id — it's the cloud's
+                    # idempotency key. Id-less spans (rare markers) would all
+                    # collapse to "{session}:None" and silently dedup to a single
+                    # ledger row → undercount; skipping them is the
+                    # customer-favourable choice (and they rarely carry usage).
+                    _event_id = getattr(event, "id", None)
+                    if _event_id is not None:
+                        cloud_metering.fire_and_forget_report(
+                            owner_ref=current_owner_ref(),
+                            model=model_label,
+                            input_tokens=in_tok,
+                            output_tokens=out_tok,
+                            # Already computed above for the turn cost + hit-rate
+                            # log; forward them so the cloud prices cache reads
+                            # (0.1x) and writes (1.25x) at their own tiers instead
+                            # of billing the whole turn as full input.
+                            cache_read_input_tokens=cache_read,
+                            cache_creation_input_tokens=cache_write,
+                            engine_repair_id=repair_id,
+                            event_id=f"{session_id}:{_event_id}",
+                        )
 
             elif etype == "agent.custom_tool_use":
+                # ALWAYS cache by id (even on catch-up) — `requires_action`
+                # below looks the tool up here, and a tool emitted during a
+                # stream gap must be dispatchable on reconnect, or the
+                # session deadlocks waiting on a result we can't form.
                 events_by_id[event.id] = event
                 tool_name = getattr(event, "name", None)
                 tool_input = getattr(event, "input", {}) or {}
+                if _already_seen:
+                    # Already rendered live — skip the WS echo + JSONL mirror,
+                    # but the cache update above still ran.
+                    continue
                 await ws.send_json(
                     {
                         "type": "tool_use",
@@ -578,6 +764,8 @@ async def _forward_session_to_ws(
                 )
 
             elif etype == "agent.tool_use":
+                if _already_seen:
+                    continue
                 # MA-native memory_* tools (memory_search / memory_list /
                 # memory_read / memory_write) are dispatched server-side by
                 # Anthropic, not by our runtime. Surface them on the WS so
@@ -627,6 +815,30 @@ async def _forward_session_to_ws(
                     # research; the existing Registry + Clinicien validate
                     # and merge the chunk into rules.json.
                     if name == "mb_expand_knowledge":
+                        # Plan gate (defence in depth): the managed manifest is
+                        # baked at agent bootstrap, so a free tenant's agent may
+                        # still emit this call. Refuse here — no Curator session,
+                        # no Scout spend — and feed a typed result back so the
+                        # agent relays the limitation instead of stalling.
+                        if not current_can_expand():
+                            await client.beta.sessions.events.send(
+                                session_id,
+                                events=[{
+                                    "type": "user.custom_tool_result",
+                                    "custom_tool_use_id": eid,
+                                    "content": [{
+                                        "type": "text",
+                                        "text": _safe_tool_result_text({
+                                            "ok": False,
+                                            "expanded": False,
+                                            "reason": "plan_gated",
+                                            "error": "Pack enrichment requires a paid plan.",
+                                        }),
+                                    }],
+                                }],
+                            )
+                            responded_tool_ids.add(eid)
+                            continue
                         from api.pipeline.expansion import expand_pack
 
                         focus_symptoms = list(payload.get("focus_symptoms") or [])
@@ -649,6 +861,10 @@ async def _forward_session_to_ws(
                             )
 
                         try:
+                            # T8 : propage l'owner_ref de la session (curator
+                            # path) → added_by_tenant dans la provenance des
+                            # facts promus. Ferme le résidu de fuite T6.
+                            # (current_owner_ref is imported at module top.)
                             expand_result = await expand_pack(
                                 device_slug=device_slug,
                                 focus_symptoms=focus_symptoms,
@@ -656,6 +872,7 @@ async def _forward_session_to_ws(
                                 client=client,
                                 memory_root=memory_root,
                                 chunk_provider=_curator_provider,
+                                owner_ref=current_owner_ref(),
                             )
                             expand_result["ok"] = True
                             if session_state is not None:
@@ -996,6 +1213,11 @@ async def _forward_session_to_ws(
                     )
 
             elif etype == "session.status_terminated":
+                # Mark terminal so the resilient generator treats the stream
+                # ending as a clean close (no reconnect). Always runs, even on
+                # a catch-up replay — a terminated event present only in the
+                # history must still end the loop.
+                _terminal_seen["v"] = True
                 await ws.send_json({"type": "session_terminated"})
                 return
 

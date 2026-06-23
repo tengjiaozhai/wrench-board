@@ -8,26 +8,26 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from dotenv import load_dotenv
-
-# Load .env into os.environ so DIAGNOSTIC_MODE etc. are available
-# to code that reads os.environ directly (e.g. the WS dispatcher).
-load_dotenv()
-
 from fastapi import FastAPI, HTTPException, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from api import __version__
+from api.agent.board_ref import set_board_ref
 from api.agent.macros import macro_path_for
 from api.board.router import router as board_router
 from api.config import get_settings
+from api.http_security import (
+    ServiceTokenMiddleware,
+    should_fail_unprotected,
+    should_warn_unprotected,
+)
 from api.logging_setup import configure_logging
 from api.pipeline import router as pipeline_router
 from api.profile.router import router as profile_router
 from api.stock import stock_router
-from api.ws_security import enforce_ws_origin
+from api.ws_security import enforce_ws_origin, enforce_ws_service_token
 
 logger = logging.getLogger("wrench_board.main")
 
@@ -104,6 +104,42 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "every request until it's set in .env. Pure-data endpoints "
             "(/health, /pipeline/packs read, board parsing) keep working."
         )
+    # Fail-fast : en contexte EXPLICITEMENT production (ENV=production) SANS
+    # service-token, le moteur serait ouvert à tout Internet → on REFUSE de
+    # démarrer (symétrie avec le fail-fast cloud). Le self-host (ENV non-prod,
+    # même en docker 0.0.0.0) n'est pas touché.
+    if should_fail_unprotected(
+        token=settings.engine_service_token,
+        env=os.getenv("ENV", ""),
+    ):
+        raise RuntimeError(
+            "ENGINE_SERVICE_TOKEN manquant en production — le moteur REFUSE de "
+            "démarrer (il serait accessible sans auth depuis Internet). Définis "
+            "ENGINE_SERVICE_TOKEN (identique à celui du cloud) et garde le moteur "
+            "sur un réseau privé. Cf. DEPLOYMENT.md."
+        )
+    # Filet plus souple : WARN si prod-like par heuristique (bind 0.0.0.0) SANS
+    # token — ne crash pas (le self-host légitime en docker reste silencieux).
+    if should_warn_unprotected(
+        token=settings.engine_service_token,
+        host=os.getenv("HOST", "127.0.0.1"),
+        env=os.getenv("ENV", ""),
+    ):
+        logger.warning(
+            "ENGINE_SERVICE_TOKEN vide en contexte prod-like — le moteur est OUVERT "
+            "(toutes les routes accessibles sans auth). En managé : set le token + "
+            "réseau privé (cf. DEPLOYMENT.md)."
+        )
+    # Seed shipped demo packs (e.g. MNT Reform) so the first-run example tour
+    # has a fully-analyzed device to walk. Idempotent + non-destructive.
+    try:
+        from api.pipeline.demo_seed import seed_demo_packs
+
+        seeded = seed_demo_packs(Path(settings.memory_root))
+        if seeded:
+            logger.info("demo packs seeded: %d", seeded)
+    except Exception as exc:  # noqa: BLE001 — seeding must never block startup
+        logger.warning("demo-pack seeding skipped: %s", exc)
     # Kick off boardview pre-warm in background — don't await. The server
     # is answering requests immediately; per-thread parse populates the
     # /render cache so the first dashboard open for each device is instant.
@@ -131,6 +167,14 @@ app.add_middleware(
     allow_credentials=not _cors_wildcard,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+
+# Gate HTTP du service-token : exige le bearer en mode managé, no-op en
+# self-host (token vide). Ajouté APRÈS CORS → plus externe → s'exécute avant
+# la logique applicative ; laisse passer OPTIONS (préflight) + /health.
+app.add_middleware(
+    ServiceTokenMiddleware,
+    expected_token=get_settings().engine_service_token,
 )
 
 app.include_router(pipeline_router)
@@ -192,15 +236,23 @@ async def diagnostic_session(websocket: WebSocket, device_slug: str) -> None:
       used when the Managed Agents beta is unavailable.
 
     Query param `tier` selects the model: `fast` (Haiku), `normal` (Sonnet),
-    `deep` (Opus). Defaults to `deep` so demo traffic lands on Opus 4.7
+    `deep` (Opus). Defaults to `deep` so demo traffic lands on Opus 4.8
     without an explicit tier pick. Changing tier in the frontend reconnects
     the WS — it's an explicit new conversation.
 
     Origin check runs first: the CORS middleware doesn't cover the WS
     handshake, so without this guard any cross-origin browser page could
-    open a session and inject `message` frames. See ``api.ws_security``.
+    open a session and inject `message` frames. The service-token check runs
+    next: when the engine is deployed behind wrenchboard-cloud, only the cloud
+    relay (which carries the shared `Authorization: Bearer` token) may open a
+    session — a direct websocat against the engine URL is refused, so it can't
+    bypass the cloud's auth + quota and burn credits. Both are no-ops in the
+    standalone workbench (no allowlist / no token configured). See
+    ``api.ws_security``.
     """
     if not await enforce_ws_origin(websocket):
+        return
+    if not await enforce_ws_service_token(websocket):
         return
 
     tier = websocket.query_params.get("tier", "deep").lower()
@@ -216,19 +268,34 @@ async def diagnostic_session(websocket: WebSocket, device_slug: str) -> None:
     # "new" = always create a fresh conversation. Any other value must match
     # an existing conversation id, otherwise ensure_conversation raises.
     conv_id = websocket.query_params.get("conv") or None
+    # Multi-tenant: the cloud front-door injects X-Owner-Ref (the tenant id) on
+    # the handshake so the session's owner-sensitive tools (stock) write to the
+    # right tenant's private store. Absent in standalone/self-host.
+    owner_ref = websocket.headers.get("X-Owner-Ref") or None
+    # Plan capability injected by the cloud (the only gatekeeper): may this
+    # session's tenant trigger a paid pack enrichment (mb_expand_knowledge)?
+    # Header absent → standalone/self-host → True (unrestricted). The cloud
+    # always sends an explicit "true"/"false"; only "false" disables it.
+    can_expand = (websocket.headers.get("X-Wb-Can-Expand") or "true").strip().lower() != "false"
+    # Optional board number (PCB revision, e.g. "820-02016") supplied by the
+    # client as a query param. Absent → None → no board-delta injection. No
+    # trust logic here: the public engine carries this as an opaque key only.
+    set_board_ref(websocket.query_params.get("board"))
 
     mode = os.environ.get("DIAGNOSTIC_MODE", "managed").lower()
     if mode == "direct":
         from api.agent.runtime_direct import run_diagnostic_session_direct
 
         await run_diagnostic_session_direct(
-            websocket, device_slug, tier=tier, repair_id=repair_id, conv_id=conv_id
+            websocket, device_slug, tier=tier, repair_id=repair_id, conv_id=conv_id,
+            owner_ref=owner_ref, can_expand=can_expand,
         )
     else:
         from api.agent.runtime_managed import run_diagnostic_session_managed
 
         await run_diagnostic_session_managed(
-            websocket, device_slug, tier=tier, repair_id=repair_id, conv_id=conv_id  # type: ignore[arg-type]
+            websocket, device_slug, tier=tier, repair_id=repair_id, conv_id=conv_id,  # type: ignore[arg-type]
+            owner_ref=owner_ref, can_expand=can_expand,
         )
 
 
