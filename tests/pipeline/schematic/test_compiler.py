@@ -15,9 +15,11 @@ from api.pipeline.schematic.compiler import (
     compile_electrical_graph,
 )
 from api.pipeline.schematic.schemas import (
+    Ambiguity,
     ComponentNode,
     ComponentValue,
     NetNode,
+    PagePin,
     SchematicGraph,
     TypedEdge,
 )
@@ -283,6 +285,51 @@ def test_quality_degraded_mode_defaults_off_with_no_confidences():
     assert elec.quality.degraded_mode is False
 
 
+def test_orphan_cross_page_counts_only_unstitched_refs_not_net_naming_notes():
+    """`orphan_cross_page_refs` must count unstitched cross-page connectors
+    only — not every ambiguity that happens to name a net.
+
+    The vision pass emits rich, honest net-naming notes ("GND symbol drawn
+    but no GND label", "PP04xx are probe pads, couldn't tell if pad+signal
+    are one net"). Each carries `related_nets`, but none is a broken cross-page
+    connector. Counting them inflated iphone-11 to 222 orphans (5 real) and
+    falsely flagged DEGRADED."""
+    g = _mnt_regulator_graph()
+    g.ambiguities.extend(
+        [
+            # Two genuine merger-emitted cross-page orphans.
+            Ambiguity(
+                description=(
+                    "Cross-page ref 'wifi_mlb' on page 73 has no matching net "
+                    "or counter-ref on other pages"
+                ),
+                page=73,
+                related_nets=["wifi_mlb"],
+            ),
+            Ambiguity(
+                description=(
+                    "Cross-page connector with unreadable label on page 90"
+                ),
+                page=90,
+            ),
+            # Net-naming notes with related_nets — NOT cross-page orphans.
+            Ambiguity(
+                description="GND label is not present in the grounding net set",
+                page=12,
+                related_nets=["GND"],
+            ),
+            Ambiguity(
+                description="PP04xx labels are probe/test pad identifiers",
+                page=14,
+                related_nets=["PP0453", "PP0413"],
+            ),
+        ]
+    )
+    elec = compile_electrical_graph(g)
+    assert elec.quality.orphan_cross_page_refs == 2
+    assert elec.quality.degraded_mode is False
+
+
 # ----------------------------------------------------------------------
 # Direction-tolerant edge handling (Sonnet / other models emit reversed
 # `powered_by` edges). Both directions must yield the same derived graph.
@@ -431,3 +478,241 @@ def test_compile_populates_passive_kind_and_role():
     assert result.components["C156"].role in {"decoupling", "filter"}
     # PowerRail.decoupling populated with the refdes
     assert "C156" in result.power_rails["+3V3"].decoupling
+
+
+# ----------------------------------------------------------------------
+# Phantom-consumer scrub — a `powered_by` edge from the vision pass can
+# wire a component onto a rail it has no `power_in` pin on (a feedback
+# divider tapping VREF, or a plain vision misread). Such a consumer can
+# never be killed by the rail dying, so it breaks the simulator's
+# dead-rail-implies-dead-consumers contract. The scrub drops a consumer
+# only when it HAS pins but none is `power_in` on that rail; a consumer
+# with no pin data at all is trusted (edge-only wiring stays supported).
+# ----------------------------------------------------------------------
+
+
+def _phantom_consumer_graph() -> SchematicGraph:
+    components = {
+        "U_SRC": ComponentNode(
+            refdes="U_SRC", type="ic", pages=[1],
+            pins=[PagePin(number="1", role="power_out", net_label="VREF")],
+        ),
+        # Legitimate load: real power_in pin on VREF.
+        "U_LOAD": ComponentNode(
+            refdes="U_LOAD", type="ic", pages=[1],
+            pins=[PagePin(number="1", role="power_in", net_label="VREF")],
+        ),
+        # Phantom #1: a resistor tapping VREF through a feedback pin, never a load.
+        "R_FB": ComponentNode(
+            refdes="R_FB", type="resistor", pages=[1],
+            pins=[
+                PagePin(number="1", role="feedback_in", net_label="VREF"),
+                PagePin(number="2", role="ground", net_label="GND"),
+            ],
+        ),
+        # Phantom #2: an IC with pins, but none on VREF (powered elsewhere).
+        "U_ELSE": ComponentNode(
+            refdes="U_ELSE", type="ic", pages=[1],
+            pins=[PagePin(number="1", role="power_in", net_label="V_OTHER")],
+        ),
+        # Edge-only consumer with no pin data — must stay (mnt-style).
+        "U_NOPIN": ComponentNode(refdes="U_NOPIN", type="ic", pages=[1]),
+    }
+    nets = {
+        "VREF": NetNode(label="VREF", is_power=True, is_global=True, pages=[1]),
+        "GND": NetNode(label="GND", is_power=True, pages=[1]),
+        "V_OTHER": NetNode(label="V_OTHER", is_power=True, pages=[1]),
+    }
+    edges = [
+        TypedEdge(src="U_SRC", dst="VREF", kind="powers", page=1),
+        TypedEdge(src="U_LOAD", dst="VREF", kind="powered_by", page=1),
+        TypedEdge(src="R_FB", dst="VREF", kind="powered_by", page=1),
+        TypedEdge(src="U_ELSE", dst="VREF", kind="powered_by", page=1),
+        TypedEdge(src="U_NOPIN", dst="VREF", kind="powered_by", page=1),
+    ]
+    return SchematicGraph(
+        device_slug="phantom-demo", source_pdf="x.pdf", page_count=1,
+        components=components, nets=nets, typed_edges=edges,
+    )
+
+
+def test_phantom_consumers_without_power_in_pin_are_scrubbed():
+    elec = compile_electrical_graph(_phantom_consumer_graph())
+    consumers = set(elec.power_rails["VREF"].consumers)
+    assert "R_FB" not in consumers  # feedback tap, has pins but no power_in here
+    assert "U_ELSE" not in consumers  # has pins, none on VREF
+    assert "U_LOAD" in consumers  # real power_in load
+    assert "U_NOPIN" in consumers  # no pin data — edge wiring trusted
+
+
+def _dual_label_rail_graph() -> SchematicGraph:
+    """A cap pin (`C1.1`) the vision pass placed on TWO power-net labels —
+    the die-side (`VDD_DIE`) and the package-side (`PP_PKG`) of one physical
+    rail (the Apple PP_/VDD_ convention). The coalescer merges them; `PP_PKG`
+    wins canonical (it carries the source). An IC draws power on the die-side
+    label, which is the one that gets dropped.
+    """
+    components = {
+        "U_SRC": ComponentNode(
+            refdes="U_SRC", type="ic", pages=[1],
+            pins=[PagePin(number="2", role="power_out", net_label="PP_PKG")],
+        ),
+        "C1": ComponentNode(refdes="C1", type="capacitor", pages=[1]),
+        "U_DIE": ComponentNode(
+            refdes="U_DIE", type="ic", pages=[1],
+            pins=[PagePin(number="1", role="power_in", net_label="VDD_DIE")],
+        ),
+    }
+    nets = {
+        "VDD_DIE": NetNode(label="VDD_DIE", is_power=True, pages=[1],
+                           connects=["C1.1", "U_DIE.1"]),
+        "PP_PKG": NetNode(label="PP_PKG", is_power=True, pages=[1],
+                          connects=["C1.1", "U_SRC.2"]),
+        "GND": NetNode(label="GND", is_power=True, pages=[1], connects=["C1.2"]),
+    }
+    edges = [TypedEdge(src="U_SRC", dst="PP_PKG", kind="powers", page=1)]
+    return SchematicGraph(
+        device_slug="dual-label", source_pdf="x.pdf", page_count=1,
+        components=components, nets=nets, typed_edges=edges,
+    )
+
+
+def test_coalesced_alias_label_is_rewritten_on_component_pins():
+    """When two rail labels coalesce into one physical rail, a consumer pin on
+    the dropped label must be rewritten to the canonical rail — otherwise the
+    pin points at a net that is no longer a rail, the simulator can't see the
+    consumer draw from the surviving rail, and dead-rail-implies-dead-consumers
+    (INV-5) breaks. Mirrors msi-v311_11's V_PROT→IFPAB_IOVDD / U1.
+    """
+    elec = compile_electrical_graph(_dual_label_rail_graph())
+    assert "VDD_DIE" not in elec.power_rails  # dropped alias
+    u_die = elec.components["U_DIE"]
+    assert u_die.pins[0].net_label == "PP_PKG"  # rewritten to canonical
+    assert "U_DIE" in elec.power_rails["PP_PKG"].consumers
+
+
+# ----------------------------------------------------------------------
+# Edge-only consumers (vision emitted wiring but no pins) must become
+# killable: the simulator's cascade is purely pin-driven, so a pin-less
+# consumer kept by _scrub_phantom_consumers ("trust the edge") could
+# never die with its rail — INV-5 break, first seen on macbook-air-m1
+# U7550 (powered_by PPBUS_AON, zero pins on page 79).
+# ----------------------------------------------------------------------
+
+
+def _edge_only_consumer_graph() -> SchematicGraph:
+    components = {
+        "U_SRC": ComponentNode(
+            refdes="U_SRC", type="ic", pages=[1],
+            pins=[PagePin(number="2", role="power_out", net_label="PP_MAIN")],
+        ),
+        # Pin-less consumer — vision saw the powered_by edge, no pins.
+        "U_EDGE": ComponentNode(refdes="U_EDGE", type="ic", pages=[1], pins=[]),
+        # Consumer with pins but none on PP_MAIN — phantom, must stay scrubbed.
+        "U_PHANTOM": ComponentNode(
+            refdes="U_PHANTOM", type="ic", pages=[1],
+            pins=[PagePin(number="1", role="power_in", net_label="PP_OTHER")],
+        ),
+    }
+    nets = {
+        "PP_MAIN": NetNode(label="PP_MAIN", is_power=True, pages=[1],
+                           connects=["U_SRC.2"]),
+        "PP_OTHER": NetNode(label="PP_OTHER", is_power=True, pages=[1],
+                            connects=["U_PHANTOM.1"]),
+    }
+    edges = [
+        TypedEdge(src="U_SRC", dst="PP_MAIN", kind="powers", page=1),
+        TypedEdge(src="U_EDGE", dst="PP_MAIN", kind="powered_by", page=1),
+        TypedEdge(src="U_PHANTOM", dst="PP_MAIN", kind="powered_by", page=1),
+    ]
+    return SchematicGraph(
+        device_slug="edge-only", source_pdf="x.pdf", page_count=1,
+        components=components, nets=nets, typed_edges=edges,
+    )
+
+
+def test_edge_only_consumer_gets_synthetic_power_in_pin():
+    elec = compile_electrical_graph(_edge_only_consumer_graph())
+    rail = elec.power_rails["PP_MAIN"]
+    assert "U_EDGE" in rail.consumers
+    pins = elec.components["U_EDGE"].pins
+    assert len(pins) == 1
+    assert pins[0].role == "power_in"
+    assert pins[0].net_label == "PP_MAIN"
+    # The phantom keeps its real pins untouched and stays scrubbed.
+    assert "U_PHANTOM" not in rail.consumers
+    assert [p.net_label for p in elec.components["U_PHANTOM"].pins] == ["PP_OTHER"]
+
+
+def test_edge_only_consumer_dies_with_its_rail():
+    """End-to-end INV-5 contract on the mini-fixture: kill the rail source,
+    the edge-only consumer must land in cascade_dead_components."""
+    from api.pipeline.schematic.simulator import Failure, SimulationEngine
+
+    elec = compile_electrical_graph(_edge_only_consumer_graph())
+    tl = SimulationEngine(
+        elec, failures=[Failure(refdes="U_SRC", mode="dead")]
+    ).run()
+    assert "PP_MAIN" in tl.cascade_dead_rails
+    assert "U_EDGE" in tl.cascade_dead_components
+
+
+# ----------------------------------------------------------------------
+# Untraced-component evidence stamping
+# ----------------------------------------------------------------------
+
+
+def _alias_page_graph() -> SchematicGraph:
+    """Power-alias-page shape from the A2337 incident: 'U9000' exists only as
+    a section title (zero pins, zero net membership) yet sources a rail via a
+    grouping-inferred `powers` edge; 'U2' is an edge-only consumer."""
+    return SchematicGraph(
+        device_slug="alias-demo",
+        source_pdf="alias-demo.pdf",
+        page_count=1,
+        components={
+            "U9000": ComponentNode(refdes="U9000", type="ic", pages=[79]),
+            "U2": ComponentNode(refdes="U2", type="ic", pages=[79]),
+            "U1": ComponentNode(
+                refdes="U1",
+                type="ic",
+                pages=[79],
+                pins=[
+                    PagePin(number="1", name="VIN", role="power_in", net_label="+5V"),
+                    PagePin(number="2", name="GND", role="ground", net_label="GND"),
+                ],
+            ),
+        },
+        nets={
+            "+5V": NetNode(label="+5V", is_power=True, pages=[79], connects=["U1.1"]),
+        },
+        typed_edges=[
+            TypedEdge(src="U9000", dst="+5V", kind="powers", page=79),
+            TypedEdge(src="U2", dst="+5V", kind="powered_by", page=79),
+        ],
+    )
+
+
+def test_compile_marks_pinless_components_untraced():
+    eg = compile_electrical_graph(_alias_page_graph())
+    assert eg.components["U9000"].evidence == "untraced"
+    assert eg.components["U2"].evidence == "untraced"
+    assert eg.components["U1"].evidence == "traced"
+    assert eg.quality.components_untraced == 2
+
+
+def test_untraced_stamp_survives_synthetic_pin_materialization():
+    """`_synthesize_pins_for_edge_only_consumers` gives edge-only consumers
+    synthetic `number="?"` pins — those must not flip the evidence back."""
+    eg = compile_electrical_graph(_alias_page_graph())
+    u2 = eg.components["U2"]
+    if u2.pins:  # synthesized for the edge-only consumer
+        assert all(p.number == "?" for p in u2.pins)
+    assert u2.evidence == "untraced"
+
+
+def test_untraced_source_still_sources_rail():
+    """Marking is epistemic only — topology is preserved (the rail keeps its
+    inferred producer so the simulator cascade stays intact)."""
+    eg = compile_electrical_graph(_alias_page_graph())
+    assert eg.power_rails["+5V"].source_refdes == "U9000"

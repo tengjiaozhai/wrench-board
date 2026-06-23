@@ -3,19 +3,25 @@
 // and a section-agnostic wiring block for the Tweaks panel + boardview
 // colour pickers.
 
-import { currentSection, navigate, wireRouter, currentSession, leaveSession, applyMemoireMode, currentViewMode } from './router.js';
-import { loadTaxonomy, loadRepairs, renderHome, initNewRepairModal, renderRepairDashboard, hideRepairDashboard } from './home.js';
+import { currentSection, navigate, wireRouter, currentSession, leaveSession, syncContextFromUrl, parseRoute, migrateLegacyUrl, repairHash } from './router.js';
+import { getDeviceSlug, getRepairId } from './shared/context.js';
+import { mountRepairVue } from './features/repair/workspace.js';
+import { initHome, hideRepairDashboard } from './features/repair/diagnostic/dashboard.js';
 import { loadGraphFromBackend, setEmptyState, initGraphWithData } from './graph.js';
-import { initMemoryBank, loadMemoryBank } from './memory_bank.js';
+import { initMemoryBank } from './memory_bank.js';
 import { initProfileSection } from './profile.js';
 import { initStockSection } from './stock.js';
 import { initPipelineProgress } from './pipeline_progress.js';
-import { initLLMPanel, openLLMPanelIfRepairParam } from './llm.js';
+import { initLLMPanel } from './llm.js';
 import { initCameraPicker } from './camera.js';
 import { updatePreviewDevice } from './camera_preview.js';
-import { loadSchematic, closeSchematicInspector } from './schematic.js?v=fitzoom';
-import { initLanding, showLanding, hideLanding } from './landing.js';
+import { closeSchematicInspector } from './schematic.js?v=fitzoom';
+import { initLanding, showLanding, hideLanding } from './features/global/landing/index.js';
+import { hydrateOnboardingState } from './onboarding_state.js';
+import { planHints } from './cloud_hints.js';
 import { mountMascot } from './mascot.js';
+import { sendDiagnostic } from './services/diagnosticSocket.js';
+import { sendCapabilities } from './features/repair/diagnostic/filesVision.js';
 import * as Protocol from './protocol.js?v=quest4';
 
 // Tracks which device slug the graph has already been mounted for. Guards
@@ -25,7 +31,7 @@ import * as Protocol from './protocol.js?v=quest4';
 let _graphLoadedSlug = null;
 
 async function maybeLoadGraph() {
-  const slug = new URLSearchParams(window.location.search).get("device");
+  const slug = getDeviceSlug();
   if (!slug) {
     setEmptyState(true);
     return;
@@ -47,10 +53,25 @@ async function maybeLoadGraph() {
   }
 }
 
-// Expose on window so router.js can trigger a lazy load when the user
-// toggles from Brut back to Visuel — at that point the canvas becomes
-// visible with real dimensions and we want to mount the graph.
-window.__maybeLoadGraph = maybeLoadGraph;
+// Route-driven side-effect dispatch — mounts the data/view for the parsed route.
+// Global routes load their section; repair routes delegate to the workspace shell
+// (features/repair/workspace.js), which sequences the per-vue loaders. The active
+// device/repair context is already in the store (await syncContextFromUrl upstream).
+async function mountRoute(route) {
+  if (route.level === "global") {
+    if (route.name === "stock") initStockSection();
+    else if (route.name === "profile") initProfileSection();
+    else if (route.name === "home") {
+      // #home is the global home = the landing overlay (which lists all repairs
+      // via its sidebar). showLandingNow / the hashchange handler govern its
+      // visibility; here we just make sure the repair dashboard is hidden.
+      hideRepairDashboard();
+    }
+    // landing: overlay handled by show/hideLanding; nothing to mount here.
+    return;
+  }
+  await mountRepairVue(route, { maybeLoadGraph });
+}
 
 // Early stub: collect boardview.* events in __pending until brd_viewer
 // mounts and replaces this with the real implementation. Without this,
@@ -66,140 +87,99 @@ if (!window.Boardview) {
 (async function bootstrap() {
   // Wait for i18n dictionaries before any module renders dynamic strings.
   if (window.i18n && window.i18n.ready) await window.i18n.ready;
-  // Profile is the source of truth for the user's language. localStorage is
-  // just a paint-hint cache. Fire-and-forget reconcile after i18n is ready;
-  // any module subscribed via i18n.onChange re-renders if the profile differs.
-  (async () => {
-    try {
-      const r = await fetch("/profile");
-      if (!r.ok) return;
-      const data = await r.json();
-      const pref = data?.profile?.preferences?.language;
-      if (pref && pref !== window.i18n.locale && window.i18n.SUPPORTED.includes(pref)) {
-        await window.i18n.setLocale(pref);
-      }
-    } catch {}
-  })();
+  // Profile is the source of truth for the user's language AND the one-shot
+  // onboarding flags (cross-device). localStorage is just a paint-hint / pre-gate
+  // cache. Kick the single /profile hydration off here so it overlaps the init
+  // below; it's awaited further down (before routing) so the synchronous
+  // onboarding gates see server truth, not an empty localStorage on a new device.
+  const _profileHydrated = hydrateOnboardingState().then((env) => {
+    const pref = env?.profile?.preferences?.language;
+    if (pref && pref !== window.i18n.locale && window.i18n.SUPPORTED.includes(pref)) {
+      return window.i18n.setLocale(pref);
+    }
+  }).catch(() => {});
   mountMascot(document.getElementById("brandMascot"), { size: "xs", state: "idle" });
-  wireRouter();
-  initNewRepairModal();
+  // Hosted edition: the cloud front-door injects window.__wbPlanHints. Flip the
+  // wordmark to "WrenchBoardCloud" (the "Cloud" suffix + perched cloud reveal
+  // under body.wb-hosted); self-host stays plain "WrenchBoard". Cosmetic only.
+  if (planHints()) document.body.classList.add("wb-hosted");
+  wireRouter({ maybeLoadGraph });
+  syncContextFromUrl();   // Phase C.1: populate store.device/repair before any view mounts
+  initHome();             // wires the dashboard locale-refresh (new-repair modal removed in D.2)
   initMemoryBank();
   initPipelineProgress();
   await initLLMPanel();
-  openLLMPanelIfRepairParam();
+  // NOTE: the chat panel is auto-opened by mountRoute's diagnostic branch AFTER
+  // `await syncContextFromUrl()` resolves the slug — not eagerly here, which would
+  // see an empty store on a deep-link/reload of #repair/<id>/diagnostic (C11).
 
   // Files+Vision : camera picker in the LLM panel head. On change :
   //   - notify the diag WS via client.capabilities (gates cam_capture)
   //   - swap the preview window's stream if the preview is currently open
   initCameraPicker((deviceId, label) => {
-    if (window.LLM && typeof window.LLM.sendCapabilities === 'function') {
-      window.LLM.sendCapabilities();
-    }
+    sendCapabilities();
     updatePreviewDevice(deviceId, label);
   });
 
   // Protocol module — init with a deferred send that reads the live WS at
   // call time (the socket is opened lazily by llm.js on first panel open).
+  // llm.js + chatLog.js import the same ./protocol.js?v=quest4 module directly,
+  // so this init() wiring is shared with them (ESM single instance per URL).
   Protocol.init({
-    send: (payload) => window.__diagnosticWS?.send(JSON.stringify(payload)),
+    send: (payload) => sendDiagnostic(payload),
     hasBoard: !!window.Boardview?.hasBoard?.(),
   });
-  window.Protocol = Protocol;
 
-  // Landing hero — initialise listeners; show only if no repair param AND
-  // not requesting a standalone tool. Stock has two access modes:
-  //   1. ?tool=stock   → full-viewport standalone (chrome hidden, exit
-  //                      button takes user back to landing).
-  //   2. #stock inside a repair → embedded section in the rail.
+  // Landing hero — initialise listeners; the route decides whether it shows
+  // (below). Stock is now a normal global destination (#stock), not a tool mode.
   initLanding();
-  const __landingParams = new URLSearchParams(window.location.search);
-  const __wantsStandaloneTool = __landingParams.get("tool") === "stock";
-  if (__wantsStandaloneTool) {
-    document.body.classList.add("standalone-tool", "tool-stock");
-    if (!window.location.hash) window.location.hash = "#stock";
-  }
-  if (!__landingParams.get("repair") && !__landingParams.get("device") && !__wantsStandaloneTool) {
-    showLanding();
-  }
-  // Wire the landing top-right "Stock" link: jump to standalone-tool mode
-  // (hard nav so the body-class branch above runs cleanly).
+
+  // Migrate any legacy URL (?device=&repair=#section, ?tool=stock, bare
+  // #memory-bank/#graphe) into the new grammar in place, then resolve the
+  // route's device/repair into the store BEFORE mounting any view.
+  migrateLegacyUrl();
+  await syncContextFromUrl();
+  // Ensure server onboarding flags are loaded before showLanding() / mountRoute()
+  // run their synchronous one-shot gates (landing tour + first-diag coaching).
+  await _profileHydrated;
+
+  // Landing IS the global home (Phase D.1): it shows on #home and #landing (and
+  // a bare load → parseRoute returns global "home"). #stock/#profile hide it; a
+  // repair route mounts the dashboard. The landing's sidebar lists all repairs,
+  // so there's no separate journal grid anymore.
+  const route = parseRoute();
+  const showLandingNow = route.level === "global"
+    && (route.name === "home" || route.name === "landing");
+  if (showLandingNow) showLanding(); else hideLanding();
+  // The pre-paint gate (index.html) may have masked the chrome with
+  // `pending-landing`; now that show/hideLanding governs, drop it so the chrome
+  // paints (it is never removed elsewhere).
+  document.body.classList.remove("pending-landing");
+
+  // Landing top-right "Stock" link → the global #stock destination.
   const __stockLink = document.getElementById("landingStockLink");
   if (__stockLink) {
     __stockLink.addEventListener("click", (ev) => {
       ev.preventDefault();
-      window.location = "?tool=stock#stock";
+      window.location.hash = "#stock";
     });
   }
 
-  // Legacy redirect: #memory-bank is merged into #graphe with view=md.
-  if (window.location.hash === "#memory-bank") {
-    const url = new URL(window.location.href);
-    url.searchParams.set("view", "md");
-    url.hash = "#graphe";
-    window.history.replaceState({}, "", url.toString());
-  }
-
-  const hash = window.location.hash;
-  const params = new URLSearchParams(window.location.search);
-  const slug = params.get("device");
-  const repairId = params.get("repair");
-
-  // Precedence: explicit hash > session-implies-home > slug-implies-graphe > home default
-  const initial = hash
-    ? currentSection()
-    : (slug && repairId ? "home"
-       : slug ? "graphe"
-       : "home");
-  navigate(initial);
-
-  if (initial === "graphe") {
-    const mode = currentViewMode();
-    applyMemoireMode(mode);
-    await maybeLoadGraph();
-    if (mode === "md") loadMemoryBank();
-  } else if (initial === "home") {
-    const session = currentSession();
-    if (session) {
-      renderRepairDashboard(session);
-    } else {
-      hideRepairDashboard();
-      const [taxonomy, repairs] = await Promise.all([loadTaxonomy(), loadRepairs()]);
-      renderHome(taxonomy, repairs);
-    }
-  } else if (initial === "schematic") {
-    loadSchematic();
-  } else if (initial === "stock") {
-    initStockSection();
-  } else if (initial === "profile") {
-    initProfileSection();
-  }
+  navigate(currentSection());
+  await mountRoute(route);
 
   // Schematic inspector close button — wired once, guarded against absence.
   document.getElementById("schInspClose")?.addEventListener("click", closeSchematicInspector);
 
-  // Sections that need their data refetched when the user navigates back to
-  // them — the router only toggles DOM visibility, side-effects live here.
+  // Single hashchange owner (router.js no longer navigates on hashchange):
+  // re-derive the route, re-sync context (may resolve a slug), re-mount.
   window.addEventListener("hashchange", async () => {
-    const sec = currentSection();
-    if (sec === "schematic") loadSchematic();
-    else if (sec === "stock") initStockSection();
-    else if (sec === "profile") initProfileSection();
-    else if (sec === "graphe") {
-      const mode = currentViewMode();
-      applyMemoireMode(mode);
-      maybeLoadGraph();
-      if (mode === "md") loadMemoryBank();
-    }
-    else if (sec === "home") {
-      const session = currentSession();
-      if (session) {
-        renderRepairDashboard(session);
-      } else {
-        hideRepairDashboard();
-        const [taxonomy, repairs] = await Promise.all([loadTaxonomy(), loadRepairs()]);
-        renderHome(taxonomy, repairs);
-      }
-    }
+    migrateLegacyUrl();
+    await syncContextFromUrl();
+    const r = parseRoute();
+    if (r.level === "global" && (r.name === "home" || r.name === "landing")) showLanding(); else hideLanding();
+    navigate(currentSection());
+    await mountRoute(r);
   });
 })();
 
@@ -240,9 +220,9 @@ if (!window.Boardview) {
   // ---- Boardview colour pickers ----
   // The `input` listeners can be attached immediately — the <input type="color">
   // nodes are already in the DOM. But syncing their initial values depends on
-  // `window.getBoardviewColors` which is defined by brd_viewer.js (an ES module
-  // with implicit `defer`), so we run the initial sync after DOMContentLoaded
-  // when deferred modules are guaranteed to have executed.
+  // `window.getBoardviewColors` which is defined by pcb_viewer.js (a classic
+  // script near the end of <body>), so we run the initial sync after
+  // DOMContentLoaded when that script is guaranteed to have executed.
   const paintDot = (row, hex) => {
     const dot = row && row.querySelector('.brd-color-dot');
     if (!dot || !hex) return;
@@ -250,7 +230,7 @@ if (!window.Boardview) {
     dot.style.boxShadow = `0 0 6px ${hex}`;
   };
   // Per-category Pickr instance, keyed by `data-cat`. Built lazily
-  // when the Pickr library + brd_viewer.js's `getBoardviewColors` are
+  // when the Pickr library + pcb_viewer.js's `getBoardviewColors` are
   // both ready — Pickr is loaded as a non-deferred CDN script so it
   // usually beats this code, but we tick in case it doesn't.
   const pickrByCategory = {};
@@ -318,7 +298,7 @@ if (!window.Boardview) {
     window.resetBoardviewColors?.();
     syncInputs();
   });
-  // Wait for Pickr + brd_viewer.js's window.getBoardviewColors before
+  // Wait for Pickr + pcb_viewer.js's window.getBoardviewColors before
   // building the pickers and hydrating their initial colours.
   let tries = 0;
   const init = () => {
@@ -335,19 +315,25 @@ if (!window.Boardview) {
     init();
   }
 
-  // Session pill — click body to go to dashboard, click [×] to quit session.
+  // Session pill — click body to go to the active repair's dashboard, click [×]
+  // to quit. Under the 2-level grammar #home is the GLOBAL list, so the pill must
+  // target #repair/<id>/diagnostic when a repair is active (C6).
   const sessionPill = document.getElementById("sessionPill");
   const sessionPillClose = document.getElementById("sessionPillClose");
+  const gotoSessionDashboard = () => {
+    const id = getRepairId();
+    window.location.hash = id ? repairHash(id, "diagnostic") : "#home";
+  };
   if (sessionPill) {
     sessionPill.addEventListener("click", (ev) => {
       if (sessionPillClose && sessionPillClose.contains(ev.target)) return;
-      window.location.hash = "#home";
+      gotoSessionDashboard();
     });
     sessionPill.addEventListener("keydown", (ev) => {
       if (ev.key === "Enter" || ev.key === " ") {
         ev.preventDefault();
         if (sessionPillClose && sessionPillClose.contains(document.activeElement)) return;
-        window.location.hash = "#home";
+        gotoSessionDashboard();
       }
     });
   }

@@ -1,4 +1,4 @@
-"""FZ-zlib parser — Mentor/Allegro-style pipe-delimited boardview format.
+"""FZ-zlib parser — pipe-delimited boardview format.
 
 Real-world `.fz` files in the repair community come in two distinct
 flavours:
@@ -6,16 +6,16 @@ flavours:
 1. **FZ-zlib** (this module). 4-byte LE int32 header carrying the
    decompressed size, followed by a zlib stream. Decompression yields
    pipe-delimited (`!`) text with section schemas (`A!col1!col2!…`)
-   and data rows (`S!val1!val2!…`). This is the format Quanta /
-   ASRock / ASUS Prime / Gigabyte boards ship in. Confirmed against
-   a real Quanta BKL boardview (2701 parts / 11438 pins / 1986 nets).
+   and data rows (`S!val1!val2!…`). This is the format several
+   vendors' boards ship in. Confirmed against
+   a real vendor boardview (2701 parts / 11438 pins / 1986 nets).
 
 2. **FZ-xor** (sibling module `fz.py` keeps that path). 16-byte
-   sliding-window XOR cipher seeded by an ASUS-shipped 44×32-bit
-   key. Used by the original ASUS PCBRepairTool. Without the key,
+   sliding-window XOR cipher seeded by an vendor-shipped 44×32-bit
+   key. Used by the original the original vendor tool. Without the key,
    the file cannot be decrypted.
 
-Layer convention (verified by inspecting parts on the Quanta board):
+Layer convention (verified by inspecting parts on the sample board):
   SYM_MIRROR == "YES" → bottom-layer (mirrored to back)
   SYM_MIRROR == "NO"  → top-layer
   Other       → top-layer (defensive default)
@@ -43,7 +43,7 @@ _ZLIB_MAGIC_NONE = b"\x78\x01"  # store
 _ZLIB_MAGICS = (_ZLIB_MAGIC_FAST, _ZLIB_MAGIC_BEST, _ZLIB_MAGIC_NONE)
 
 # `Board` coordinates are mils per the OBV convention. Some `.fz` files
-# (typically the AMD/ASUS graphics-card dumps) ship in millimeters and
+# (typically the GPU graphics-card dumps) ship in millimeters and
 # announce the choice with a top-level `UNIT:millimeters` directive.
 # Without scaling, every coordinate is 25× too small and the viewer
 # fits the board to a postage stamp.
@@ -87,7 +87,7 @@ def parse_fz_zlib(
     parts, pin_lookup = _build_parts(parts_section)
     # Patch parts with BOM descriptions before building pins so the
     # pad-shape inference can fall back to `Part.value` when the
-    # SYM_NAME column duplicates the refdes (Asus DUAL 1060 style).
+    # SYM_NAME column duplicates the refdes (some vendor style).
     if bom_text is not None:
         parts = _apply_bom_descriptions(parts, _parse_bom(bom_text))
     pins, parts = _build_pins(pins_section, parts, pin_lookup, scale=scale)
@@ -198,7 +198,7 @@ _OUTLINE_MARGIN_MILS = 100.0
 # Spatial-overlap thresholds for DFM-alternate (DNP) detection. Two parts
 # are considered alternates of each other if their first pin centres land
 # within `_DNP_OVERLAP_MILS` on both axes. 100 mils ≈ 2.5 mm — wide
-# enough to absorb the small pin-grid offsets ASUS uses between its
+# enough to absorb the small pin-grid offsets some vendors use between its
 # `PGCEx` 8x9.7 footprint and the smaller `PGCEx_alt` 7x8 footprint at
 # the same physical seat.
 _DNP_OVERLAP_MILS = 100.0
@@ -208,7 +208,7 @@ _DNP_BUCKET_MILS = 200.0
 def _detect_dnp_alternates(parts: list[Part], pins: list[Pin]) -> list[Part]:
     """Tag parts that share their physical seat with a placed sibling.
 
-    `.fz` ASUS dumps encode DFM alternates: two refdes at the same
+    `.fz` vendor dumps encode DFM alternates: two refdes at the same
     pin-cluster, only one of which appears in the BOM (the populated
     one). The unpopulated one becomes a "ghost" — the parser flags it
     `is_dnp=True` and attaches its refdes to the placed sibling's

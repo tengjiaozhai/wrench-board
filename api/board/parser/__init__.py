@@ -12,6 +12,8 @@ from api.board.parser import (  # noqa: F401
     asc,
     bdv,
     brd2,
+    brd_packed,
+    brd_subst,
     bv,
     bvr,
     cad,

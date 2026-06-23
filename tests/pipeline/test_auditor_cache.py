@@ -34,11 +34,14 @@ async def test_auditor_user_message_has_cached_context_block():
             revision_brief="",
         )
 
+    # Save/restore : sans le finally, le fake fuirait dans le module pour tout
+    # test ultérieur de la session qui appelle run_auditor(graph_truth=None).
+    _real_call = auditor_mod.call_with_forced_tool
     auditor_mod.call_with_forced_tool = fake_call  # type: ignore[attr-defined]
 
     await auditor_mod.run_auditor(
         client=MagicMock(),
-        model="claude-opus-4-7",
+        model="claude-opus-4-8",
         device_label="Demo",
         registry=Registry(
             device_label="Demo",
@@ -50,6 +53,8 @@ async def test_auditor_user_message_has_cached_context_block():
         dictionary=Dictionary(entries=[]),
         precomputed_drift=[],
     )
+
+    auditor_mod.call_with_forced_tool = _real_call
 
     msg = captured["messages"][0]
     assert isinstance(

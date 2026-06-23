@@ -1,4 +1,4 @@
-"""ASUS TSICT .asc parser — combined single-file + split-directory paths."""
+"""TSICT .asc parser — combined single-file + split-directory paths."""
 
 from __future__ import annotations
 

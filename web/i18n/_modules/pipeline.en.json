@@ -1,7 +1,7 @@
 {
   "drawer": {
     "header_label": "Building memory",
-    "device_placeholder": "—",
+    "device_placeholder": "...",
     "close_aria": "Close progress panel"
   },
   "phase": {
@@ -20,10 +20,18 @@
     "audit": {
       "label": "Auditor",
       "sub": "QA & consistency"
+    },
+    "schematic_ingest": {
+      "label": "Schematic ingested",
+      "sub": "Page-by-page vision"
+    },
+    "device_kind": {
+      "label": "Device type",
+      "sub": "Graph classification"
     }
   },
   "step": {
-    "time_placeholder": "—",
+    "time_placeholder": "...",
     "in_progress": "running…",
     "failed": "failed"
   },
@@ -31,6 +39,7 @@
     "waiting": "Waiting for first events…",
     "connecting": "Connecting to pipeline…",
     "started": "Pipeline started…",
+    "queued": "Queued · position <b>{position}</b> ({ahead} ahead) · starts automatically when a slot frees up",
     "phase_running": "Phase running · <b>{phase}</b>",
     "ready": "Memory ready · audit <b>{status}</b> · consistency <b>{score}</b>",
     "failed": "Pipeline failed · <b>{status}</b>",
@@ -40,5 +49,13 @@
   "cta": {
     "view_memory_bank": "Open Memory Bank",
     "close": "Close"
+  },
+  "kind": {
+    "declared": "Declared",
+    "detected": "Detected",
+    "recommended": "recommended",
+    "confirm": "Confirm and resume",
+    "confirmed": "confirmed",
+    "undeclared": "undeclared"
   }
 }

@@ -6,6 +6,7 @@ import pytest
 
 from api.board.model import Layer
 from api.board.parser.base import (
+    InvalidBoardFile,
     MalformedHeaderError,
     ObfuscatedFileError,
     PinPartMismatchError,
@@ -32,6 +33,30 @@ def test_rejects_obfuscated_file(tmp_path: Path):
     f.write_bytes(b"\x23\xe2\x63\x28" + b"\x00" * 64)
     with pytest.raises(ObfuscatedFileError):
         BRDParser().parse_file(f)
+
+
+def test_topgun_float_brd_is_classified_with_a_specific_error(tmp_path: Path):
+    """A TopGun-style float `.brd` must raise a SPECIFIC, named error, not a vague one.
+
+    A handful of some vendors' `.brd` exports use the
+    TopGun multi-section float boardview format: a `0 0 0 0` header followed by
+    scientific-notation float coordinate pairs and `N N N N` section separators.
+    It is NOT the Test_Link layout. The parser doesn't support it, but it must
+    say so precisely (naming the format) instead of an opaque
+    'unknown encoding' so an operator can triage the file correctly.
+    """
+    f = tmp_path / "topgun.brd"
+    f.write_text(
+        "0 0 0 0\n"
+        "-4.18500000000000E+0000 -3.27000000000000E-0001\n"
+        " 1.03000000000000E-0001  5.66300000000000E+0000\n"
+        "1 1 1 1\n"
+        "U5\n"
+        "-4.17200000000000E+0000 -4.09600000000000E+0000  3.50200000000000E+0000  3.58400000000000E+0000\n"
+    )
+    with pytest.raises(InvalidBoardFile) as exc:
+        BRDParser().parse_file(f)
+    assert "TopGun" in str(exc.value)
 
 
 def test_malformed_header_raises(tmp_path: Path):

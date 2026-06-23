@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC
 from pathlib import Path
 
 import pytest
@@ -249,69 +250,90 @@ def test_invalidate_pack_cache_drops_component_entries(tmp_path: Path):
     assert (slug, "U2") not in session.component_cache
 
 
-def test_load_pack_missing_directory_returns_partial(tmp_path: Path):
-    """No pack dir at all — must not raise FileNotFoundError."""
-    from api.agent.tools import _load_pack
-
-    pack = _load_pack("smt-v551", tmp_path)
-    assert pack["_partial"] is True
-    assert pack["registry"] == {}
-    assert pack["dictionary"] == {}
-    assert pack["rules"] == {}
+# ---- T8 Option C : _load_pack lit baseline+promoted ; owner_ref propagé -------
 
 
-def test_load_pack_one_file_missing_returns_partial(tmp_path: Path):
-    """registry present, rules missing — load what exists, tag partial."""
-    from api.agent.tools import _load_pack
+def test_load_pack_reads_migrated_baseline(tmp_path: Path):
+    """Après migration T8, _load_pack lit baseline/ (+ promoted/) et reconstruit
+    la forme {registry:{components,signals}, dictionary:{entries}, rules:{rules}}."""
+    from api.agent.tools import mb_get_component
 
-    slug = "partial-device"
-    pack_dir = tmp_path / slug
-    pack_dir.mkdir()
-    (pack_dir / "registry.json").write_text(
-        '{"components": [{"canonical_name": "U1", "kind": "ic"}], "signals": []}'
-    )
-    (pack_dir / "dictionary.json").write_text('{"entries": []}')
-    # rules.json intentionally absent
+    slug = "demo-pi"
+    dest = tmp_path / slug
+    dest.mkdir()
+    for name in ("registry.json", "dictionary.json", "knowledge_graph.json", "rules.json"):
+        (dest / name).write_text((FIXTURE_DIR / name).read_text())
 
-    pack = _load_pack(slug, tmp_path)
-    assert pack["_partial"] is True
-    assert len(pack["registry"].get("components", [])) == 1
-    assert pack["rules"] == {}
+    # Premier accès → migration in-place (root → baseline/), puis lecture effective.
+    result = mb_get_component(device_slug=slug, refdes="U7", memory_root=tmp_path)
+    assert result["found"] is True
+    assert result["canonical_name"] == "U7"
+    assert result["memory_bank"]["role"] == "PMIC"
+    # La racine a été migrée.
+    assert not (dest / "registry.json").exists()
+    assert (dest / "baseline" / "registry.json").exists()
 
 
-def test_mb_get_rules_for_symptoms_incomplete_pack_returns_empty(tmp_path: Path):
-    """Schematic-only device: no rules file — tool returns 0 matches, no crash."""
+def test_mb_get_rules_sees_promoted_facts(tmp_path: Path):
+    """Une règle ajoutée dans promoted/ (par une expansion) est visible via
+    mb_get_rules_for_symptoms après migration."""
+    from datetime import datetime
+
     from api.agent.tools import mb_get_rules_for_symptoms
+    from api.pipeline.pack_migrate import migrate_pack_if_needed
+    from api.pipeline.pack_storage import write_promoted_facts
+    from api.pipeline.schemas import Cause, Provenance, Rule
 
-    slug = "schematic-only"
-    (tmp_path / slug).mkdir()  # empty pack dir
+    slug = "demo-pi"
+    dest = tmp_path / slug
+    dest.mkdir()
+    for name in ("registry.json", "dictionary.json", "knowledge_graph.json", "rules.json"):
+        (dest / name).write_text((FIXTURE_DIR / name).read_text())
+    migrate_pack_if_needed(tmp_path, slug)
 
-    result = mb_get_rules_for_symptoms(
-        device_slug=slug,
-        symptoms=["no boot", "dead battery"],
-        memory_root=tmp_path,
+    prov = Provenance(
+        expansion_id="E-x", added_at=datetime.now(UTC), added_by_tenant=None,
+        confidence=0.7, source_kind="agent_expansion", status="promoted",
     )
-    assert result["matches"] == []
-    assert result["total_available_rules"] == 0
-    assert result["device_slug"] == slug
-    assert result["query_symptoms"] == ["no boot", "dead battery"]
+    promoted_rule = Rule(
+        id="R-PROMO-001", symptoms=["overheating"],
+        likely_causes=[Cause(refdes="U7", probability=0.9, mechanism="thermal runaway")],
+        confidence=0.7, provenance=prov,
+    )
+    write_promoted_facts(tmp_path, slug, file_name="rules.json", new_facts=[promoted_rule])
+
+    res = mb_get_rules_for_symptoms(
+        device_slug=slug, symptoms=["overheating"], memory_root=tmp_path,
+    )
+    assert any(m["rule_id"] == "R-PROMO-001" for m in res["matches"])
 
 
-def test_load_pack_complete_pack_not_marked_partial(tmp_path: Path):
-    """All three files present — no _partial key, cache still works."""
-    from api.agent.tools import _load_pack
-    from api.session.state import SessionState
+async def test_mb_expand_knowledge_propagates_owner_ref(tmp_path: Path, monkeypatch):
+    """mb_expand_knowledge lit current_owner_ref() et le passe à expand_pack."""
 
-    slug = "complete"
-    pack_dir = tmp_path / slug
-    pack_dir.mkdir()
-    (pack_dir / "registry.json").write_text('{"components": [], "signals": []}')
-    (pack_dir / "dictionary.json").write_text('{"entries": []}')
-    (pack_dir / "rules.json").write_text('{"rules": []}')
+    from api.agent import tools as tools_mod
+    from api.agent.owner_ref import set_owner_ref
 
-    session = SessionState()
-    pack1 = _load_pack(slug, tmp_path, session=session)
-    pack2 = _load_pack(slug, tmp_path, session=session)
+    captured = {}
 
-    assert "_partial" not in pack1
-    assert pack1 is pack2  # same cached object
+    async def fake_expand(**kwargs):
+        captured.update(kwargs)
+        return {"expanded": True, "expansion_id": "E-1"}
+
+    # expand_pack est importé dans mb_expand_knowledge via
+    # `from api.pipeline.expansion import expand_pack` → patch sur le module source.
+    monkeypatch.setattr("api.pipeline.expansion.expand_pack", fake_expand)
+
+    set_owner_ref("tenant-Z")
+    try:
+        out = await tools_mod.mb_expand_knowledge(
+            client=object(),
+            device_slug="demo-pi",
+            focus_symptoms=["no charge"],
+            memory_root=tmp_path,
+        )
+    finally:
+        set_owner_ref(None)
+
+    assert out["ok"] is True
+    assert captured["owner_ref"] == "tenant-Z"

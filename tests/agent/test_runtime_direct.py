@@ -163,9 +163,10 @@ def _patch_settings(
     settings = MagicMock(
         anthropic_api_key=api_key,
         memory_root=str(memory_root),
-        anthropic_model_main="claude-opus-4-7",
+        anthropic_model_main="claude-opus-4-8",
         anthropic_max_retries=max_retries,
         chat_history_backend="jsonl",
+        ma_stream_event_timeout_seconds=600.0,
     )
     monkeypatch.setattr(rt, "get_settings", lambda: settings)
     # chat_history.get_settings() is also called when persisting JSONL —
@@ -243,7 +244,7 @@ async def test_missing_api_key_emits_error_and_closes(
     [
         ("fast", "claude-haiku-4-5"),
         ("normal", "claude-sonnet-4-6"),
-        ("deep", "claude-opus-4-7"),
+        ("deep", "claude-opus-4-8"),
     ],
 )
 async def test_tier_query_param_picks_the_right_model(
@@ -278,7 +279,7 @@ async def test_unknown_tier_falls_back_to_model_main(
     the table degrades to the configured `anthropic_model_main`."""
     _stub_session(monkeypatch)
     settings = _patch_settings(monkeypatch, memory_root=tmp_path)
-    settings.anthropic_model_main = "claude-opus-4-7"
+    settings.anthropic_model_main = "claude-opus-4-8"
     _client, kwargs_log = _install_stream_recorder(
         monkeypatch, [_stream_text("ok")]
     )
@@ -287,7 +288,7 @@ async def test_unknown_tier_falls_back_to_model_main(
     ws = FakeWS(["go"])
     await rt.run_diagnostic_session_direct(ws, "demo-pi", tier="bogus-tier")
 
-    assert kwargs_log[0]["model"] == "claude-opus-4-7"
+    assert kwargs_log[0]["model"] == "claude-opus-4-8"
 
 
 async def test_anthropic_client_built_with_max_retries_from_settings(
@@ -410,6 +411,75 @@ async def test_unknown_tool_name_returns_unknown_tool_to_agent(
     assert decoded.get("reason") == "unknown-tool"
 
 
+async def test_stock_tool_dispatch_runs_and_feeds_result_back(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Regression: stock_* tools must dispatch in direct mode (the prod default).
+
+    Before the fix they fell into _dispatch_mb_tool's else branch and came back
+    as {'ok': False, 'reason': 'unknown-tool'} — the agent reported success to
+    the tech but nothing was written. Here we script a stock_mark_donor call and
+    assert the runtime actually ran the stock tool (created donor_id returned),
+    not the unknown-tool fallback.
+    """
+    _stub_session(monkeypatch)
+    _patch_settings(monkeypatch, memory_root=tmp_path)
+    # The stock package reads get_settings().memory_root through its own module
+    # bindings (it `from api.config import get_settings`), so the rt-level patch
+    # doesn't reach it — patch both stock modules at the tmp_path.
+    import api.stock.store as stock_store
+    import api.stock.tools as stock_tools
+    settings = MagicMock(memory_root=str(tmp_path))
+    monkeypatch.setattr(stock_store, "get_settings", lambda: settings)
+    monkeypatch.setattr(stock_tools, "get_settings", lambda: settings)
+    # mark_donor requires memory/{device_slug}/ to exist.
+    (tmp_path / "macbook-air-m1").mkdir(parents=True)
+
+    import api.agent.runtime_direct as rt
+    captured: list[list[dict]] = []
+
+    iter_scripted = iter([
+        _stream_tool_use(
+            "stock_mark_donor",
+            {"device_slug": "macbook-air-m1", "label": "bench donor #1"},
+            tool_id="toolu_donor1",
+        ),
+        _stream_text("Marked the board as a donor."),
+    ])
+    client = MagicMock()
+
+    def _stream_factory(**kwargs):
+        captured.append(list(kwargs["messages"]))
+        events, final = next(iter_scripted)
+        return _FakeStream(events, final)
+    client.messages.stream = _stream_factory
+    monkeypatch.setattr(rt, "AsyncAnthropic", lambda **_kw: client)
+
+    ws = FakeWS(["I have a MacBook Air M1 board on my bench as a donor"])
+    await rt.run_diagnostic_session_direct(ws, "macbook-air-m1", tier="fast")
+
+    assert len(captured) == 2, "stock tool result was never fed back to the agent"
+    tool_results = [
+        block
+        for msg in captured[1]
+        for block in (msg.get("content") if isinstance(msg.get("content"), list) else [])
+        if isinstance(block, dict) and block.get("type") == "tool_result"
+    ]
+    assert tool_results, "no tool_result block on the second turn"
+    decoded = json.loads(tool_results[0]["content"])
+    # Proof the real stock tool ran end-to-end (not the unknown-tool fallback).
+    assert decoded.get("created") is True
+    assert decoded.get("donor_id"), "stock_mark_donor returned no donor_id"
+    assert "unknown-tool" not in json.dumps(decoded)
+    assert tool_results[0]["tool_use_id"] == "toolu_donor1"
+    # And the inventory was actually persisted on disk.
+    inv = json.loads((tmp_path / "_stock" / "inventory.json").read_text())
+    assert any(
+        d.get("device_slug") == "macbook-air-m1"
+        for d in inv.get("donors", {}).values()
+    ), "donor was not persisted to inventory.json"
+
+
 async def test_chat_history_persisted_to_jsonl_under_repair(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
@@ -523,7 +593,7 @@ async def test_stream_kwargs_include_system_prompt_and_tools(
 async def test_opus_tier_attaches_thinking_and_xhigh_effort(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    """Opus 4.7 only: adaptive thinking + xhigh effort are added to the call
+    """Opus 4.7/4.8 only: adaptive thinking + xhigh effort are added to the call
     kwargs so the deep-tier reasoning profile is engaged. Lower tiers must
     NOT receive these (Sonnet/Haiku 400 on `effort=xhigh`)."""
     _stub_session(monkeypatch)
@@ -550,6 +620,315 @@ async def test_opus_tier_attaches_thinking_and_xhigh_effort(
     kw2 = kwargs_log_fast[0]
     assert "thinking" not in kw2
     assert "output_config" not in kw2
+
+
+def test_normalize_message_strips_parsed_output_from_blocks() -> None:
+    """SDK ≥0.97 streaming returns ParsedTextBlock carrying a `parsed_output`
+    field. It's OUTPUT-only — re-sending it as input content is a 400 ("Extra
+    inputs are not permitted"), which breaks every turn after the first tool
+    call. _normalize_message must strip it (both the model_dump path and an
+    already-dict block reloaded from JSONL)."""
+    import api.agent.runtime_direct as rt
+
+    class _ParsedBlock:
+        def model_dump(self, mode: str = "json") -> dict:
+            return {"type": "text", "text": "hi", "citations": None, "parsed_output": None}
+
+    out = rt._normalize_message({"role": "assistant", "content": [_ParsedBlock()]})
+    block = out["content"][0]
+    assert "parsed_output" not in block, "parsed_output must be stripped from streamed blocks"
+    assert block["text"] == "hi"
+
+    # already-a-dict path (e.g. reloaded from a JSONL mirror).
+    out2 = rt._normalize_message(
+        {"role": "assistant", "content": [{"type": "text", "text": "x", "parsed_output": None}]}
+    )
+    assert "parsed_output" not in out2["content"][0]
+
+
+async def test_emits_turn_complete_when_agent_finishes_turn(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Parity with runtime_managed: when the agent ends its tech-turn
+    (stop_reason != tool_use), emit a turn_complete frame so WS clients (bench
+    scripts, the reused engine UI) know it's safe to send the next input.
+    Without it the spinner hangs forever at end of turn — direct mode never
+    signalled turn end at all."""
+    _stub_session(monkeypatch)
+    _patch_settings(monkeypatch, memory_root=tmp_path)
+    _install_stream_recorder(monkeypatch, [_stream_text("Mesure F1 et donne-moi les valeurs.")])
+
+    import api.agent.runtime_direct as rt
+    ws = FakeWS(["carte morte"])
+    await rt.run_diagnostic_session_direct(ws, "demo-pi", tier="fast")
+
+    tc = [m for m in ws.sent if m.get("type") == "turn_complete"]
+    assert tc, "no turn_complete frame emitted at end of turn"
+    assert tc[0].get("stop_reason") == "end_turn"
+
+
+async def test_metering_report_forwards_cache_tokens_from_usage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """The per-call metering report must carry the response's cache_read /
+    cache_creation token counts so the cloud prices them at their own tiers.
+    Dropping them billed hot turns (mostly cache_read) as full input."""
+    _stub_session(monkeypatch)
+    _patch_settings(monkeypatch, memory_root=tmp_path)
+
+    import api.agent.runtime_direct as rt
+
+    usage = SimpleNamespace(
+        input_tokens=10, output_tokens=5,
+        cache_read_input_tokens=4096, cache_creation_input_tokens=2048,
+    )
+    block = MagicMock(type="text", text="ok")
+    stop = MagicMock()
+    stop.type = "content_block_stop"
+    stop.index = 0
+    final = MagicMock(content=[block], stop_reason="end_turn", usage=usage, id="msg_x")
+    _install_stream_recorder(monkeypatch, [([(stop, [block])], final)])
+
+    calls: list[dict] = []
+    import api.agent.cloud_metering as cm
+    monkeypatch.setattr(cm, "fire_and_forget_report", lambda **kw: calls.append(kw))
+
+    ws = FakeWS(["go"])
+    await rt.run_diagnostic_session_direct(ws, "demo-pi", tier="fast")
+
+    assert calls, "metering report was never fired"
+    assert calls[0]["cache_read_input_tokens"] == 4096
+    assert calls[0]["cache_creation_input_tokens"] == 2048
+
+
+class _RaisingStreamCM:
+    """Stream context manager whose __aenter__ raises — mirrors the anthropic
+    SDK surfacing a RateLimitError/APIError when the request is made."""
+
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+
+    async def __aenter__(self):
+        raise self._exc
+
+    async def __aexit__(self, *exc_info) -> bool:
+        return False
+
+
+async def test_api_error_mid_stream_emits_error_and_does_not_propagate(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """When messages.stream() raises an anthropic.APIError (overload >retry
+    budget, a 400, a mid-stream disconnect), the turn must end cleanly: emit a
+    `stream_error` frame so the tech sees a signal, and DO NOT let the
+    exception bubble up and kill the WS handler silently (quota already
+    consumed, no UI signal)."""
+    import anthropic
+    import httpx
+
+    _stub_session(monkeypatch)
+    _patch_settings(monkeypatch, memory_root=tmp_path)
+
+    import api.agent.runtime_direct as rt
+
+    err = anthropic.APIError(
+        "upstream overloaded",
+        httpx.Request("POST", "https://api.anthropic.com/v1/messages"),
+        body=None,
+    )
+
+    def _stream_factory(**_kwargs):
+        return _RaisingStreamCM(err)
+
+    client = MagicMock()
+    client.messages.stream = _stream_factory
+    monkeypatch.setattr(rt, "AsyncAnthropic", lambda **_kw: client)
+
+    ws = FakeWS(["diagnose this board"])
+    # Must NOT raise — today the APIError propagates through to the caller.
+    await rt.run_diagnostic_session_direct(ws, "demo-pi", tier="fast")
+
+    stream_errors = [m for m in ws.sent if m.get("type") == "stream_error"]
+    assert stream_errors, "no stream_error frame emitted on APIError"
+    assert stream_errors[0].get("error") == "api_error"
+
+
+class _StallingStream:
+    """Stream whose first event read times out — simulates the inactivity
+    watchdog firing (asyncio.wait_for surfaces TimeoutError)."""
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc_info) -> bool:
+        return False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        raise TimeoutError
+
+    @property
+    def current_message_snapshot(self) -> SimpleNamespace:
+        return SimpleNamespace(content=[])
+
+    async def get_final_message(self):  # pragma: no cover - must not be reached
+        raise AssertionError("get_final_message must not run on a stalled stream")
+
+
+def _seq_stream_factory(monkeypatch, streams: list) -> dict:
+    """Install an AsyncAnthropic whose messages.stream() returns each entry of
+    `streams` in order. Returns a dict whose 'i' counts how many were drawn."""
+    import api.agent.runtime_direct as rt
+    n = {"i": 0}
+
+    def _factory(**_kwargs):
+        s = streams[n["i"]]
+        n["i"] += 1
+        return s
+
+    client = MagicMock()
+    client.messages.stream = _factory
+    monkeypatch.setattr(rt, "AsyncAnthropic", lambda **_kw: client)
+    return n
+
+
+async def test_stream_stall_retries_then_succeeds(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """A single inactivity stall must NOT kill the turn: the runtime re-streams
+    the same request (messages list untouched, no partial state committed) and
+    recovers. The recovered text reaches the WS and no terminal stream_error is
+    emitted."""
+    _stub_session(monkeypatch)
+    _patch_settings(monkeypatch, memory_root=tmp_path)
+
+    import api.agent.runtime_direct as rt
+    monkeypatch.setattr(rt, "_STREAM_STALL_MAX_RETRIES", 1)
+
+    events_ok, final_ok = _stream_text("recovered after stall")
+    n = _seq_stream_factory(monkeypatch, [_StallingStream(), _FakeStream(events_ok, final_ok)])
+
+    ws = FakeWS(["go"])
+    await rt.run_diagnostic_session_direct(ws, "demo-pi", tier="fast")
+
+    assert n["i"] == 2, "expected one stall then exactly one retry attempt"
+    msgs = [m for m in ws.sent if m.get("type") == "message" and m.get("role") == "assistant"]
+    assert any("recovered after stall" in m["text"] for m in msgs)
+    assert not [m for m in ws.sent if m.get("type") == "stream_error"], (
+        "retry recovered — no terminal stream_error should be emitted"
+    )
+
+
+async def test_stream_stall_exhausts_retries_then_errors(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """When the stall persists past the retry budget, the turn ends with a
+    terminal stream_timeout frame (WS stays alive) rather than spinning
+    forever or silently dying."""
+    _stub_session(monkeypatch)
+    _patch_settings(monkeypatch, memory_root=tmp_path)
+
+    import api.agent.runtime_direct as rt
+    monkeypatch.setattr(rt, "_STREAM_STALL_MAX_RETRIES", 1)
+
+    n = _seq_stream_factory(monkeypatch, [_StallingStream(), _StallingStream()])
+
+    ws = FakeWS(["go"])
+    await rt.run_diagnostic_session_direct(ws, "demo-pi", tier="fast")
+
+    assert n["i"] == 2, "initial attempt + 1 retry, then give up"
+    errs = [
+        m for m in ws.sent
+        if m.get("type") == "stream_error" and m.get("error") == "stream_timeout"
+    ]
+    assert errs, "terminal stream_timeout must be emitted after retries exhausted"
+
+
+class _HangingOpenStream:
+    """Stream whose __aenter__ (the HTTP POST that opens the SSE stream) never
+    returns — reproduces the PRODUCTION FREEZE.
+
+    In the field, the *next* `async with client.messages.stream(...)` after a
+    bv_scene dispatch awaited forever. The Anthropic SDK performs the actual
+    network request inside `AsyncMessageStreamManager.__aenter__`
+    (`await self.__api_request`), and the runtime opened the stream OUTSIDE its
+    per-event watchdog (`asyncio.wait_for` only wrapped `__anext__`). When a
+    concurrent CPU-bound expand starved the event loop for minutes, this pending
+    connect/read got no service (and the server may have dropped the idle
+    socket), so the await on `__aenter__` hung with no timeout to break it — the
+    diagnostic never made another API call until the client's own WS timeout
+    ~5 min later. This double makes `__aenter__` hang to assert the runtime now
+    bounds the OPEN too, not just per-event reads.
+    """
+
+    async def __aenter__(self):
+        # Sleep far longer than the watchdog timeout the test installs. With the
+        # fix in place, asyncio.wait_for cancels this await and raises
+        # TimeoutError into the runtime before this ever returns.
+        await asyncio.sleep(3600)
+        return self  # pragma: no cover - never reached
+
+    async def __aexit__(self, *exc_info) -> bool:
+        return False
+
+    def __aiter__(self):  # pragma: no cover - open never completes
+        return self
+
+    async def __anext__(self):  # pragma: no cover - open never completes
+        raise StopAsyncIteration
+
+    @property
+    def current_message_snapshot(self) -> SimpleNamespace:  # pragma: no cover
+        return SimpleNamespace(content=[])
+
+    async def get_final_message(self):  # pragma: no cover - never reached
+        raise AssertionError("get_final_message must not run on a hung-open stream")
+
+
+async def test_stream_open_hang_is_bounded_and_recovers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """REGRESSION (production freeze): a hang while OPENING the next stream must
+    be bounded by the same inactivity watchdog as a mid-stream stall, then
+    retried — not awaited forever.
+
+    The stream-open (`async with client.messages.stream(...)`) was outside the
+    `asyncio.wait_for` watchdog, so a starved/dead connection there hung the turn
+    indefinitely. We script: open #1 hangs forever, open #2 succeeds. The whole
+    session is itself wrapped in asyncio.wait_for(5s): if the runtime still hangs
+    on the open (the bug), this raises TimeoutError and the test fails RED. With
+    the fix, the runtime times the open out, re-streams, and recovers.
+    """
+    _stub_session(monkeypatch)
+    # Tiny per-event/open timeout so the hung open trips the watchdog fast.
+    _patch_settings(monkeypatch, memory_root=tmp_path)
+    import api.agent.runtime_direct as rt
+
+    settings = rt.get_settings()
+    settings.ma_stream_event_timeout_seconds = 0.05
+    monkeypatch.setattr(rt, "_STREAM_STALL_MAX_RETRIES", 1)
+
+    events_ok, final_ok = _stream_text("recovered after open hang")
+    n = _seq_stream_factory(
+        monkeypatch, [_HangingOpenStream(), _FakeStream(events_ok, final_ok)]
+    )
+
+    ws = FakeWS(["go"])
+    # Hard outer bound: if the open hang is NOT bounded by the runtime (the bug),
+    # the session never returns and this raises TimeoutError → RED.
+    await asyncio.wait_for(
+        rt.run_diagnostic_session_direct(ws, "demo-pi", tier="fast"),
+        timeout=5.0,
+    )
+
+    assert n["i"] == 2, "expected one hung open then exactly one retry attempt"
+    msgs = [m for m in ws.sent if m.get("type") == "message" and m.get("role") == "assistant"]
+    assert any("recovered after open hang" in m["text"] for m in msgs)
+    assert not [m for m in ws.sent if m.get("type") == "stream_error"], (
+        "retry recovered — no terminal stream_error should be emitted"
+    )
 
 
 async def test_sanitizer_logs_unknown_refdes_and_wraps_text(
@@ -581,40 +960,3 @@ async def test_sanitizer_logs_unknown_refdes_and_wraps_text(
     # The warning is structural — without it, silent corruption would be
     # invisible in production logs.
     assert any("sanitizer wrapped" in rec.getMessage() for rec in caplog.records)
-
-
-async def test_mb_tool_exception_returns_tool_error_not_crash(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
-) -> None:
-    """When _dispatch_mb_tool raises (e.g. incomplete pack), the runtime must
-    catch it and return a structured tool_error to the agent — not crash the
-    WebSocket. Defense-in-depth alongside _load_pack's _partial fallback."""
-    _stub_session(monkeypatch)
-    _patch_settings(monkeypatch, memory_root=tmp_path)
-
-    import api.agent.runtime_direct as rt
-
-    async def boom(*_args, **_kwargs):
-        raise RuntimeError("simulated pack failure")
-
-    monkeypatch.setattr(rt, "_dispatch_mb_tool", boom)
-
-    iter_scripted = iter([
-        _stream_tool_use("mb_get_rules_for_symptoms", {"symptoms": ["no boot"]}),
-        _stream_text("Tool failed."),
-    ])
-    client = MagicMock()
-
-    def _stream_factory(**kwargs):
-        events, final = next(iter_scripted)
-        return _FakeStream(events, final)
-    client.messages.stream = _stream_factory
-    monkeypatch.setattr(rt, "AsyncAnthropic", lambda **_kw: client)
-
-    ws = FakeWS(["diagnose"])
-    await rt.run_diagnostic_session_direct(ws, "demo-pi", tier="fast")
-
-    # The WS must not have closed abnormally — agent got a structured error
-    tool_use_frames = [m for m in ws.sent if m.get("type") == "tool_use"]
-    assert len(tool_use_frames) == 1
-    assert tool_use_frames[0]["name"] == "mb_get_rules_for_symptoms"

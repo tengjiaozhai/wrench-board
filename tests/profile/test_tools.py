@@ -139,9 +139,9 @@ def test_profile_get_caches_within_session(memroot: Path, monkeypatch):
 
     calls: list[str] = []
     orig = profile_tools.load_profile
-    def spy():
+    def spy(owner_ref=None):
         calls.append("load")
-        return orig()
+        return orig(owner_ref)
     monkeypatch.setattr(profile_tools, "load_profile", spy)
 
     session = SessionState()
@@ -149,3 +149,25 @@ def test_profile_get_caches_within_session(memroot: Path, monkeypatch):
     profile_tools.profile_get(session=session)
 
     assert len(calls) == 1, f"expected 1 load, got {len(calls)}"
+
+
+def test_profile_tools_scope_to_the_session_owner(memroot: Path):
+    """The agent's profile tools read/write the CURRENT session owner's profile
+    (set from the cloud's X-Owner-Ref). Two tenants never see each other's
+    identity; standalone (no owner) is isolated from both."""
+    from api.agent.owner_ref import set_owner_ref
+
+    try:
+        set_owner_ref("tenant-a")
+        a = TechnicianProfile.default()
+        a.identity.name = "Alice"
+        save_profile(a, owner_ref="tenant-a")
+        assert profile_get()["identity"]["name"] == "Alice"
+
+        set_owner_ref("tenant-b")
+        assert profile_get()["identity"]["name"] == ""  # B sees none of A
+
+        set_owner_ref(None)
+        assert profile_get()["identity"]["name"] == ""  # standalone isolated
+    finally:
+        set_owner_ref(None)

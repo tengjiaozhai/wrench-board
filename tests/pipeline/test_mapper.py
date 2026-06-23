@@ -35,12 +35,14 @@ from api.pipeline.schematic.schemas import (
 
 
 def _toy_registry() -> Registry:
+    # T8 : canonical_name suit [A-Z0-9_./-]{2,64} (pas d'espaces, majuscules) ;
+    # kind en majuscules. "LPC controller" → "LPC-CTRL", "main buck" → "MAIN-BUCK".
     return Registry(
         device_label="demo",
         taxonomy=DeviceTaxonomy(brand="MNT", model="Reform"),
         components=[
-            RegistryComponent(canonical_name="LPC controller", kind="ic"),
-            RegistryComponent(canonical_name="main buck", kind="ic"),
+            RegistryComponent(canonical_name="LPC-CTRL", kind="IC"),
+            RegistryComponent(canonical_name="MAIN-BUCK", kind="IC"),
         ],
     )
 
@@ -81,7 +83,9 @@ def test_validator_drops_unknown_canonical() -> None:
         device_slug="demo",
         attributions=[
             RefdesAttribution(
-                canonical_name="this canonical does not exist in registry",
+                # T8 : canonical_name suit [A-Z0-9_./-]{2,64} — on utilise un
+                # identifiant valide syntaxiquement mais absent du registre.
+                canonical_name="U99-GHOST",
                 refdes="U14",
                 confidence=0.9,
                 evidence_kind="literal_refdes_in_quote",
@@ -103,7 +107,7 @@ def test_validator_drops_refdes_not_in_graph() -> None:
         device_slug="demo",
         attributions=[
             RefdesAttribution(
-                canonical_name="LPC controller",
+                canonical_name="LPC-CTRL",
                 refdes="U99",  # not in graph
                 confidence=0.9,
                 evidence_kind="literal_refdes_in_quote",
@@ -125,7 +129,7 @@ def test_validator_drops_quote_not_in_dump() -> None:
         device_slug="demo",
         attributions=[
             RefdesAttribution(
-                canonical_name="LPC controller",
+                canonical_name="LPC-CTRL",
                 refdes="U14",
                 confidence=0.9,
                 evidence_kind="literal_refdes_in_quote",
@@ -148,7 +152,7 @@ def test_validator_drops_literal_refdes_kind_when_refdes_absent() -> None:
         device_slug="demo",
         attributions=[
             RefdesAttribution(
-                canonical_name="LPC controller",
+                canonical_name="LPC-CTRL",
                 refdes="U14",
                 confidence=0.9,
                 evidence_kind="literal_refdes_in_quote",
@@ -167,7 +171,7 @@ def test_validator_keeps_literal_refdes_kind_when_refdes_present_case_insensitiv
         device_slug="demo",
         attributions=[
             RefdesAttribution(
-                canonical_name="LPC controller",
+                canonical_name="LPC-CTRL",
                 refdes="U14",
                 confidence=0.95,
                 evidence_kind="literal_refdes_in_quote",
@@ -193,7 +197,7 @@ def test_validator_drops_mpn_kind_when_no_mpn_in_graph() -> None:
         device_slug="demo",
         attributions=[
             RefdesAttribution(
-                canonical_name="main buck",
+                canonical_name="MAIN-BUCK",
                 refdes="U7",
                 confidence=0.85,
                 evidence_kind="mpn_match_in_quote",
@@ -213,7 +217,7 @@ def test_validator_drops_mpn_kind_when_mpn_not_in_quote() -> None:
         device_slug="demo",
         attributions=[
             RefdesAttribution(
-                canonical_name="main buck",
+                canonical_name="MAIN-BUCK",
                 refdes="U7",
                 confidence=0.85,
                 evidence_kind="mpn_match_in_quote",
@@ -232,7 +236,7 @@ def test_validator_keeps_mpn_kind_when_mpn_literal_in_quote() -> None:
         device_slug="demo",
         attributions=[
             RefdesAttribution(
-                canonical_name="main buck",
+                canonical_name="MAIN-BUCK",
                 refdes="U7",
                 confidence=0.85,
                 evidence_kind="mpn_match_in_quote",
@@ -273,7 +277,7 @@ def test_validator_partitions_mixed_batch() -> None:
         attributions=[
             # legit literal_refdes
             RefdesAttribution(
-                canonical_name="LPC controller",
+                canonical_name="LPC-CTRL",
                 refdes="U14",
                 confidence=0.95,
                 evidence_kind="literal_refdes_in_quote",
@@ -282,7 +286,7 @@ def test_validator_partitions_mixed_batch() -> None:
             ),
             # legit mpn match
             RefdesAttribution(
-                canonical_name="main buck",
+                canonical_name="MAIN-BUCK",
                 refdes="U7",
                 confidence=0.85,
                 evidence_kind="mpn_match_in_quote",
@@ -291,7 +295,7 @@ def test_validator_partitions_mixed_batch() -> None:
             ),
             # bogus: refdes not in graph
             RefdesAttribution(
-                canonical_name="main buck",
+                canonical_name="MAIN-BUCK",
                 refdes="U99",
                 confidence=0.5,
                 evidence_kind="literal_refdes_in_quote",

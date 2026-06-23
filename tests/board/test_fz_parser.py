@@ -12,7 +12,7 @@ import pytest
 
 from api.board.parser.base import InvalidBoardFile, parser_for
 from api.board.parser.fz import FZParser
-from tests.board.test_fz_xor_cipher import TEST_KEY, _encrypt
+from tests.board.test_fz_xor_cipher import TEST_KEY
 from tests.board.test_fz_xor_parser import _MIN_BOARD, _make_zlib_payload
 
 

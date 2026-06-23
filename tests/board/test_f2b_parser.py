@@ -1,4 +1,4 @@
-"""Unisoft ProntoPLACE .f2b parser — dispatch + happy path + annotation skip."""
+"""`.f2b` board-save parser — dispatch + happy path + annotation skip."""
 
 from __future__ import annotations
 

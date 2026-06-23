@@ -1492,3 +1492,58 @@ def test_regulating_low_on_ic_returns_shorted_sourced_rails():
     )
     cascade = _simulate_failure(graph, analyzed_boot=None, refdes="U7", mode="regulating_low")
     assert "+5V" in cascade["shorted_rails"]
+
+
+def _rail_short_tie_graph() -> ElectricalGraph:
+    """A rail (VDDQ) whose short is explained identically by its decoupling
+    cap (C1, short) and by a memory IC on it (UMEM, shorted) — the classic
+    under-determined rail-short observation. Both score 1.0 with tp_c=0.
+    """
+    return ElectricalGraph(
+        device_slug="tie",
+        components={
+            # IC enumerated FIRST so a stable sort would surface it without
+            # the failure-prior tie-break.
+            "UMEM": ComponentNode(
+                refdes="UMEM", type="ic", kind="ic",
+                pins=[PagePin(number="1", role="power_in", net_label="VDDQ")],
+            ),
+            "UREG": ComponentNode(
+                refdes="UREG", type="ic", kind="ic",
+                pins=[PagePin(number="1", role="power_out", net_label="VDDQ")],
+            ),
+            "C1": ComponentNode(
+                refdes="C1", type="capacitor", kind="passive_c", role="decoupling",
+                pins=[
+                    PagePin(number="1", role="power_in", net_label="VDDQ"),
+                    PagePin(number="2", role="ground", net_label="GND"),
+                ],
+            ),
+        },
+        nets={
+            "VDDQ": NetNode(label="VDDQ", is_power=True, is_global=True),
+            "GND": NetNode(label="GND", is_power=True, is_global=True),
+        },
+        power_rails={
+            "VDDQ": PowerRail(
+                label="VDDQ", source_refdes="UREG",
+                consumers=["UMEM"], decoupling=["C1"],
+            ),
+        },
+        typed_edges=[], boot_sequence=[], designer_notes=[], ambiguities=[],
+        quality=SchematicQualityReport(total_pages=1, pages_parsed=1),
+    )
+
+
+def test_passive_outranks_ic_on_tied_rail_short():
+    """At equal explanatory score, a decoupling cap shorting its rail is the
+    more likely root cause than a catastrophic IC short, so it must rank
+    ahead — even though the IC is enumerated first."""
+    result = hypothesize(
+        _rail_short_tie_graph(),
+        observations=Observations(state_rails={"VDDQ": "shorted"}),
+        max_results=5,
+    )
+    order = [h.kill_refdes[0] for h in result.hypotheses if h.kill_refdes]
+    assert "C1" in order and "UMEM" in order
+    assert order.index("C1") < order.index("UMEM")

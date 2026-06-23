@@ -70,6 +70,43 @@ def test_list_donors(client):
     assert body["donors"][0]["has_parts_index"] is True
 
 
+def test_stock_is_owner_scoped_across_tenants(client):
+    """Multi-tenant front-door: the X-Owner-Ref header partitions the inventory.
+    A tenant only ever sees / deletes / consumes its OWN donors. (Closes the
+    cross-tenant stock leak.)"""
+    A = {"X-Owner-Ref": "tenant-a"}
+    B = {"X-Owner-Ref": "tenant-b"}
+
+    created = client.post("/api/stock/donors", json={"device_slug": "iphone-x", "label": "A board"}, headers=A)
+    assert created.status_code == 200
+    a_donor = created.json()["donor_id"]
+
+    # A sees its donor; B's inventory is empty.
+    assert [d["donor_id"] for d in client.get("/api/stock/donors", headers=A).json()["donors"]] == [a_donor]
+    assert client.get("/api/stock/donors", headers=B).json()["donors"] == []
+
+    # B cannot read parts, delete, or consume A's donor — it does not exist for B.
+    assert client.get(f"/api/stock/donors/{a_donor}/parts", headers=B).status_code == 404
+    assert client.delete(f"/api/stock/donors/{a_donor}", headers=B).status_code == 404
+    assert client.post(f"/api/stock/donors/{a_donor}/consume", json={"refdes": "C1"}, headers=B).status_code == 404
+
+    # B's search never returns A's parts, even on a matching query.
+    sB = client.post("/api/stock/search", json={"type": "capacitor"}, headers=B).json()
+    assert sB.get("exact_matches", []) == []
+
+    # A's donor is untouched and A can operate on it.
+    assert client.delete(f"/api/stock/donors/{a_donor}", headers=A).status_code == 200
+
+
+def test_stock_without_owner_ref_uses_the_global_inventory(client):
+    """Standalone / self-host (no header) keeps the single global inventory —
+    backward-compatible behaviour."""
+    client.post("/api/stock/donors", json={"device_slug": "iphone-x", "label": "self-host"})
+    assert len(client.get("/api/stock/donors").json()["donors"]) == 1
+    # A scoped tenant does NOT see the global (ownerless) donor.
+    assert client.get("/api/stock/donors", headers={"X-Owner-Ref": "tenant-a"}).json()["donors"] == []
+
+
 def test_consume_endpoint(client):
     r = client.post("/api/stock/donors", json={"device_slug": "iphone-x", "label": "A"})
     donor_id = r.json()["donor_id"]

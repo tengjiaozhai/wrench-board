@@ -3,8 +3,8 @@
 and report per-format pass/fail rates plus aggregate parts/pins/nets totals.
 
 Useful for measuring the impact of a parser change before/after, and for
-spotting regressions when a parser is updated. Defaults to scanning the
-local `XZZ Graphics card` and `XZZ LCD&TV` corpora that Alexis uses for
+spotting regressions when a parser is updated. Defaults to scanning a local
+board corpus (set via WB_BOARD_CORPUS) for
 manual validation.
 
 Usage:
@@ -23,10 +23,9 @@ from pathlib import Path
 sys.stdout.reconfigure(line_buffering=True)
 logging.disable(logging.CRITICAL)
 
-DEFAULT_ROOTS = [
-    "/home/alex/Documents/Boardview XZZ/XZZ Graphics card/",
-    "/home/alex/Documents/Boardview XZZ/XZZ LCD&TV/",
-]
+# Point WB_BOARD_CORPUS (os.pathsep-separated dirs) at your local board
+# corpus, or pass a directory as the first CLI arg. No paths are hardcoded.
+DEFAULT_ROOTS = [d for d in os.environ.get("WB_BOARD_CORPUS", "").split(os.pathsep) if d]
 SUPPORTED_EXT = {
     ".pcb", ".cad", ".fz", ".tvw", ".brd", ".bv", ".bvr",
     ".asc", ".bdv", ".cst", ".f2b", ".gr", ".kicad_pcb",

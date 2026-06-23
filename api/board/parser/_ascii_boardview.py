@@ -35,7 +35,10 @@ POWER_RE = re.compile(
     r"^(\+?\d+V\d*(_[A-Z0-9_]+)?|VCC[A-Z0-9_]*|VDD[A-Z0-9_]*|V_[A-Z0-9_]+)$",
     re.IGNORECASE,
 )
-GROUND_RE = re.compile(r"^(GND|VSS|AGND|DGND|PGND)$", re.IGNORECASE)
+# `GROUND` (the full word) is the literal ground-net name emitted by the
+# CPD `.cad` dialect (its largest net) — include it alongside the
+# GND-family abbreviations so the ground plane classifies in every dialect.
+GROUND_RE = re.compile(r"^(GND|GROUND|VSS|AGND|DGND|PGND)$", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -367,7 +370,7 @@ def looks_like_binary(raw: bytes, *, threshold: float = 0.30) -> bool:
     """Generic "is this a binary container, not ASCII?" detector.
 
     Several boardview formats (.bv, .gr, .cst, .f2b, .tvw) ship in the
-    wild as proprietary binary containers — packed integers, string
+    wild as packed binary containers — packed integers, string
     length prefixes, RGBA colour fields. Our parsers handle the
     Test_Link-shape ASCII variants found in some redistributions, but
     will produce nonsense if pointed at a binary file. This helper

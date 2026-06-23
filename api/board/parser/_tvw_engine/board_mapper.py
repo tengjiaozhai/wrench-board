@@ -1,6 +1,6 @@
 """Map a parsed `TVWFile` into a wrench-board `Board` Pydantic model.
 
-Tebo IctView stores four independent record sets:
+The `.tvw` format stores four independent record sets:
   1. Per-layer pin records (TOP, BOTTOM) — placement primitives
      (X, Y, net index, aperture). The TOP layer's pin array is the
      authoritative pad table for top-side parts; BOTTOM is the same
@@ -35,7 +35,7 @@ Mapping conventions:
     uses the existing smallest-bbox-wins + per-component tolerance.
   * **Test pads**: pin records that pass through both passes without
     being claimed become `Board.test_pads` (probe targets / vias /
-    isolated test points). Tebo IctView is a probe-target database,
+    isolated test points). The format is a probe-target database,
     so a typical `.tvw` has roughly as many of these stray pads as
     real SMD pads.
   * One `Net` per name in `network_names`. Each net's `pin_refs`
@@ -49,6 +49,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 from api.board.model import Arc, Board, Layer, Net, Part, Pin, Point, Segment, TestPad, Trace
+from api.board.parser._ascii_boardview import GROUND_RE, POWER_RE
 
 from .walker import TVWFile
 
@@ -64,8 +65,8 @@ _COORD_DIVISOR = 100
 # copper-vs-mask ratio on graphics-card fixtures.
 _PAD_RENDER_SHRINK = 0.65
 
-# Test_pad max visual radius — the 40-mil ICT probe targets (Tebo
-# IctView's main payload) drown out real SMD pads at full size. Cap
+# Test_pad max visual radius — the 40-mil ICT probe targets (the format
+# main payload) drown out real SMD pads at full size. Cap
 # to 4 mils so they stay identifiable / clickable but recede visually
 # behind real components. The probe target's actual physical extent
 # is no longer preserved here; use the boardview's hover panel for
@@ -741,7 +742,7 @@ def to_board(file: TVWFile, *, board_id: str, file_hash: str) -> Board:
     # `TVW_PADS_TOP` / `TVW_PADS_BOTTOM` carrier Parts. Carrier-as-Part
     # used to flood the boardview with thousands of large fake "pins"
     # — particularly visible on the bottom side where the dominant
-    # aperture is a 40-mil polygon (Tebo IctView's probe-pad template).
+    # aperture is a 40-mil polygon (the format's probe-pad template).
     # The test_pad channel lets the WebGL viewer render them as a
     # discreet secondary layer.
 
@@ -752,7 +753,14 @@ def to_board(file: TVWFile, *, board_id: str, file_hash: str) -> Board:
     for name in file.net_names:
         if not name:
             continue
-        nets.append(Net(name=name, pin_refs=pin_idxs_for_net.get(name, [])))
+        nets.append(
+            Net(
+                name=name,
+                pin_refs=pin_idxs_for_net.get(name, []),
+                is_power=bool(POWER_RE.match(name)),
+                is_ground=bool(GROUND_RE.match(name)),
+            )
+        )
     if pin_idxs_for_net.get(_FLOATING_NET):
         nets.append(Net(name=_FLOATING_NET, pin_refs=pin_idxs_for_net[_FLOATING_NET]))
 
@@ -847,7 +855,7 @@ def to_board(file: TVWFile, *, board_id: str, file_hash: str) -> Board:
 
     # Board outline: TVW's F00B groups are package outlines, but the
     # filled-surface section carries real outer-ring geometry. On the
-    # GV-N970 fixture the global board edge candidate is a large TOP
+    # sample fixture the global board edge candidate is a large TOP
     # surface outer ring; use that real geometry when it passes the
     # conservative coverage gates in `_select_surface_outline`.
     surface_outline = _select_surface_outline(file)

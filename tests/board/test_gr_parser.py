@@ -46,6 +46,39 @@ def test_accepts_canonical_parts_nails_spellings_too():
     assert board.nails[0].net == "GND"
 
 
+def test_dispatches_brd2_shaped_gr_to_brd2_parser(tmp_path: Path):
+    """Some `.gr` files in the wild are actually BRD2-format payloads.
+
+    Real example: `vendor-board boardview.gr` is a BRD2 file
+    (UPPERCASE `BRDOUT:` / `NETS:` / `PARTS:` / `PINS:` / `NAILS:` blocks),
+    sometimes preceded by a one-line vendor title. The Test_Link-shape `.gr`
+    grammar can't read those, so the GR parser delegates BRD2-shaped content
+    to the BRD2 parser while keeping `source_format="gr"`.
+    """
+    f = tmp_path / "brd2shaped.gr"
+    f.write_text(
+        "3BATE/GREAT_GUO/RAIN_HE\n"  # vendor title line before BRDOUT:
+        "BRDOUT: 4 100 100\n"
+        "0 0\n100 0\n100 100\n0 100\n"
+        "\n"
+        "NETS: 1\n"
+        "1 +3V3\n"
+        "\n"
+        "PARTS: 1\n"
+        "R1 0 0 10 10 0 1\n"
+        "\n"
+        "PINS: 1\n"
+        "5 5 1 1\n"
+        "\n"
+        "NAILS: 0\n"
+    )
+    board = GRParser().parse_file(f)
+    assert board.source_format == "gr"
+    assert [p.refdes for p in board.parts] == ["R1"]
+    assert len(board.pins) == 1
+    assert board.net_by_name("+3V3") is not None
+
+
 def test_rejects_garbage_payload(tmp_path: Path):
     f = tmp_path / "nope.gr"
     f.write_text("hello world\n")

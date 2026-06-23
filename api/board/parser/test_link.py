@@ -1,7 +1,7 @@
 """OpenBoardView `.brd` (Test_Link) parser.
 
 Reference for the format: the OpenBoardView project documents the .brd
-Test_Link layout. The code below is a clean-room reimplementation from
+Test_Link layout. The code below is a independent reimplementation from
 that format specification (Apache 2.0).
 """
 
@@ -41,6 +41,18 @@ class BRDParser(BoardParser):
 
         text = raw.decode("utf-8", errors="replace")
         if "str_length:" not in text or "var_data:" not in text:
+            if _looks_like_topgun_float(text):
+                # A handful of some vendors' `.brd` exports use the TopGun
+                # multi-section float boardview format (a `0 0 0 0` header,
+                # scientific-notation float coordinate pairs, `N N N N` section
+                # separators for outline / parts / pin-coords / pins / nails /
+                # net-lists). It is a genuinely different container, not a
+                # Test_Link dialect, and is not yet supported — classify it
+                # precisely rather than emitting an opaque "unknown encoding".
+                raise InvalidBoardFile(
+                    "brd: TopGun float boardview format (0 0 0 0 header + "
+                    "scientific-notation float sections) — not yet supported"
+                )
             raise InvalidBoardFile("unknown encoding or not a .brd Test_Link file")
 
         lines = _lines(text)
@@ -73,6 +85,25 @@ class BRDParser(BoardParser):
             nets=nets,
             nails=nails,
         )
+
+
+_TOPGUN_FLOAT_RE = re.compile(r"^\s*-?\d\.\d+E[+-]\d{4}\s+-?\d\.\d+E[+-]\d{4}")
+
+
+def _looks_like_topgun_float(text: str) -> bool:
+    """Detect the TopGun multi-section float boardview `.brd` variant.
+
+    Signature: the file opens with a `0 0 0 0` count/section header and its
+    body is scientific-notation float coordinate pairs (e.g.
+    `-4.18500000000000E+0000 -3.27000000000000E-0001`). This is a distinct
+    container from Test_Link / BRD2 and lets the parser raise a precise,
+    named error instead of a generic "unknown encoding".
+    """
+    stripped = [ln for ln in text.splitlines() if ln.strip()]
+    if not stripped or stripped[0].strip() != "0 0 0 0":
+        return False
+    # At least one float-pair coordinate line in the first few rows.
+    return any(_TOPGUN_FLOAT_RE.match(ln) for ln in stripped[1:6])
 
 
 def _lines(text: str) -> list[str]:
@@ -316,7 +347,7 @@ def _parse_nails(lines: list[str], n: int) -> list[Nail]:
 
 
 def _backfill_empty_nets(pins: list[Pin], nails: list[Nail]) -> list[Pin]:
-    """Backfill pin.net from the nail probe map (Lenovo variant).
+    """Backfill pin.net from the nail probe map (a vendor variant).
 
     Only pins with `pin.net is None` AND `pin.probe in nail_map` are
     rewritten. An explicitly declared net always wins — a blank net token

@@ -1,6 +1,6 @@
 """Unit tests for the defensive unwrap in call_with_forced_tool.
 
-Opus 4.7 under forced tool_choice occasionally stringifies nested structures.
+Opus 4.7/4.8 under forced tool_choice occasionally stringify nested structures.
 _try_unwrap must recover from both observed pathologies before we give up
 and retry (which is expensive and usually reproduces the same failure).
 """
@@ -16,7 +16,7 @@ def test_unwrap_recovers_stringified_nested_list():
     payload = {
         "schema_version": "1.0",
         "rules": (
-            '[{"id":"r1","symptoms":["x"],'
+            '[{"id":"R-001","symptoms":["x"],'
             '"likely_causes":[{"refdes":"U7","probability":0.5,"mechanism":"short"}],'
             '"diagnostic_steps":[],"confidence":0.6,"sources":[]}]'
         ),
@@ -25,14 +25,14 @@ def test_unwrap_recovers_stringified_nested_list():
     assert recovered is not None
     assert isinstance(recovered, RulesSet)
     assert len(recovered.rules) == 1
-    assert recovered.rules[0].id == "r1"
+    assert recovered.rules[0].id == "R-001"
 
 
 def test_unwrap_recovers_collapsed_payload():
     """Case B — the whole target is wedged into one stringified field."""
     inner = (
         '{"schema_version":"1.0","rules":['
-        '{"id":"r1","symptoms":["x"],'
+        '{"id":"R-001","symptoms":["x"],'
         '"likely_causes":[{"refdes":"U7","probability":0.5,"mechanism":"short"}],'
         '"diagnostic_steps":[],"confidence":0.6,"sources":[]}'
         "]}"
@@ -74,7 +74,7 @@ def test_deep_unwrap_recovers_doubly_stringified_payload():
     payload = {
         "schema_version": "1.0",
         "rules": (
-            '[{"id":"r1","symptoms":["x"],'
+            '[{"id":"R-001","symptoms":["x"],'
             f'"likely_causes":{inner_causes!s},'
             '"diagnostic_steps":[],"confidence":0.6,"sources":[]}]'
         ),
@@ -92,7 +92,8 @@ def test_deep_unwrap_handles_stringified_inside_nested_dict():
         "schema_version": "1.0",
         "rules": [
             {
-                "id": "r1",
+                # T8 : Rule.id suit le pattern R-[A-Z0-9_-]{1,48}
+                "id": "R-001",
                 "symptoms": '["x","y"]',  # stringified list, nested
                 "likely_causes": [
                     {"refdes": "U7", "probability": 0.5, "mechanism": "short"}

@@ -18,7 +18,7 @@
 .modal-hint{font-family:var(--mono);font-size:10.5px;color:var(--text-3);line-height:1.45}
 .modal-error{padding:10px 12px;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.35);border-radius:6px;color:var(--amber);font-size:12px;line-height:1.5;font-family:var(--mono)}
 .modal-error strong{color:var(--amber);font-weight:600;margin-right:6px}
-.modal-actions{display:flex;gap:10px;justify-content:flex-end;padding-top:4px}
+.modal-actions{display:flex;gap:10px;justify-content:flex-end;padding:12px 16px;border-top:1px solid var(--border-soft);background:var(--bg-deep)}
 .modal-actions .btn{flex:0 0 auto;padding:8px 14px;min-width:96px}
 .modal-submit[aria-busy="true"]{cursor:progress}
 .modal-spinner{display:inline-block;width:12px;height:12px;border:1.8px solid currentColor;border-top-color:transparent;border-radius:50%;animation:modal-spin .7s linear infinite;vertical-align:-1px}
@@ -43,6 +43,16 @@
 .combo-create .combo-label{color:var(--cyan)}
 .combo-create:first-child{border-top:none}
 .combo-empty{padding:12px;font-family:var(--mono);font-size:10.5px;color:var(--text-3);text-align:center}
+
+/* Readiness badges: dim by default, lit (.ok adds emerald above) when ready. */
+.combo-badge{opacity:.55}
+.combo-badge.ok{opacity:1}
+/* Device-kind chip rendered in mono (matches the workshop-label treatment). */
+.combo-badge.mono{font-family:var(--mono);text-transform:uppercase;letter-spacing:.4px}
+
+/* New-repair schematic field — "already ingested" collapses the upload prompt. */
+#newRepairSchematicField.is-ingested #newRepairSchematicPick{display:none}
+#newRepairSchematicField.is-ingested #newRepairSchematicName{color:var(--emerald)}
 
 .modal-rebuild{display:flex;align-items:center;gap:8px;padding:8px 10px;margin-top:4px;background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.25);border-radius:5px;font-size:11.5px;color:var(--text-2);cursor:pointer}
 .modal-rebuild[hidden]{display:none}

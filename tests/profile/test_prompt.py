@@ -17,7 +17,7 @@ def test_default_profile_produces_minimal_block():
 
 def test_rich_profile_lists_tools_and_mastered_skills():
     p = TechnicianProfile.default()
-    p.identity.name = "Alexis"
+    p.identity.name = "Test Tech"
     p.identity.years_experience = 5
     p.identity.specialties = ["apple", "consoles"]
     p.tools.soldering_iron = True
@@ -29,7 +29,7 @@ def test_rich_profile_lists_tools_and_mastered_skills():
     p.skills[SkillId.MICROSOLDER_0201] = SkillRecord(usages=1)
 
     block = render_technician_block(p)
-    assert "Alexis" in block
+    assert "Test Tech" in block
     assert "5 years" in block
     assert "apple, consoles" in block
     assert "soldering_iron" in block
@@ -61,6 +61,22 @@ def test_french_pref_declares_french_reply_language():
     assert "Reply language: English" not in block
 
 
+def test_chinese_pref_declares_chinese_reply_language():
+    p = TechnicianProfile.default()
+    p.preferences.language = "zh"
+    block = render_technician_block(p)
+    assert "Reply language: Chinese (Simplified)" in block
+    assert "Reply language: English" not in block
+
+
+def test_hindi_pref_declares_hindi_reply_language():
+    p = TechnicianProfile.default()
+    p.preferences.language = "hi"
+    block = render_technician_block(p)
+    assert "Reply language: Hindi" in block
+    assert "Reply language: English" not in block
+
+
 def test_system_prompt_includes_technician_block():
     from api.agent.manifest import render_system_prompt
     from api.session.state import SessionState
@@ -69,3 +85,11 @@ def test_system_prompt_includes_technician_block():
     assert "<technician_profile>" in prompt
     assert "profile_check_skills" in prompt
     assert "profile_track_skill" in prompt
+
+
+def test_custom_tools_appear_in_block():
+    p = TechnicianProfile.default()
+    p.custom_tools = ["Hot tweezers", "Glue gun"]
+    block = render_technician_block(p)
+    assert "Hot tweezers" in block
+    assert "Glue gun" in block

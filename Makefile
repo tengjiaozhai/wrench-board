@@ -1,4 +1,4 @@
-.PHONY: install run test test-all test-fast test-eval eval-all lint format clean help build-field-corpus demo-fallback pin-cdn tools-inventory doctor
+.PHONY: install run test test-all test-fast test-eval eval-all lint format clean help build-field-corpus demo-fallback pin-cdn tools-inventory doctor check-web
 
 PYTHON ?= python3
 VENV ?= .venv
@@ -22,7 +22,8 @@ help:
 	@echo "  make test      Run pytest (fast subset, skips slow benchmarks) — live output, --durations=10"
 	@echo "  make test-all  Run all pytest tests (incl. slow accuracy benchmarks)"
 	@echo "  make test-fast Run pytest with -x --ff (stop at first fail, failures-first next time)"
-	@echo "  make lint      Run ruff check"
+	@echo "  make lint      Run ruff check (api/ tests/)"
+	@echo "  make check-web Validate web/ ESM imports resolve + named imports exist (no-build guard)"
 	@echo "  make format    Run ruff format"
 	@echo "  make clean     Remove caches (keeps .venv)"
 	@echo "  make tools-inventory  Regenerate docs/tools.md from api/agent/manifest.py"
@@ -77,6 +78,25 @@ eval-all:
 
 lint:
 	$(RUFF) check api/ tests/
+
+# No-build frontend guard. The web/ UI ships as raw ES modules served
+# byte-for-byte (no bundler — see CLAUDE.md), so a broken import path or a
+# renamed export only surfaces at runtime in the browser; ruff + pytest stay
+# green. This zero-dependency checker resolves every relative import and
+# validates named/default imports against the target's exports. When node is
+# available it also runs `node --check` (syntax) over every web/ module.
+# Catches the import-depth + renamed-export classes; a bare undefined
+# reference still needs browser verification (no scope analysis without a JS
+# toolchain this repo intentionally avoids).
+check-web:
+	@$(PY) scripts/check_web_imports.py
+	@if command -v node >/dev/null 2>&1; then \
+		echo "[check-web] node --check on web/ modules…"; \
+		find web -name '*.js' -not -path '*/vendor/*' -print0 \
+			| xargs -0 -n1 node --check && echo "[check-web] node --check OK"; \
+	else \
+		echo "[check-web] node not found — skipping syntax pass (import check still ran)"; \
+	fi
 
 format:
 	$(RUFF) format api/ tests/

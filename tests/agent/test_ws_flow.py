@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -150,8 +151,43 @@ def _patch_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(rt, "get_settings", lambda: MagicMock(
         anthropic_api_key="sk-fake",
         memory_root=Path("/tmp/nope"),
-        anthropic_model_main="claude-opus-4-7",
+        anthropic_model_main="claude-opus-4-8",
+        ma_stream_event_timeout_seconds=600.0,
+        ma_protocol_confirmation_timeout_seconds=300.0,
     ))
+
+
+def _push_frame(ws: FakeWS, frame: dict) -> None:
+    """Inject a raw JSON frame (e.g. a confirmation reply) into the WS inbox."""
+    ws._inbox.put_nowait(json.dumps(frame))
+
+
+def _protocol_payload_u7() -> dict:
+    """A minimal, valid bv_propose_protocol payload targeting U7."""
+    return {
+        "title": "Vérifier VCC U7",
+        "rationale": "Suspicion d'absence d'alimentation.",
+        "steps": [{
+            "type": "numeric",
+            "target": "U7",
+            "instruction": "Mesurer VCC sur U7.",
+            "unit": "V",
+            "nominal": 3.3,
+            "pass_range": [3.0, 3.6],
+        }],
+    }
+
+
+class _BlockingFakeWS(FakeWS):
+    """Like FakeWS but receive_text blocks on an empty inbox instead of
+    raising WebSocketDisconnect — lets the protocol-confirmation parking reach
+    its inactivity timeout in tests."""
+
+    async def receive_text(self) -> str:
+        if self._closed:
+            from fastapi import WebSocketDisconnect
+            raise WebSocketDisconnect
+        return await self._inbox.get()
 
 
 @pytest.mark.asyncio
@@ -251,6 +287,388 @@ async def test_sanitizer_wraps_unknown_refdes_in_final_message(monkeypatch: pyte
     assert agent_msgs
     assert "⟨?U999⟩" in agent_msgs[0]["text"]
     assert "U999 is suspect" not in agent_msgs[0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_direct_cam_capture_round_trip(monkeypatch: pytest.MonkeyPatch) -> None:
+    """T16: cam_capture requests a frame, awaits it, uploads to Files API, and
+    feeds an image tool_result back to the agent (parity with runtime/camera.py).
+
+    The disk write (persist_macro) and Files API are stubbed; the behavior under
+    test is the round-trip + the image-shaped tool_result content.
+    """
+    _stub_session(monkeypatch, _board_with_u7())
+    import api.agent.runtime_direct as rt
+
+    monkeypatch.setattr(rt, "persist_macro", lambda **_k: Path("/tmp/cap.jpg"))
+
+    captured_msgs: list[list[dict]] = []
+
+    def recording_stream(**kwargs):
+        captured_msgs.append(list(kwargs["messages"]))
+        if len(captured_msgs) == 1:
+            events, final = _stream_tool_use(
+                "cam_capture", {"reason": "voir U7"}, tool_id="toolu_cam"
+            )
+        else:
+            events, final = _stream_text("Je vois U7 sur la photo.")
+        return _FakeStream(events, final)
+
+    fake_client = MagicMock()
+    fake_client.messages.stream = recording_stream
+    fake_client.beta.files.upload = AsyncMock(
+        return_value=SimpleNamespace(id="file_xyz")
+    )
+    monkeypatch.setattr(rt, "AsyncAnthropic", lambda **_kw: fake_client)
+    monkeypatch.setattr(rt, "get_settings", lambda: MagicMock(
+        anthropic_api_key="sk-fake",
+        memory_root=Path("/tmp/nope"),
+        anthropic_model_main="claude-opus-4-8",
+        ma_stream_event_timeout_seconds=600.0,
+        ma_protocol_confirmation_timeout_seconds=300.0,
+        ma_camera_capture_timeout_seconds=5.0,
+    ))
+
+    img_b64 = base64.b64encode(b"\x89PNG\r\n\x1a\nfakeimagedata").decode()
+    ws = _BlockingFakeWS(["prends une photo de U7"])
+    task = asyncio.create_task(
+        rt.run_diagnostic_session_direct(ws, "demo-pi", tier="fast", repair_id="rep-1")
+    )
+
+    req = None
+    for _ in range(200):
+        req = next((m for m in ws.sent if m.get("type") == "server.capture_request"), None)
+        if req:
+            break
+        await asyncio.sleep(0.01)
+    assert req is not None, "expected a server.capture_request frame"
+    assert req.get("tool_use_id") == "toolu_cam"
+
+    ws._inbox.put_nowait(json.dumps({
+        "type": "client.capture_response",
+        "request_id": req["request_id"],
+        "base64": img_b64,
+        "mime": "image/png",
+        "device_label": "USB Cam",
+    }))
+    await asyncio.sleep(0.3)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+    fake_client.beta.files.upload.assert_awaited_once()
+    assert len(captured_msgs) >= 2, "expected a follow-up turn carrying the image"
+    tool_results = [
+        b for m in captured_msgs[1]
+        for b in (m.get("content") if isinstance(m.get("content"), list) else [])
+        if isinstance(b, dict) and b.get("type") == "tool_result"
+    ]
+    assert tool_results, "expected an image tool_result fed back to the agent"
+    content = tool_results[0]["content"]
+    assert isinstance(content, list), "cam_capture tool_result must be a content list"
+    img_blocks = [c for c in content if isinstance(c, dict) and c.get("type") == "image"]
+    assert img_blocks, "expected an image block in the tool_result"
+    assert img_blocks[0]["source"]["file_id"] == "file_xyz"
+
+
+@pytest.mark.asyncio
+async def test_direct_capabilities_rebuilds_manifest_with_cam_capture(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T16: a client.capabilities{camera_available:true} frame rebuilds the
+    tools manifest so cam_capture is offered on subsequent turns.
+
+    The frontend sends capabilities AFTER session_ready (after the initial
+    manifest snapshot), so without a rebuild cam_capture would never appear in
+    direct mode and the agent could never request a photo.
+    """
+    _stub_session(monkeypatch, _board_with_u7())
+    import api.agent.runtime_direct as rt
+
+    captured_tools: list[list] = []
+
+    def recording_stream(**kwargs):
+        captured_tools.append(kwargs.get("tools") or [])
+        events, final = _stream_text("ok")
+        return _FakeStream(events, final)
+
+    fake_client = MagicMock()
+    fake_client.messages.stream = recording_stream
+    monkeypatch.setattr(rt, "AsyncAnthropic", lambda **_kw: fake_client)
+    _patch_settings(monkeypatch)
+
+    ws = FakeWS([])
+    _push_frame(ws, {"type": "client.capabilities", "camera_available": True})
+    _push_frame(ws, {"type": "message", "text": "prends une photo de U7"})
+    await rt.run_diagnostic_session_direct(ws, "demo-pi", tier="fast")
+
+    assert captured_tools, "expected at least one stream call"
+    names = [t.get("name") for t in captured_tools[-1]]
+    assert "cam_capture" in names, "cam_capture must be offered after capabilities"
+
+
+@pytest.mark.asyncio
+async def test_direct_protocol_accept_dispatches_after_confirmation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T16: bv_propose_protocol parks for tech confirmation; accept → dispatch.
+
+    Parity with runtime_managed Pattern-4: the runtime emits
+    protocol_pending_confirmation and waits; only on an accept frame does the
+    real dispatch run (materialize + protocol_proposed). The disk dispatch is
+    tested elsewhere — here it's stubbed to assert the confirmation gate.
+    """
+    _stub_session(monkeypatch, _board_with_u7())
+    import api.agent.runtime_direct as rt
+
+    calls: list[str] = []
+
+    async def _stub_dispatch(name, *_a, **_k):
+        calls.append(name)
+        return {"ok": True, "event": {"type": "protocol_proposed", "protocol_id": "p1"}}
+
+    monkeypatch.setattr(rt, "_dispatch_protocol_tool", _stub_dispatch)
+    fake_client = _mock_anthropic([
+        _stream_tool_use("bv_propose_protocol", _protocol_payload_u7(), tool_id="toolu_p1"),
+        _stream_text("Protocole lancé."),
+    ])
+    monkeypatch.setattr(rt, "AsyncAnthropic", lambda **_kw: fake_client)
+    _patch_settings(monkeypatch)
+
+    ws = FakeWS(["propose un protocole"])
+    _push_frame(ws, {
+        "type": "client.protocol_confirmation",
+        "tool_use_id": "toolu_p1",
+        "decision": "accept",
+    })
+    await rt.run_diagnostic_session_direct(ws, "demo-pi", tier="fast", repair_id="rep-1")
+
+    types = [m.get("type") for m in ws.sent]
+    assert "protocol_pending_confirmation" in types
+    assert calls == ["bv_propose_protocol"], "accept must trigger the real dispatch"
+    assert "protocol_proposed" in types
+    assert types.index("protocol_pending_confirmation") < types.index("protocol_proposed")
+
+
+@pytest.mark.asyncio
+async def test_direct_protocol_reject_skips_dispatch_and_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T16: a reject confirmation must NOT materialize the protocol; the agent
+    gets an error tool_result carrying the tech's reason."""
+    _stub_session(monkeypatch, _board_with_u7())
+    import api.agent.runtime_direct as rt
+
+    calls: list[str] = []
+
+    async def _stub_dispatch(name, *_a, **_k):
+        calls.append(name)
+        return {"ok": True}
+
+    monkeypatch.setattr(rt, "_dispatch_protocol_tool", _stub_dispatch)
+
+    captured: list[list[dict]] = []
+
+    def recording_stream(**kwargs):
+        captured.append(list(kwargs["messages"]))
+        if len(captured) == 1:
+            events, final = _stream_tool_use(
+                "bv_propose_protocol", _protocol_payload_u7(), tool_id="toolu_p2"
+            )
+        else:
+            events, final = _stream_text("Compris, j'abandonne ce protocole.")
+        return _FakeStream(events, final)
+
+    fake_client = MagicMock()
+    fake_client.messages.stream = recording_stream
+    monkeypatch.setattr(rt, "AsyncAnthropic", lambda **_kw: fake_client)
+    _patch_settings(monkeypatch)
+
+    ws = FakeWS(["propose un protocole"])
+    _push_frame(ws, {
+        "type": "client.protocol_confirmation",
+        "tool_use_id": "toolu_p2",
+        "decision": "reject",
+        "reason": "trop risqué sans isoler la batterie",
+    })
+    await rt.run_diagnostic_session_direct(ws, "demo-pi", tier="fast", repair_id="rep-1")
+
+    types = [m.get("type") for m in ws.sent]
+    assert "protocol_pending_confirmation" in types
+    assert "protocol_proposed" not in types
+    assert calls == [], "reject must NOT dispatch the protocol"
+    # The tool_result fed back to the agent on the 2nd turn carries the reason.
+    second_turn_msgs = captured[1]
+    tool_results = [
+        b for m in second_turn_msgs
+        for b in (m.get("content") if isinstance(m.get("content"), list) else [])
+        if isinstance(b, dict) and b.get("type") == "tool_result"
+    ]
+    assert tool_results, "expected a tool_result for the rejected protocol"
+    decoded = json.loads(tool_results[0]["content"])
+    assert decoded["reason"] == "rejected"
+    assert "trop risqué" in decoded["error"]
+
+
+@pytest.mark.asyncio
+async def test_direct_protocol_confirmation_timeout_emits_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T16: if the tech never answers, the parking times out → a
+    protocol_confirmation_timeout frame is emitted and no dispatch runs."""
+    _stub_session(monkeypatch, _board_with_u7())
+    import api.agent.runtime_direct as rt
+
+    calls: list[str] = []
+
+    async def _stub_dispatch(name, *_a, **_k):
+        calls.append(name)
+        return {"ok": True}
+
+    monkeypatch.setattr(rt, "_dispatch_protocol_tool", _stub_dispatch)
+    fake_client = _mock_anthropic([
+        _stream_tool_use("bv_propose_protocol", _protocol_payload_u7(), tool_id="toolu_p3"),
+        _stream_text("D'accord."),
+    ])
+    monkeypatch.setattr(rt, "AsyncAnthropic", lambda **_kw: fake_client)
+    monkeypatch.setattr(rt, "get_settings", lambda: MagicMock(
+        anthropic_api_key="sk-fake",
+        memory_root=Path("/tmp/nope"),
+        anthropic_model_main="claude-opus-4-8",
+        ma_stream_event_timeout_seconds=600.0,
+        ma_protocol_confirmation_timeout_seconds=0.05,
+    ))
+
+    ws = _BlockingFakeWS(["propose un protocole"])
+    task = asyncio.create_task(
+        rt.run_diagnostic_session_direct(ws, "demo-pi", tier="fast", repair_id="rep-1")
+    )
+    await asyncio.sleep(0.4)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+    types = [m.get("type") for m in ws.sent]
+    assert "protocol_pending_confirmation" in types
+    assert "protocol_confirmation_timeout" in types
+    assert calls == [], "timeout must NOT dispatch the protocol"
+
+
+@pytest.mark.asyncio
+async def test_direct_stream_watchdog_trips_on_stall(monkeypatch: pytest.MonkeyPatch) -> None:
+    """T16: a stalled model stream trips the per-event watchdog → stream_error.
+
+    Parity with runtime_managed's stream watchdog: if no stream event arrives
+    within ma_stream_event_timeout_seconds, the turn must not hang forever (an
+    infinite spinner for the tech). Direct mode has no server-side replay, so a
+    stall is terminal: emit a stream_error frame and return cleanly (the WS
+    stays alive for the next user message / close).
+    """
+    _stub_session(monkeypatch, _board_with_u7())
+    import api.agent.runtime_direct as rt
+
+    class _StallingStream:
+        """Stream whose first event takes 0.3s — longer than the watchdog window."""
+
+        async def __aenter__(self) -> _StallingStream:
+            return self
+
+        async def __aexit__(self, *exc_info: object) -> bool:
+            return False
+
+        def __aiter__(self) -> _StallingStream:
+            return self
+
+        async def __anext__(self) -> object:
+            await asyncio.sleep(0.3)
+            raise StopAsyncIteration
+
+        async def get_final_message(self) -> MagicMock:
+            m = MagicMock(content=[], stop_reason="end_turn")
+            m.id = "msg_stall"
+            m.usage = SimpleNamespace(
+                input_tokens=0, output_tokens=0,
+                cache_read_input_tokens=0, cache_creation_input_tokens=0,
+            )
+            return m
+
+    fake_client = MagicMock()
+    fake_client.messages.stream = lambda **_kw: _StallingStream()
+    monkeypatch.setattr(rt, "AsyncAnthropic", lambda **_kw: fake_client)
+    monkeypatch.setattr(rt, "get_settings", lambda: MagicMock(
+        anthropic_api_key="sk-fake",
+        memory_root=Path("/tmp/nope"),
+        anthropic_model_main="claude-opus-4-8",
+        ma_stream_event_timeout_seconds=0.05,
+    ))
+
+    ws = FakeWS(["diagnose"])
+    await asyncio.wait_for(
+        rt.run_diagnostic_session_direct(ws, "demo-pi", tier="fast"),
+        timeout=5.0,
+    )
+
+    errs = [m for m in ws.sent if m.get("type") == "stream_error"]
+    assert errs, "expected a stream_error frame when the watchdog trips"
+    assert errs[0].get("error") == "stream_timeout"
+
+
+@pytest.mark.asyncio
+async def test_direct_turn_reports_token_usage_to_cloud(monkeypatch: pytest.MonkeyPatch) -> None:
+    """T13/T16: a completed direct-mode turn fires cloud token-usage metering.
+
+    Parity with runtime_managed's span.model_request_end hook: each LLM call's
+    raw input/output tokens are reported to the cloud (the tenant-private
+    billing unit), carrying the session owner_ref + engine repair_id, keyed on
+    the Anthropic message id for cloud-side idempotency. Without this, running
+    the engine in DIAGNOSTIC_MODE=direct would bill nothing.
+    """
+    _stub_session(monkeypatch, _board_with_u7())
+    import api.agent.cloud_metering as cm
+    import api.agent.runtime_direct as rt
+
+    spy = MagicMock()
+    monkeypatch.setattr(cm, "fire_and_forget_report", spy)
+
+    block = MagicMock(type="text", text="Checked.")
+    stop_ev = MagicMock()
+    stop_ev.type = "content_block_stop"
+    stop_ev.index = 0
+    usage = SimpleNamespace(
+        input_tokens=100,
+        output_tokens=50,
+        cache_read_input_tokens=0,
+        cache_creation_input_tokens=0,
+    )
+    final = MagicMock(content=[block], stop_reason="end_turn")
+    final.id = "msg_abc123"
+    final.usage = usage
+
+    def _stream_factory(**_kw):
+        return _FakeStream([(stop_ev, [block])], final)
+
+    fake_client = MagicMock()
+    fake_client.messages.stream = _stream_factory
+    monkeypatch.setattr(rt, "AsyncAnthropic", lambda **_kw: fake_client)
+    _patch_settings(monkeypatch)
+
+    ws = FakeWS(["check U7"])
+    await rt.run_diagnostic_session_direct(
+        ws, "demo-pi", tier="fast", repair_id="rep-1", owner_ref="tenant-xyz"
+    )
+
+    assert spy.call_count == 1, "expected exactly one cloud metering report for the turn"
+    kwargs = spy.call_args.kwargs
+    assert kwargs["owner_ref"] == "tenant-xyz"
+    assert kwargs["model"] == "claude-haiku-4-5"
+    assert kwargs["input_tokens"] == 100
+    assert kwargs["output_tokens"] == 50
+    assert kwargs["engine_repair_id"] == "rep-1"
+    assert "msg_abc123" in kwargs["event_id"]
 
 
 @pytest.mark.asyncio

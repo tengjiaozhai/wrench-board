@@ -16,9 +16,61 @@ const SECTION_META = {
   profile:       {crumbKey: "router.section.profile",   mode: {tagKey: "router.mode.profile_tag", subKey: "router.mode.profile_sub",       color: "cyan"}},
 };
 
-export function prettifySlug(slug) {
-  if (!slug) return "";
-  return slug.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+// prettifySlug now lives in shared/dom.js (single source of truth). Imported for
+// internal use (updateChrome) AND re-exported to preserve the public API
+// consumed by main.js and landing.js.
+import { prettifySlug } from "./shared/dom.js";
+export { prettifySlug };
+import { setContext, getDeviceSlug, getRepairId } from "./shared/context.js";
+import { getRepair } from "./services/repairs.js";
+
+// ── Phase C: 2-level hash route grammar ──────────────────────────────────
+// Global routes:  #home | #stock | #profile | #landing
+// Repair routes:  #repair/<id>/<vue>  with vue ∈ REPAIR_VUES (default diagnostic)
+// The repair `graph` vue maps to the internal "graphe" section DOM (VUE_TO_SECTION).
+// `?view=md` stays in the REAL query string (before the #) — orthogonal sub-state
+// of the graph vue, read/written by currentViewMode()/applyMemoireMode().
+export const REPAIR_VUES = ["diagnostic", "pcb", "schematic", "graph"];
+const VUE_TO_SECTION = { diagnostic: "home", pcb: "pcb", schematic: "schematic", graph: "graphe" };
+const GLOBAL_ROUTES = ["home", "stock", "profile", "landing"];
+
+/**
+ * Parse window.location.hash into a structured route:
+ *   { level: "repair", id, vue }  for #repair/<id>/<vue>
+ *   { level: "global", name }     for #home | #stock | #profile | #landing
+ * Unknown/empty → { level: "global", name: "home" }. Tolerates a trailing
+ * "?view=md" hash-fragment query by splitting it off (view lives in the real
+ * query string, but be defensive).
+ */
+export function parseRoute() {
+  const raw = (window.location.hash || "").replace(/^#/, "");
+  const [path] = raw.split("?");
+  const segs = path.split("/").filter(Boolean);
+  if (segs[0] === "repair" && segs[1]) {
+    let vue = segs[2] || "diagnostic";
+    if (!REPAIR_VUES.includes(vue)) vue = "diagnostic";
+    return { level: "repair", id: decodeURIComponent(segs[1]), vue };
+  }
+  const name = GLOBAL_ROUTES.includes(segs[0]) ? segs[0] : "home";
+  return { level: "global", name };
+}
+
+/** Build a canonical repair-route hash (#repair/<id>/<vue>). */
+export function repairHash(id, vue = "diagnostic") {
+  const v = REPAIR_VUES.includes(vue) ? vue : "diagnostic";
+  return `#repair/${encodeURIComponent(id)}/${v}`;
+}
+
+// repair_id → device_slug, resolved lazily and cached for the page load.
+// In-app navigations seed this (seedSlugForRepair) so they stay synchronous;
+// only a cold deep-link/reload pays the getRepair round-trip.
+const _slugByRepair = new Map();
+
+/** Fast-path: seed the slug cache when the slug is already known (home card
+ *  click, landing nav, pipeline redirect) so syncContextFromUrl resolves without
+ *  a fetch. No-op on falsy id/slug (never caches a bad value). */
+export function seedSlugForRepair(id, slug) {
+  if (id && slug) _slugByRepair.set(id, slug);
 }
 
 async function loadPackSummary(slug) {
@@ -63,9 +115,9 @@ const _dateFmt = new Intl.DateTimeFormat("fr-FR", {
   day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
 });
 function formatRepairDate(iso) {
-  if (!iso) return "—";
+  if (!iso) return "…";
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
+  if (Number.isNaN(d.getTime())) return "…";
   // fr-FR formats as "26 avr., 14:32" — drop the comma to read as one phrase.
   return _dateFmt.format(d).replace(/,\s*/g, " ");
 }
@@ -224,8 +276,7 @@ function updateChrome(section, deviceSlug, pack) {
 }
 
 function refreshChrome(section) {
-  const params = new URLSearchParams(window.location.search);
-  const slug = params.get("device");
+  const slug = getDeviceSlug();
 
   // Provisional synchronous update (no pack yet) — prevents FOUC.
   updateChrome(section, slug, null);
@@ -239,20 +290,38 @@ function refreshChrome(section) {
   }
 }
 
+// Section DOM key for the current route. Repair vues map through VUE_TO_SECTION
+// (graph→graphe); global routes map to their own section (landing→home DOM, the
+// overlay sits on top). SECTIONS stays the section-DOM-key set used by navigate's
+// guard — distinct from GLOBAL_ROUTES.
 export function currentSection() {
-  const h = (window.location.hash || "#home").slice(1);
-  return SECTIONS.includes(h) ? h : "home";
+  const route = parseRoute();
+  if (route.level === "repair") return VUE_TO_SECTION[route.vue];
+  return route.name === "landing" ? "home" : route.name;
 }
 
-function setActiveRail(which) {
+// Highlight the active rail button by route. In a repair the active key is the
+// vue; globally it's the route name. Buttons carry data-rail (Phase C).
+function setActiveRail(route) {
+  const active = route.level === "repair" ? route.vue : route.name;
   document.querySelectorAll(".rail-btn").forEach(btn => {
-    btn.classList.toggle("active", btn.dataset.section === which);
+    btn.classList.toggle("active", btn.dataset.rail === active);
+  });
+}
+
+// Show the rail's global button group outside a repair, the repair group inside.
+// Buttons/separators carry data-rail-level="global|repair"; .hidden is global CSS.
+function applyRailLevel(route) {
+  document.querySelectorAll(".rail [data-rail-level]").forEach(el => {
+    el.classList.toggle("hidden", el.dataset.railLevel !== route.level);
   });
 }
 
 export function navigate(section) {
   if (!SECTIONS.includes(section)) section = "home";
-  setActiveRail(section);
+  const route = parseRoute();
+  setActiveRail(route);
+  applyRailLevel(route);
   // Hide all known section DOMs, show the target.
   document.getElementById("homeSection").classList.toggle("hidden", section !== "home");
   // The "graphe" section is a merged Mémoire view — the visible child
@@ -290,8 +359,16 @@ export function navigate(section) {
   }
 }
 
-export function wireRouter() {
-  window.addEventListener("hashchange", () => navigate(currentSection()));
+// `deps.maybeLoadGraph` is injected by main.js (which owns the graph-mount
+// guard) so the view-toggle handler can trigger an idempotent graph reload
+// without reaching through a window.* global — mirrors the mountRepairVue
+// injection.
+export function wireRouter({ maybeLoadGraph } = {}) {
+  // NOTE: the hashchange listener lives in main.js (single owner) — it runs the
+  // full async sequence migrateLegacyUrl → syncContextFromUrl → navigate →
+  // mountRoute. Don't add a second navigate() here (it would double-navigate off
+  // a possibly-stale store).
+  //
   // Re-render the topbar chrome (mode pill, breadcrumbs, metabar status text)
   // when the user toggles EN/FR. The DOM-level [data-i18n] elements are
   // refreshed by i18n.applyDom; chrome content that is built imperatively
@@ -299,9 +376,18 @@ export function wireRouter() {
   if (window.i18n && typeof window.i18n.onChange === "function") {
     window.i18n.onChange(() => refreshChrome(currentSection()));
   }
-  document.querySelectorAll(".rail-btn[data-section]").forEach(btn => {
+  // Rail click → route-aware navigation. Global buttons jump to #<name>; repair
+  // vue buttons jump to #repair/<currentId>/<vue> (only when a repair is active).
+  document.querySelectorAll(".rail-btn[data-rail]").forEach(btn => {
     btn.addEventListener("click", () => {
-      window.location.hash = "#" + btn.dataset.section;
+      const target = btn.dataset.rail;
+      if (GLOBAL_ROUTES.includes(target)) {
+        window.location.hash = "#" + target;
+        return;
+      }
+      const route = parseRoute();
+      const id = route.level === "repair" ? route.id : getRepairId();
+      if (id) window.location.hash = repairHash(id, target);
     });
   });
   // Toggle buttons: clicking sets the mode + re-applies. The actual
@@ -322,7 +408,7 @@ export function wireRouter() {
         // see correct clientWidth/clientHeight. If we don't do this, a
         // load attempted while canvas was hidden bails out without
         // marking the slug mounted, and the view would stay empty.
-        window.__maybeLoadGraph?.();
+        maybeLoadGraph?.();
       }
     });
   });
@@ -367,14 +453,40 @@ export function applyMemoireMode(mode) {
 }
 
 /**
+ * Derive {device, repair} from the current hash route and write it into the
+ * store (shared/context.js) — the single read surface for views. For a repair
+ * route, resolves the slug from the repair id (cache, else getRepair). For a
+ * global route, clears the context. Returns a Promise that settles once the
+ * store reflects the route — await it before mounting views on a deep-link.
+ */
+export async function syncContextFromUrl() {
+  const route = parseRoute();
+  if (route.level !== "repair") {
+    setContext({ device: null, repair: null });
+    return;
+  }
+  let slug = _slugByRepair.get(route.id);
+  if (!slug) {
+    try {
+      const meta = await getRepair(route.id);   // RepairSummary { device_slug, ... }
+      slug = meta?.device_slug || null;
+      if (slug) _slugByRepair.set(route.id, slug);
+    } catch (err) {
+      console.warn("[router] could not resolve repair", route.id, err);
+      slug = null;
+    }
+  }
+  setContext({ device: slug, repair: route.id });
+}
+
+/**
  * Return the currently active repair session, derived from URL query params.
  * A session is defined by the SIMULTANEOUS presence of ?device= and ?repair=.
  * Re-derived on every call — zero hidden state.
  */
 export function currentSession() {
-  const params = new URLSearchParams(window.location.search);
-  const device = params.get("device");
-  const repair = params.get("repair");
+  const device = getDeviceSlug();
+  const repair = getRepairId();
   if (device && repair) return { device, repair };
   return null;
 }
@@ -385,25 +497,64 @@ export function currentSession() {
  * and the topbar session pill's [×].
  */
 export async function leaveSession() {
-  const url = new URL(window.location.href);
-  url.searchParams.delete("device");
-  url.searchParams.delete("repair");
-  url.hash = "#home";
-  window.history.replaceState({}, "", url.toString());
+  // Clear context first so currentSession() reads null immediately.
+  setContext({ device: null, repair: null });
   // Close the chat panel if open. llmClose is a <button>; if the panel
   // isn't mounted yet the optional chaining silently skips.
   document.getElementById("llmClose")?.click();
-  // Refresh chrome (drops the pill) and swap to list mode.
+  // Navigate to the global repairs list. Setting the hash fires hashchange →
+  // main.js's listener re-syncs context + mounts #home. We still drop the
+  // dashboard + show the landing explicitly below in case we were already on
+  // #home (no hashchange fires when the hash is unchanged).
+  window.location.hash = "#home";
   navigate("home");
   // Quitting a session always returns to the landing hero — the tech is
   // declaring "I'm done with this repair", so the start screen (where they
-  // can pick another device or open a new diagnostic) is the right next
-  // step. The journal list stays accessible from the rail's home button.
-  // hideRepairDashboard() runs explicitly because history.replaceState()
-  // does NOT fire a hashchange event, so the hashchange dispatch in main.js
-  // that would normally call it never runs.
-  const { hideRepairDashboard } = await import("./home.js");
+  // can pick another device or open a new diagnostic) is the right next step.
+  const { hideRepairDashboard } = await import("./features/repair/diagnostic/dashboard.js");
   hideRepairDashboard();
-  const { showLanding } = await import("./landing.js");
+  const { showLanding } = await import("./features/global/landing/index.js");
   showLanding();
+}
+
+/**
+ * Rewrite any pre-Phase-C URL into the new grammar, in place (replaceState, no
+ * reload). Covers ?device=&repair=#section, ?tool=stock, bare #memory-bank /
+ * #graphe. Safe no-op on already-canonical URLs. Keeps view=md in the real query
+ * string (Decision A). Call before syncContextFromUrl on boot + each hashchange.
+ */
+export function migrateLegacyUrl() {
+  const url = new URL(window.location.href);
+  const params = url.searchParams;
+  const device = params.get("device");
+  const repair = params.get("repair");
+  const tool = params.get("tool");
+  let changed = false;
+
+  if (tool === "stock") { params.delete("tool"); url.hash = "#stock"; changed = true; }
+
+  if (repair && device) {
+    const oldHash = (url.hash || "").replace(/^#/, "").split("?")[0];
+    const sectionToVue = { home: "diagnostic", pcb: "pcb", schematic: "schematic",
+                           graphe: "graph", "memory-bank": "graph" };
+    const vue = sectionToVue[oldHash] || "diagnostic";
+    if (oldHash === "memory-bank") params.set("view", "md");   // query string (Decision A)
+    seedSlugForRepair(repair, device);                          // we know the slug — skip the fetch
+    params.delete("device"); params.delete("repair");
+    url.hash = repairHash(repair, vue);
+    changed = true;
+  } else if (device && !repair) {
+    // Device-only legacy link (pack browse). No repair to scope to under the new
+    // grammar → send to the global list; the pack is reachable by opening a repair.
+    params.delete("device");
+    url.hash = "#home";
+    changed = true;
+  }
+
+  // Bare legacy section hashes with no repair are no longer canonical routes
+  // (pcb/schematic/graphe/memory-bank are repair-only vues) → fall back to #home.
+  const bareHash = (url.hash || "").replace(/^#/, "").split("?")[0].split("/")[0];
+  if (bareHash === "memory-bank" || bareHash === "graphe") { url.hash = "#home"; changed = true; }
+
+  if (changed) window.history.replaceState({}, "", url.toString());
 }

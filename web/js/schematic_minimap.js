@@ -17,6 +17,8 @@
 // ElectricalGraph, cached in-module after the first fetch.
 
 import { ICON_WARNING } from './icons.js';
+import { getDeviceSlug, getRepairId } from './shared/context.js';
+import { repairHash } from './router.js';
 
 let schematicCache = null;       // { slug, data }
 let fetchInFlight = null;        // { slug, promise }
@@ -78,7 +80,7 @@ function mkEl(tag, attrs, text) {
 
 function getSlug() {
   const qs = new URLSearchParams(window.location.search);
-  return qs.get("device") || qs.get("board") || null;
+  return getDeviceSlug() || qs.get("board") || null;
 }
 
 async function loadSchematic(slug) {
@@ -244,7 +246,7 @@ function setHeader(kind, ref, sub) {
   // kind is one of "COMP" / "NET" — translate to the display label.
   const kindLabel = kind === "NET" ? t('brd.minimap.kind.net') : t('brd.minimap.kind.comp');
   el("bvMinimapKind").textContent = kindLabel;
-  el("bvMinimapRef").textContent = ref || "—";
+  el("bvMinimapRef").textContent = ref || "…";
   el("bvMinimapSub").textContent = sub || "";
   const mm = el("bvMinimap");
   if (mm) mm.dataset.kind = kind === "NET" ? "net" : "component";
@@ -310,7 +312,12 @@ function openRailInSchematic(railLabel) {
   window.dispatchEvent(new CustomEvent("schematic:focus-rail", {
     detail: { railId, railLabel },
   }));
-  if (window.location.hash !== "#schematic") window.location.hash = "schematic";
+  // Jump to the active repair's schematic vue (canonical hash route).
+  const id = getRepairId();
+  if (id) {
+    const target = repairHash(id, "schematic");
+    if (window.location.hash !== target) window.location.hash = target;
+  }
 }
 
 function renderComponent(relations) {

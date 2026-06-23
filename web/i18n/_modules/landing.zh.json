@@ -1,69 +1,151 @@
 {
   "sidebar": {
-    "title": "近期",
-    "aria": "近期修复",
-    "delete_aria": "删除此修复",
+    "title": "最近",
+    "aria": "最近的维修",
+    "delete_aria": "删除此维修",
     "delete_title": "删除",
-    "count_one": "{n} 个修复",
-    "count_many": "{n} 个修复"
+    "count_one": "{n} 项维修",
+    "count_many": "{n} 项维修",
+    "state_building": "构建中",
+    "state_paused": "需要确认",
+    "state_failed": "构建失败",
+    "locked_hint": "知识包正在构建中。您可以关闭此页面，构建会继续。",
+    "resume_aria": "查看此次构建的进度"
   },
   "hero": {
-    "title": "你的硬件维修助手。",
-    "sub": "告诉我设备和症状 — 我来构建知识并开启诊断。",
-    "device_placeholder": "设备（如 MNT Reform 主板、iPhone 11、Framework 13）",
+    "title": "您的硬件维修助手。",
+    "sub": "告诉我您的设备和症状：我会构建知识并打开诊断。",
+    "device_placeholder": "设备（例如 MNT Reform 主板、iPhone 11、Framework 13）",
     "device_aria": "哪个设备",
-    "symptom_placeholder": "症状（如无法开机、不充电、黑屏）",
+    "symptom_placeholder": "症状（例如 无法开机、不充电、黑屏）",
     "symptom_aria": "症状是什么",
     "submit": "开始诊断"
   },
-  "chips": {
-    "mnt_label": "MNT Reform — 不开机",
-    "mnt_symptom": "不开机，黑屏",
-    "iphone_label": "iPhone 11 — 不充电",
-    "iphone_symptom": "不充电",
-    "framework_label": "Framework — 黑屏",
-    "framework_symptom": "启动时黑屏"
+  "preflight": {
+    "badge": "新设备",
+    "title": "开始诊断 · {device}",
+    "intro": "此设备尚无知识页。启动后将从零开始构建一份。",
+    "credit": "本次诊断将消耗 1 个额度，用于构建此设备的知识包。",
+    "time": "构建完整知识包可能需要 15 分钟以上。您可以关闭此页面，构建会继续进行。",
+    "schematic_label": "原理图：现在正是添加它的时机",
+    "schematic_none": "尚未提供原理图。如果您有原理图 PDF，请现在添加。它能显著提升知识包质量。",
+    "schematic_attached": "原理图已附上。它将被导入以优化知识包。",
+    "schematic_replace": "选择其他 PDF",
+    "email_optin": "设备就绪后通过邮件通知我，这样我无需在此等待。",
+    "close": "关闭",
+    "cancel": "取消",
+    "confirm": "开始诊断"
   },
   "timeline": {
-    "title_default": "构建知识表…",
-    "title_build": "构建表 · {device}",
-    "title_expand": "定向补充 · {device}",
-    "title_loading": "加载表 · {device}",
-    "title_ready": "表就绪 · {status}",
-    "title_failed": "管线失败",
-    "elapsed": "耗时 · {n}秒",
-    "phase_scout": "Scout · 网络调研",
-    "phase_registry": "Registry · 规范词汇表",
-    "phase_mapper": "Mapper · refdes ↔ 图谱",
-    "phase_writers": "Writers · 图谱 + 规则 + 术语表",
-    "phase_audit": "Auditor · 验证",
-    "phase_expand": "针对你的症状进行定向调研"
+    "title_default": "正在构建知识页…",
+    "title_build": "正在构建知识页 · {device}",
+    "title_expand": "定向扩充 · {device}",
+    "title_loading": "正在加载知识页 · {device}",
+    "title_ready": "知识页就绪 · {status}",
+    "title_failed": "流水线失败",
+    "title_queued": "已排队 · 位置 {position}",
+    "elapsed": "已用时 · {n}秒",
+    "first_analysis_note": "首次分析此设备。仅需几分钟，且只需一次。您可以关闭此标签页：准备就绪后我们会立即通过邮件通知您。",
+    "phase_scout": "侦察 · 网络调研",
+    "phase_registry": "注册表 · 规范词汇",
+    "phase_mapper": "映射器 · 元件位号 ↔ 图谱",
+    "phase_writers": "写入器 · 图谱 + 规则 + 词汇表",
+    "phase_audit": "审核器 · 校验",
+    "phase_schematic_ingest": "原理图 · 逐页视觉识别",
+    "phase_device_kind": "设备类型 · 分类",
+    "phase_expand": "针对您症状的定向调研",
+    "detail": "详情",
+    "detail_hide": "隐藏",
+    "step": {
+      "search_round": "网络搜索 · 第 {index} 轮",
+      "page": "第 {index}/{total} 页",
+      "writer_graph": "图谱 ✓ {count} 个节点",
+      "writer_rules": "规则 ✓ {count}",
+      "writer_dict": "词汇表 ✓ {count}",
+      "audit": "审核中",
+      "revision": "修订 {index}"
+    }
   },
   "status": {
-    "pipeline_started": "管线已在 {device} 上启动。",
-    "checking": "保存修复并检查是否已知此设备…",
-    "rule_match": "已知此案例 ({rule_id})。打开诊断…",
-    "device_known": "已知 {device}。打开诊断…",
-    "expand": "已知 {device}。添加你的具体症状（约 3 分钟）。",
-    "build_new": "新设备 — 在后台构建知识表。可以随时观看。",
-    "ready": "准备就绪。打开诊断…",
-    "ws_lost": "管线连接丢失。如无响应请刷新页面。",
-    "error_create": "创建失败: {error}",
-    "error_pipeline": "错误: {error}。",
+    "pipeline_started": "已在 {device} 上启动流水线。",
+    "queued": "等待中：队列中第 {position} 位（前面还有 {ahead} 项）。一旦有空位释放，诊断会自动开始。",
+    "checking": "正在保存您的维修并检查我是否已了解此设备…",
+    "rule_match": "我已了解此情况（{rule_id}）。正在打开诊断…",
+    "device_known": "我已了解 {device}。正在打开诊断…",
+    "expand": "我了解 {device}。正在加入您的具体症状（约 3 分钟）。",
+    "build_new": "对我来说是新的：正在后台构建知识页。欢迎查看。",
+    "build_delay": "新设备：正在准备其知识页。这可能需要一些时间。您可以关闭此页面稍后再来，它会持续构建。",
+    "notify_armed": "完成。设备就绪后我们会立即通过邮件通知您。",
+    "ready": "一切就绪。正在打开诊断…",
+    "ws_lost": "流水线连接已断开。如果没有任何动静，请重新加载页面。",
+    "error_create": "创建失败：{error}",
+    "error_pipeline": "错误：{error}。",
     "error_unknown": "未知",
     "error_invalid_response": "服务器响应无效",
-    "error_delete": "删除失败: {error}",
-    "validation_device": "请更具体描述设备 — 至少几个字。",
-    "validation_symptom": "请多描述一些症状。"
+    "error_delete": "删除失败：{error}",
+    "validation_device": "请更具体地描述设备（至少几个词）。",
+    "validation_symptom": "请再多描述一些症状。"
   },
   "delete": {
-    "confirm": "删除此修复？对话和 agent 笔记将被永久清除。"
+    "confirm": "删除此维修？对话和智能体的笔记将被永久清除。"
+  },
+  "kind": {
+    "none": "（设备类型，可选）",
+    "aria": "设备类型"
+  },
+  "knowledge": {
+    "button": "添加知识",
+    "aria": "添加关于设备的知识",
+    "badge": "可选",
+    "title": "添加关于设备的知识",
+    "close": "关闭",
+    "intro": "更多上下文能构建更精准的知识包。这里的一切都是可选的。",
+    "done": "完成"
+  },
+  "schematic": {
+    "cta": "附上一份原理图 PDF（可选）",
+    "aria": "原理图 PDF",
+    "already_ingested": "原理图已导入 ✓（无需附上）",
+    "share": "您的 PDF 保持私密并加密。我们从中提取的知识（电气图、诊断规则）会丰富此设备的 WrenchBoard 知识库，供每位维修者使用。导入即表示您接受此项提取。",
+    "share_more": "了解更多"
   },
   "suggest": {
     "aria": "设备建议",
-    "draft": "草稿"
+    "draft": "草稿",
+    "graph_label": "图谱",
+    "graph_title": "电气图已就绪"
   },
   "tools": {
     "stock": "库存"
+  },
+  "free": {
+    "locked_hint": "免费方案：从列表中选择一个已分析的设备（✓）来开始诊断。",
+    "upgrade_cta": "升级到 Pro 以分析新设备 →"
+  },
+  "catalogue": {
+    "button": "浏览设备",
+    "aria": "浏览可用设备",
+    "title": "可用设备",
+    "search_placeholder": "搜索设备、品牌或板号…",
+    "filter_aria": "按设备类型筛选",
+    "filter_all": "全部",
+    "empty": "未找到匹配的设备。",
+    "draft": "草稿",
+    "graph": "图谱",
+    "fiche_back": "所有设备",
+    "fiche_known": "已知内容",
+    "fiche_registry": "注册表",
+    "fiche_graph": "知识图谱",
+    "fiche_rules": "诊断规则",
+    "fiche_dictionary": "词汇表",
+    "fiche_boardview": "板图",
+    "fiche_schematic": "原理图",
+    "fiche_symptom_placeholder": "描述问题（例如 无法开机、不充电）",
+    "fiche_launch": "开始诊断",
+    "fiche_draft_locked": "此设备仍在构建中，诊断功能暂不可用。",
+    "present": "是",
+    "absent": "否",
+    "button_short": "浏览",
+    "crumb_types": "类型"
   }
 }

@@ -554,7 +554,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--include-vision",
         action="store_true",
-        help="Run scripts/eval_pipeline_vision.py (real API, Opus 4.7 per page).",
+        help="Run scripts/eval_pipeline_vision.py (real API, Opus 4.8 per page).",
     )
     p.add_argument(
         "--include-agent",

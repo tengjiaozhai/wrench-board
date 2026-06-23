@@ -17,7 +17,6 @@ from __future__ import annotations
 
 from api.board.parser._pad_shape_inference import infer_pad_shape
 
-
 # ---------------------------------------------------------------------------
 # Rect-shaped pads (chip passives + leaded packages)
 # ---------------------------------------------------------------------------
@@ -322,7 +321,7 @@ def test_bare_tantalum_smd_codes_inferred_as_rect():
 # ---------------------------------------------------------------------------
 # BOM-description form (Part.value strings — used as a fallback when the
 # `.fz` SYM_NAME column duplicates the refdes instead of carrying the
-# real footprint, as on Asus DUAL 1060 dumps).
+# real footprint, as on some vendor dumps).
 # ---------------------------------------------------------------------------
 
 

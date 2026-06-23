@@ -5,6 +5,10 @@
 // rules, dictionary, and audit verdict. Missing fields render as "—"
 // (hard rule #5: never fabricate).
 
+import { escapeHtml as escHtml, prettifySlug } from "./shared/dom.js";
+import { listPacks, getPackFull } from "./services/packs.js";
+import { getDeviceSlug } from "./shared/context.js";
+
 const STATE = {
   packs: [],        // PackSummary[] from /pipeline/packs
   currentSlug: null,
@@ -19,31 +23,17 @@ function tr(key, params) {
   return (window.t ? window.t(key, params) : key);
 }
 
-function fmt(value, fallback = "—") {
+function fmt(value, fallback = "…") {
   if (value === null || value === undefined) return fallback;
   if (typeof value === "string" && value.trim() === "") return fallback;
   return value;
-}
-
-function escHtml(s) {
-  if (s === null || s === undefined) return "";
-  return String(s).replace(/[&<>"']/g, c => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-  }[c]));
-}
-
-function prettifySlug(slug) {
-  if (!slug) return "";
-  return slug.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
 }
 
 /* ---------- fetch helpers ---------- */
 
 async function fetchPacks() {
   try {
-    const res = await fetch("/pipeline/packs");
-    if (!res.ok) return [];
-    return await res.json();
+    return await listPacks();
   } catch (err) {
     console.warn("memory-bank: /pipeline/packs failed", err);
     return [];
@@ -52,9 +42,7 @@ async function fetchPacks() {
 
 async function fetchFullPack(slug) {
   try {
-    const res = await fetch(`/pipeline/packs/${encodeURIComponent(slug)}/full`);
-    if (!res.ok) return null;
-    return await res.json();
+    return await getPackFull(slug);
   } catch (err) {
     console.warn("memory-bank: /full fetch failed", err);
     return null;
@@ -98,7 +86,7 @@ function renderVerdict() {
       <span class="mb-verdict none" title="${escHtml(tr("memory_bank.verdict.none_title"))}">
         <span class="dot"></span>${escHtml(tr("memory_bank.verdict.none_label"))}
       </span>
-      <span class="mb-score">${escHtml(tr("memory_bank.verdict.consistency"))} <b>—</b></span>`;
+      <span class="mb-score">${escHtml(tr("memory_bank.verdict.consistency"))} <b>n/a</b></span>`;
   } else {
     const cls = v.overall_status === "APPROVED"       ? "approved"
               : v.overall_status === "NEEDS_REVISION" ? "needs-revision"
@@ -110,7 +98,7 @@ function renderVerdict() {
                    :                                         "memory_bank.verdict.unknown_label";
     const label = tr(labelKey);
     const score = (typeof v.consistency_score === "number")
-      ? v.consistency_score.toFixed(2) : "—";
+      ? v.consistency_score.toFixed(2) : "n/a";
     verdictHtml = `
       <span class="mb-verdict ${cls}"><span class="dot"></span>${escHtml(label)}</span>
       <span class="mb-score">${escHtml(tr("memory_bank.verdict.consistency"))} <b>${score}</b></span>`;
@@ -171,8 +159,8 @@ function renderRegistry(registry) {
             <tr data-search="${escHtml([c.canonical_name, c.logical_alias, ...(c.aliases || []), c.description, c.kind].filter(Boolean).join(" ").toLowerCase())}">
               <td class="mono">${escHtml(c.canonical_name)}${c.logical_alias ? `<div style="font-size:10.5px;color:var(--text-3);font-family:inherit;font-style:italic">${escHtml(c.logical_alias)}</div>` : ""}</td>
               <td><span class="mb-kind ${escHtml(c.kind || "unknown")}">${escHtml(c.kind || "unknown")}</span></td>
-              <td>${(c.aliases || []).map(a => `<span class="mb-alias">${escHtml(a)}</span>`).join("") || '<span class="muted">—</span>'}</td>
-              <td>${escHtml(c.description) || '<span class="muted">—</span>'}</td>
+              <td>${(c.aliases || []).map(a => `<span class="mb-alias">${escHtml(a)}</span>`).join("") || '<span class="muted">(none)</span>'}</td>
+              <td>${escHtml(c.description) || '<span class="muted">(none)</span>'}</td>
             </tr>`).join("")}
         </tbody>
       </table>`}
@@ -185,8 +173,8 @@ function renderRegistry(registry) {
             <tr data-search="${escHtml([s.canonical_name, ...(s.aliases || []), s.kind].filter(Boolean).join(" ").toLowerCase())}">
               <td class="mono">${escHtml(s.canonical_name)}</td>
               <td><span class="mb-kind ${escHtml(s.kind || "unknown")}">${escHtml(s.kind || "unknown")}</span></td>
-              <td>${(s.aliases || []).map(a => `<span class="mb-alias">${escHtml(a)}</span>`).join("") || '<span class="muted">—</span>'}</td>
-              <td class="mono">${s.nominal_voltage !== null && s.nominal_voltage !== undefined ? `<span class="mb-volt">${s.nominal_voltage} V</span>` : '<span class="muted">—</span>'}</td>
+              <td>${(s.aliases || []).map(a => `<span class="mb-alias">${escHtml(a)}</span>`).join("") || '<span class="muted">(none)</span>'}</td>
+              <td class="mono">${s.nominal_voltage !== null && s.nominal_voltage !== undefined ? `<span class="mb-volt">${s.nominal_voltage} V</span>` : '<span class="muted">n/a</span>'}</td>
             </tr>`).join("")}
         </tbody>
       </table>`}
@@ -247,7 +235,7 @@ function renderRules(rules) {
     const headSym = (r.symptoms && r.symptoms.length > 0)
       ? `<b>${escHtml(r.symptoms[0])}</b>${r.symptoms.length > 1 ? ` <span style="color:var(--text-3)">+${r.symptoms.length - 1}</span>` : ""}`
       : `<span style="color:var(--text-3)">${escHtml(tr("memory_bank.rules.no_symptom"))}</span>`;
-    const conf = typeof r.confidence === "number" ? r.confidence.toFixed(2) : "—";
+    const conf = typeof r.confidence === "number" ? r.confidence.toFixed(2) : "n/a";
     return `
       <div class="mb-rule" data-rule-idx="${i}" data-search="${escHtml(searchText)}">
         <div class="mb-rule-head">
@@ -260,18 +248,18 @@ function renderRules(rules) {
           <div class="mb-rule-section">
             <h4>${escHtml(tr("memory_bank.rules.h_symptoms"))}</h4>
             <div class="mb-rule-symptoms">
-              ${(r.symptoms || []).map(s => `<span class="sym">${escHtml(s)}</span>`).join("") || '<span class="muted">—</span>'}
+              ${(r.symptoms || []).map(s => `<span class="sym">${escHtml(s)}</span>`).join("") || '<span class="muted">(none)</span>'}
             </div>
           </div>
           <div class="mb-rule-section">
             <h4>${escHtml(tr("memory_bank.rules.h_likely_causes"))}</h4>
-            ${(r.likely_causes || []).length === 0 ? '<span class="muted">—</span>' :
+            ${(r.likely_causes || []).length === 0 ? '<span class="muted">(none)</span>' :
               (r.likely_causes || []).map(c => {
                 const p = typeof c.probability === "number" ? c.probability : 0;
                 return `
                   <div class="mb-cause">
                     <span class="refdes">${escHtml(c.refdes)}</span>
-                    <span class="mech">${escHtml(c.mechanism) || "—"}</span>
+                    <span class="mech">${escHtml(c.mechanism) || "…"}</span>
                     <div class="prob-bar"><div class="prob-fill" style="width:${(p * 100).toFixed(0)}%"></div></div>
                     <span class="prob-val">${p.toFixed(2)}</span>
                   </div>`;
@@ -279,7 +267,7 @@ function renderRules(rules) {
           </div>
           <div class="mb-rule-section">
             <h4>${escHtml(tr("memory_bank.rules.h_diagnostic_steps"))}</h4>
-            ${(r.diagnostic_steps || []).length === 0 ? '<span class="muted">—</span>' :
+            ${(r.diagnostic_steps || []).length === 0 ? '<span class="muted">(none)</span>' :
               (r.diagnostic_steps || []).map(s => `
                 <div class="mb-step">
                   <span class="act">${escHtml(s.action)}</span>
@@ -329,11 +317,11 @@ function renderDictionary(dict) {
           return `
             <tr data-search="${escHtml(searchText)}">
               <td class="mono">${escHtml(e.canonical_name)}</td>
-              <td>${escHtml(e.role) || '<span class="muted">—</span>'}</td>
-              <td class="mono">${escHtml(e.package) || '<span class="muted">—</span>'}</td>
-              <td>${modes.length === 0 ? '<span class="muted">—</span>' :
+              <td>${escHtml(e.role) || '<span class="muted">(none)</span>'}</td>
+              <td class="mono">${escHtml(e.package) || '<span class="muted">(none)</span>'}</td>
+              <td>${modes.length === 0 ? '<span class="muted">(none)</span>' :
                 modes.map(m => `<span class="mb-alias" style="color:var(--amber);background:rgba(245,158,11,.08);border-color:rgba(245,158,11,.3)">${escHtml(m)}</span>`).join("")}</td>
-              <td>${escHtml(e.notes) || '<span class="muted">—</span>'}</td>
+              <td>${escHtml(e.notes) || '<span class="muted">(none)</span>'}</td>
             </tr>`;
         }).join("")}
       </tbody>
@@ -347,12 +335,12 @@ function renderAudit(verdict) {
   if (!verdict) {
     block.style.display = "";
     body.innerHTML = `<div class="mb-missing">${escHtml(tr("memory_bank.audit.missing"))}</div>`;
-    el("mbBlockAuditCount").innerHTML = `<b>—</b>`;
+    el("mbBlockAuditCount").innerHTML = `<b>n/a</b>`;
     return;
   }
   block.style.display = "";
   const status = verdict.overall_status || "UNKNOWN";
-  const score  = typeof verdict.consistency_score === "number" ? verdict.consistency_score.toFixed(2) : "—";
+  const score  = typeof verdict.consistency_score === "number" ? verdict.consistency_score.toFixed(2) : "n/a";
   const files  = verdict.files_to_rewrite || [];
   const drift  = verdict.drift_report || [];
   const brief  = verdict.revision_brief || "";
@@ -450,9 +438,8 @@ export async function loadMemoryBank() {
   STATE.loading = true;
   try {
     STATE.packs = await fetchPacks();
-    // Prefer ?device= if present, else first available pack, else empty state.
-    const params = new URLSearchParams(window.location.search);
-    const deviceParam = params.get("device");
+    // Prefer the active device if present, else first available pack, else empty state.
+    const deviceParam = getDeviceSlug();
     if (deviceParam && STATE.packs.some(p => p.device_slug === deviceParam)) {
       STATE.currentSlug = deviceParam;
     } else if (STATE.packs.length > 0) {

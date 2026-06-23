@@ -5,24 +5,36 @@
     "delete_aria": "Delete this repair",
     "delete_title": "Delete",
     "count_one": "{n} repair",
-    "count_many": "{n} repairs"
+    "count_many": "{n} repairs",
+    "state_building": "Building",
+    "state_paused": "Needs confirmation",
+    "state_failed": "Build failed",
+    "locked_hint": "Knowledge pack is building. You can close this page; it keeps going.",
+    "resume_aria": "Watch this build's progress"
   },
   "hero": {
     "title": "Your hardware repair assistant.",
-    "sub": "Give me your device and the symptom — I'll build the knowledge and open the diagnostic.",
+    "sub": "Give me your device and the symptom: I'll build the knowledge and open the diagnostic.",
     "device_placeholder": "Device (e.g. MNT Reform motherboard, iPhone 11, Framework 13)",
     "device_aria": "Which device",
     "symptom_placeholder": "Symptom (e.g. won't power on, no charge, black screen)",
     "symptom_aria": "What is the symptom",
     "submit": "Start diagnostic"
   },
-  "chips": {
-    "mnt_label": "MNT Reform — no boot",
-    "mnt_symptom": "no boot, black screen",
-    "iphone_label": "iPhone 11 — no charge",
-    "iphone_symptom": "won't charge",
-    "framework_label": "Framework — black screen",
-    "framework_symptom": "black screen on boot"
+  "preflight": {
+    "badge": "New device",
+    "title": "Start the diagnostic · {device}",
+    "intro": "No knowledge sheet exists for this device yet. Launching builds one from scratch.",
+    "credit": "This diagnostic uses 1 credit to build the device knowledge pack.",
+    "time": "Building the full pack can take more than 15 minutes. You can close this page; it keeps building.",
+    "schematic_label": "Schematic: now is the moment to add it",
+    "schematic_none": "No schematic provided. If you have the schematic PDF, add it now. It sharply improves the pack.",
+    "schematic_attached": "Schematic attached. It will be ingested to sharpen the pack.",
+    "schematic_replace": "Choose a different PDF",
+    "email_optin": "Email me when the device is ready, so I don't have to wait here.",
+    "close": "Close",
+    "cancel": "Cancel",
+    "confirm": "Start the diagnostic"
   },
   "timeline": {
     "title_default": "Building the knowledge sheet…",
@@ -31,21 +43,38 @@
     "title_loading": "Loading sheet · {device}",
     "title_ready": "Sheet ready · {status}",
     "title_failed": "Pipeline failed",
+    "title_queued": "Queued · position {position}",
     "elapsed": "Elapsed · {n}s",
     "phase_scout": "Scout · web research",
     "phase_registry": "Registry · canonical vocabulary",
     "phase_mapper": "Mapper · refdes ↔ graph",
     "phase_writers": "Writers · graph + rules + glossary",
     "phase_audit": "Auditor · validation",
-    "phase_expand": "Targeted research on your symptom"
+    "phase_schematic_ingest": "Schematic · page-by-page vision",
+    "phase_device_kind": "Device type · classification",
+    "phase_expand": "Targeted research on your symptom",
+    "detail": "detail",
+    "detail_hide": "hide",
+    "step": {
+      "search_round": "web search · round {index}",
+      "page": "page {index}/{total}",
+      "writer_graph": "graph ✓ {count} nodes",
+      "writer_rules": "rules ✓ {count}",
+      "writer_dict": "glossary ✓ {count}",
+      "audit": "auditing",
+      "revision": "revision {index}"
+    }
   },
   "status": {
     "pipeline_started": "Pipeline started on {device}.",
+    "queued": "Waiting: position {position} in the queue ({ahead} ahead). The diagnostic starts automatically as soon as a slot frees up.",
     "checking": "Saving your repair and checking whether I already know this device…",
     "rule_match": "I already know this case ({rule_id}). Opening the diagnostic…",
     "device_known": "I already know {device}. Opening the diagnostic…",
     "expand": "I know {device}. Adding your specific symptom (~3 min).",
-    "build_new": "New to me — building the sheet in the background. Feel free to watch.",
+    "build_new": "New to me: building the sheet in the background. Feel free to watch.",
+    "build_delay": "New device: preparing its knowledge sheet. This can take a while. You can close this page and come back, it keeps building.",
+    "notify_armed": "Done. We'll email you as soon as the device is ready.",
     "ready": "All set. Opening the diagnostic…",
     "ws_lost": "Pipeline connection lost. Reload the page if nothing moves.",
     "error_create": "Creation failed: {error}",
@@ -53,17 +82,73 @@
     "error_unknown": "unknown",
     "error_invalid_response": "invalid server response",
     "error_delete": "Delete failed: {error}",
-    "validation_device": "Be more specific about the device — at least a few words.",
+    "validation_device": "Be more specific about the device (at least a few words).",
     "validation_symptom": "Describe the symptom a bit more."
   },
   "delete": {
     "confirm": "Delete this repair? The conversation and the agent's notes will be permanently erased."
   },
+  "kind": {
+    "none": "(device type, optional)",
+    "aria": "Device type"
+  },
+  "knowledge": {
+    "button": "Add knowledge",
+    "aria": "Add knowledge about the device",
+    "badge": "Optional",
+    "title": "Add knowledge about the device",
+    "close": "Close",
+    "intro": "More context builds a sharper pack. Everything here is optional.",
+    "done": "Done"
+  },
+  "board_number": {
+    "label": "Board number (optional)",
+    "placeholder": "820-02016",
+    "aria": "Board number",
+    "hint": "Engraved on the PCB. Unlocks the known specifics of your exact revision."
+  },
+  "schematic": {
+    "cta": "Attach a schematic PDF (optional)",
+    "aria": "Schematic PDF",
+    "already_ingested": "Schematic already ingested ✓ (no need to attach)"
+  },
   "suggest": {
     "aria": "Device suggestions",
-    "draft": "draft"
+    "draft": "draft",
+    "graph_label": "graph",
+    "graph_title": "Electrical graph ready"
   },
   "tools": {
     "stock": "Stock"
+  },
+  "free": {
+    "locked_hint": "Free plan: pick an already-analyzed device (✓) from the list to start a diagnostic.",
+    "upgrade_cta": "Upgrade to Pro to analyze a new device →"
+  },
+  "catalogue": {
+    "button": "Browse devices",
+    "aria": "Browse available devices",
+    "title": "Available devices",
+    "search_placeholder": "Search a device, brand, board number…",
+    "filter_aria": "Filter by device type",
+    "filter_all": "All",
+    "empty": "No device matches.",
+    "draft": "draft",
+    "graph": "graph",
+    "fiche_back": "All devices",
+    "fiche_known": "What we know",
+    "fiche_registry": "Registry",
+    "fiche_graph": "Knowledge graph",
+    "fiche_rules": "Diagnostic rules",
+    "fiche_dictionary": "Glossary",
+    "fiche_boardview": "Boardview",
+    "fiche_schematic": "Schematic",
+    "fiche_symptom_placeholder": "Describe the problem (e.g. won't power on, no charge)",
+    "fiche_launch": "Start diagnostic",
+    "fiche_draft_locked": "This device is still being built — diagnostic unavailable yet.",
+    "present": "yes",
+    "absent": "no",
+    "button_short": "Browse",
+    "crumb_types": "Types"
   }
 }

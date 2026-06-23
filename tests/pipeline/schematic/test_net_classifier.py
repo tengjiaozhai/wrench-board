@@ -221,15 +221,15 @@ async def test_classify_nets_llm_stamps_model_and_merges_with_regex_fallback():
         new=AsyncMock(return_value=fake),
     ) as mocked:
         result = await classify_nets_llm(
-            _mnt_graph(), client=None, model="claude-opus-4-7",  # type: ignore[arg-type]
+            _mnt_graph(), client=None, model="claude-opus-4-8",  # type: ignore[arg-type]
         )
-    assert result.model_used == "claude-opus-4-7"
+    assert result.model_used == "claude-opus-4-8"
     # 19-net fixture < 1 batch; one call should have fired.
     assert mocked.await_count == 1
     kw = mocked.await_args.kwargs
     assert kw["forced_tool_name"] == "submit_net_classification"
     assert kw["output_schema"] is NetClassification
-    assert kw["model"] == "claude-opus-4-7"
+    assert kw["model"] == "claude-opus-4-8"
     # Every input net is represented in the output — the ones the mock
     # didn't classify get filled in by the regex fallback.
     assert set(result.nets.keys()) == set(_mnt_graph().nets.keys())

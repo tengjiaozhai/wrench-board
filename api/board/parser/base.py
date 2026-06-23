@@ -28,7 +28,7 @@ class ObfuscatedFileError(InvalidBoardFile):
 class MissingFZKeyError(InvalidBoardFile):
     """Raised when a .fz file is uploaded without a decryption key configured.
 
-    ASUS .fz files are XOR-scrambled with a per-vendor 44×32-bit key
+    `.fz` files are XOR-scrambled with a per-vendor 44×32-bit key
     that ships separately from the file. Set `WRENCH_BOARD_FZ_KEY` in
     the environment (space-separated decimal or hex integers), or
     pass the key to `FZParser(key=...)` directly.
@@ -83,6 +83,8 @@ def register(parser_cls: type[BoardParser]) -> type[BoardParser]:
 
 _BRD2_SNIFF = b"BRDOUT:"
 _TEST_LINK_SNIFF = b"str_length:"
+# Substitution-encoded ASCII boardview `.brd` 4-byte magic.
+_SUBST_BRD_MAGIC = b"\x23\xe2\x63\x28"
 
 
 def _sniff_brd_variant(path: Path) -> BoardParser | None:
@@ -103,6 +105,22 @@ def _sniff_brd_variant(path: Path) -> BoardParser | None:
             head = fh.read(256)
     except OSError:
         return None
+    if head.startswith(_SUBST_BRD_MAGIC):
+        # Substitution-encoded ASCII boardview `.brd` — a fixed byte-substitution
+        # over a line-based grammar. Decoded + parsed by SubstEncodedBoardParser.
+        from api.board.parser.brd_subst import SubstEncodedBoardParser
+
+        return SubstEncodedBoardParser()
+    # Packed-binary `.brd` container — a small set of 4-byte prefixes (all
+    # `..1200` / `..1300`). Partially decoded (parts + nets; no pins) by
+    # PackedBinaryBoardParser. Checked before the ASCII markers below since the
+    # binary body can incidentally contain those byte sequences.
+    from api.board.parser.brd_packed import _PACKED_BRD_MAGICS
+
+    if head[:4] in _PACKED_BRD_MAGICS:
+        from api.board.parser.brd_packed import PackedBinaryBoardParser
+
+        return PackedBinaryBoardParser()
     if _BRD2_SNIFF in head:
         from api.board.parser.brd2 import BRD2Parser
 

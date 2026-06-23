@@ -1,10 +1,12 @@
 // Wrench Board mascot — clones <template id="tpl-mascot"> into a target,
 // applies the size + state classes, returns the mounted <svg>. Pair with
-// `web/styles/mascot.css` (idle breathing, blink, plus the four state
-// animations: is-thinking / is-working / is-success / is-error).
+// `web/styles/mascot.css` (idle breathing, blink, plus the per-state
+// animations) and `web/js/mascot_states.js` (the state registry).
+
+import { MASCOT_STATE_IDS } from "./mascot_states.js";
 
 const VALID_SIZES = new Set(["xs", "sm", "md", "lg"]);
-const VALID_STATES = new Set(["idle", "thinking", "working", "success", "error"]);
+const VALID_STATES = new Set(MASCOT_STATE_IDS);
 
 function getTemplate() {
   const tpl = document.getElementById("tpl-mascot");

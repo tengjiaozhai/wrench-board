@@ -128,6 +128,83 @@ def test_nostuff_is_sticky_across_pages():
     assert g.components["R117"].populated is False
 
 
+def test_pins_reconstructed_from_net_connects():
+    """Vision sometimes captures connectivity net-side only (`net.connects`)
+    and leaves `node.pins` empty — typical for a wall of decoupling caps drawn
+    in a row between a rail and GND. The merger must back-fill `node.pins` from
+    `net.connects` so downstream (compiler / simulator / hypothesize) can see
+    the connectivity. Mirrors the real msi-v311_11 FBVDDQ decoupling bank.
+    """
+    cap = PageNode(refdes="C94", type="capacitor", page=8, pins=[])
+    p = _page(
+        8,
+        nodes=[cap],
+        nets=[
+            PageNet(
+                local_id="n1", label="FBVDDQ", is_power=True,
+                connects=["C94.1"], page=8,
+            ),
+            PageNet(
+                local_id="n2", label="GND", is_power=True,
+                connects=["C94.2"], page=8,
+            ),
+        ],
+    )
+    g = merge_pages([p], device_slug="demo", source_pdf="demo.pdf")
+    c94 = g.components["C94"]
+    by_net = {pin.net_label: pin for pin in c94.pins}
+    assert set(by_net) == {"FBVDDQ", "GND"}
+    assert by_net["FBVDDQ"].number == "1"
+    assert by_net["GND"].number == "2"
+    # Connectivity-only reconstruction can't know the electrical role.
+    assert all(pin.role == "unknown" for pin in c94.pins)
+
+
+def test_net_connects_does_not_overwrite_explicit_pins():
+    """An explicit `node.pins` entry wins over the `net.connects` back-fill —
+    we never clobber a vision-emitted role/name with the role-less synthetic.
+    """
+    node = PageNode(
+        refdes="U1", type="ic", page=1,
+        pins=[PagePin(number="1", name="VDD", role="power_in", net_label="PP1V8")],
+    )
+    p = _page(
+        1,
+        nodes=[node],
+        nets=[
+            PageNet(local_id="n1", label="PP1V8", is_power=True,
+                    connects=["U1.1"], page=1),
+            PageNet(local_id="n2", label="GND", is_power=True,
+                    connects=["U1.2"], page=1),
+        ],
+    )
+    g = merge_pages([p], device_slug="demo", source_pdf="demo.pdf")
+    u1 = g.components["U1"]
+    pin1 = next(p for p in u1.pins if p.number == "1")
+    assert pin1.role == "power_in"  # untouched
+    assert pin1.name == "VDD"
+    # Pin 2 (connects-only) is still back-filled.
+    pin2 = next(p for p in u1.pins if p.number == "2")
+    assert pin2.net_label == "GND"
+    assert pin2.role == "unknown"
+
+
+def test_net_connects_backfill_ignores_unknown_refdes():
+    """A `connects` entry for a refdes with no node (cross-page stub, vision
+    typo) must not synthesise a phantom component."""
+    p = _page(
+        1,
+        nodes=[PageNode(refdes="C1", type="capacitor", page=1, pins=[])],
+        nets=[
+            PageNet(local_id="n1", label="VBUS", is_power=True,
+                    connects=["C1.1", "C999.1"], page=1),
+        ],
+    )
+    g = merge_pages([p], device_slug="demo", source_pdf="demo.pdf")
+    assert "C999" not in g.components
+    assert g.components["C1"].pins[0].net_label == "VBUS"
+
+
 def test_cross_page_ref_stitches_to_labelled_net():
     ref_page = _page(
         3,

@@ -1,6 +1,6 @@
 {
   "app": {
-    "title": "Wrench Board — Knowledge graph"
+    "title": "Wrench Board: Knowledge graph"
   },
   "topbar": {
     "brand": "wrench-board",
@@ -11,12 +11,13 @@
   },
   "session": {
     "tag": "SESSION",
-    "pill_aria": "Active session — click to open the dashboard",
+    "pill_aria": "Active session, click to open the dashboard",
     "pill_title": "Back to session dashboard",
     "leave": "Leave session"
   },
   "rail": {
     "home": "Repairs",
+    "diagnostic": "Diagnostic",
     "pcb": "PCB",
     "schematic": "Schematic",
     "memory": "Memory",

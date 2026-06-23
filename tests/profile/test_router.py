@@ -37,7 +37,7 @@ def test_put_identity_persists(client: TestClient):
     res = client.put(
         "/profile/identity",
         json={
-            "name": "Alexis",
+            "name": "Test Tech",
             "avatar": "AC",
             "years_experience": 5,
             "specialties": ["apple"],
@@ -45,9 +45,9 @@ def test_put_identity_persists(client: TestClient):
         },
     )
     assert res.status_code == 200
-    assert res.json()["profile"]["identity"]["name"] == "Alexis"
+    assert res.json()["profile"]["identity"]["name"] == "Test Tech"
     # Re-read independently
-    assert client.get("/profile").json()["profile"]["identity"]["name"] == "Alexis"
+    assert client.get("/profile").json()["profile"]["identity"]["name"] == "Test Tech"
 
 
 def test_put_tools_is_full_replace(client: TestClient):
@@ -77,6 +77,36 @@ def test_put_preferences_persists(client: TestClient):
     assert prefs["language"] == "en"
 
 
+def test_state_defaults_to_unseen(client: TestClient):
+    state = client.get("/profile").json()["profile"]["state"]
+    assert state == {"onboarding_seen": False, "first_diag_seen": False}
+
+
+def test_put_state_patches_one_flag_without_clobbering_the_other(client: TestClient):
+    # Flip first_diag_seen only…
+    res = client.put("/profile/state", json={"first_diag_seen": True})
+    assert res.status_code == 200
+    state = res.json()["profile"]["state"]
+    assert state == {"onboarding_seen": False, "first_diag_seen": True}
+    # …then onboarding_seen only — the earlier flag must survive (patch, not replace).
+    res = client.put("/profile/state", json={"onboarding_seen": True})
+    assert res.status_code == 200
+    assert res.json()["profile"]["state"] == {
+        "onboarding_seen": True,
+        "first_diag_seen": True,
+    }
+    # Independent re-read confirms persistence.
+    assert client.get("/profile").json()["profile"]["state"] == {
+        "onboarding_seen": True,
+        "first_diag_seen": True,
+    }
+
+
+def test_put_state_rejects_unknown_keys(client: TestClient):
+    res = client.put("/profile/state", json={"nope": True})
+    assert res.status_code == 422
+
+
 def test_put_identity_rejects_unknown_level_override(client: TestClient):
     res = client.put(
         "/profile/identity",
@@ -85,4 +115,23 @@ def test_put_identity_rejects_unknown_level_override(client: TestClient):
             "specialties": [], "level_override": "wizard",
         },
     )
+    assert res.status_code == 422
+
+
+def test_put_custom_tools_persists_and_sanitizes(client: TestClient):
+    res = client.put(
+        "/profile/custom-tools",
+        json={"custom_tools": ["  Hot tweezers  ", "Hot tweezers", "", "Glue gun"]},
+    )
+    assert res.status_code == 200
+    saved = res.json()["profile"]["custom_tools"]
+    assert saved == ["Hot tweezers", "Glue gun"]  # trimmed, deduped, blanks dropped
+    # GET round-trips it
+    assert client.get("/profile").json()["profile"]["custom_tools"] == [
+        "Hot tweezers", "Glue gun",
+    ]
+
+
+def test_put_custom_tools_rejects_unknown_keys(client: TestClient):
+    res = client.put("/profile/custom-tools", json={"nope": ["x"]})
     assert res.status_code == 422

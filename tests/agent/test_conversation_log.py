@@ -28,6 +28,23 @@ def reset_settings_cache(monkeypatch):
     monkeypatch.setattr(config_mod, "_settings", None)
 
 
+async def test_session_log_is_owner_scoped(tmp_path: Path, monkeypatch):
+    """Session logs are the agent's PRIVATE working memory: scoped to the session
+    owner (the cloud's X-Owner-Ref / tenant). One tenant never reads another's
+    narrative; the standalone (ownerless) view is isolated from tenant logs."""
+    monkeypatch.setenv("MA_MEMORY_STORE_ENABLED", "false")
+    base = dict(
+        client=None, device_slug="demo-pi", conv_id="c1",
+        symptom="3V3 rail dead", outcome="paused", memory_root=tmp_path,
+    )
+    await record_session_log(repair_id="R1", owner_ref="tenant-a", **base)
+
+    a = list_session_logs(device_slug="demo-pi", memory_root=tmp_path, owner_ref="tenant-a")
+    assert len(a) == 1 and a[0]["repair_id"] == "R1"
+    assert list_session_logs(device_slug="demo-pi", memory_root=tmp_path, owner_ref="tenant-b") == []
+    assert list_session_logs(device_slug="demo-pi", memory_root=tmp_path) == []  # standalone view isolated
+
+
 async def test_record_writes_markdown_file(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MA_MEMORY_STORE_ENABLED", "false")
     status = await record_session_log(

@@ -1,4 +1,4 @@
-"""HONHAN .bdv parser — decode round-trip + happy-path parse."""
+"""Encoded `.bdv` parser — decode round-trip + happy-path parse."""
 
 from __future__ import annotations
 

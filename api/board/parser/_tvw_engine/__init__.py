@@ -1,4 +1,4 @@
-"""Tebo IctView 3.0/4.0 production-binary `.tvw` parser — pure Python.
+"""Production-binary `.tvw` parser (3.0/4.0) — pure Python.
 
 Modules:
 

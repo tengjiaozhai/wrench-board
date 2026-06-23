@@ -63,8 +63,8 @@ def _rank_key(match: StockSearchMatch) -> tuple:
     return (crit_order.get(match.criticality_in_donor, 9),)
 
 
-def stock_search(query: StockSearchQuery) -> StockSearchResult:
-    inv = load_inventory()
+def stock_search(query: StockSearchQuery, owner_ref: str | None = None) -> StockSearchResult:
+    inv = load_inventory(owner_ref)
     if not inv.donors:
         return StockSearchResult(empty_reason="no donors in stock")
 

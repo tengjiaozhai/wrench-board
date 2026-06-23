@@ -32,11 +32,11 @@ def test_load_absent_file_returns_default(tmp_memory_root: Path):
 
 def test_save_then_load_roundtrips(tmp_memory_root: Path):
     p = TechnicianProfile.default()
-    p.identity.name = "Alexis"
+    p.identity.name = "Test Tech"
     p.tools.soldering_iron = True
     save_profile(p)
     restored = load_profile()
-    assert restored.identity.name == "Alexis"
+    assert restored.identity.name == "Test Tech"
     assert restored.tools.soldering_iron is True
     assert (tmp_memory_root / "_profile" / "technician.json").exists()
 
@@ -125,3 +125,31 @@ def test_load_profile_unexpected_error_propagates(
     monkeypatch.setattr(TechnicianProfile, "model_validate", boom)
     with pytest.raises(AttributeError, match="simulated bug"):
         load_profile()
+
+
+def test_owner_ref_partitions_profiles(tmp_memory_root: Path):
+    """Each owner_ref gets its own technician.json under _profile/{owner_ref}/;
+    None (self-host) keeps using the shared _profile root. Mirrors the stock
+    owner-scoping pattern so the cloud front-door (X-Owner-Ref) isolates tenants."""
+    a = TechnicianProfile.default()
+    a.identity.name = "Alice"
+    b = TechnicianProfile.default()
+    b.identity.name = "Bob"
+    save_profile(a, owner_ref="tenant-a")
+    save_profile(b, owner_ref="tenant-b")
+
+    assert load_profile("tenant-a").identity.name == "Alice"
+    assert load_profile("tenant-b").identity.name == "Bob"
+    # Self-host root is isolated from both tenants.
+    assert load_profile().identity.name == ""
+
+    assert (tmp_memory_root / "_profile" / "tenant-a" / "technician.json").exists()
+    assert (tmp_memory_root / "_profile" / "tenant-b" / "technician.json").exists()
+    assert not (tmp_memory_root / "_profile" / "technician.json").exists()
+
+
+def test_invalid_owner_ref_is_rejected(tmp_memory_root: Path):
+    """owner_ref must be a safe path segment — a traversal attempt raises rather
+    than escaping the _profile directory."""
+    with pytest.raises(ValueError):
+        save_profile(TechnicianProfile.default(), owner_ref="../escape")

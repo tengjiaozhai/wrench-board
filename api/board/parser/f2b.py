@@ -1,8 +1,7 @@
-"""Unisoft ProntoPLACE `.f2b` parser.
+"""`.f2b` board-save parser.
 
-**Scope honesty.** Unisoft describes `.f2b` as "complete board save"
-— a proprietary database format used by ProntoPLACE and the Place5
-converter. No public format spec exists. Native `.f2b` is almost
+**Scope honesty.** The format's vendor describes `.f2b` as a "complete
+board save" — a vendor database format. No public format spec exists. Native `.f2b` is almost
 certainly a binary container. Some `.f2b` redistributions in the
 repair community appear to carry a Test_Link-shape ASCII payload
 with `Outline:` / `Components:` markers (plus an `Annotations:`
@@ -49,7 +48,7 @@ class F2BParser(BoardParser):
     def parse(self, raw: bytes, *, file_hash: str, board_id: str) -> Board:
         if looks_like_binary(raw):
             raise ObfuscatedFileError(
-                "f2b: this file looks like a binary Unisoft ProntoPLACE "
+                "f2b: this file looks like a binary vendor board-save "
                 "container (non-printable byte ratio > 30%). Current parser "
                 "supports the Test_Link-shape ASCII variant only."
             )

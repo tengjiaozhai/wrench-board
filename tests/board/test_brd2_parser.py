@@ -119,6 +119,73 @@ def test_malformed_brdout_header(tmp_path: Path):
         BRD2Parser().parse_file(f)
 
 
+def test_net_line_with_empty_name_is_accepted(tmp_path: Path):
+    """A NET line carrying only an id and no name is an unnamed net, not a parse error.
+
+    Real-world exporters (e.g. several vendors' `.brd` exports like
+    LA-E921P, BK3, X81K) declare trailing unnamed nets as `<id> ` — the id
+    followed by whitespace and nothing else. These are unconnected/auto-named
+    nets; the slot must be kept (net ids in PINS/NAILS are 1-based positional)
+    with an empty net name rather than raising MalformedHeaderError(NETS).
+    """
+    f = tmp_path / "empty_net.brd"
+    f.write_text(
+        "0\n"
+        "BRDOUT: 0 100 100\n"
+        "\n"
+        "NETS: 3\n"
+        "1 GND\n"
+        "2 \n"  # unnamed net — id only, trailing space
+        "3 +3V3\n"
+        "\n"
+        "PARTS: 1\n"
+        "R1 0 0 10 10 0 1\n"
+        "\n"
+        "PINS: 2\n"
+        "5 5 1 1\n"  # references net 1 -> GND
+        "6 6 2 1\n"  # references net 2 -> unnamed
+        "\n"
+        "NAILS: 0\n"
+    )
+    board = BRD2Parser().parse_file(f)
+    # The unnamed net keeps its positional slot, so net 3 still resolves to +3V3.
+    assert board.net_by_name("GND") is not None
+    assert board.net_by_name("+3V3") is not None
+    # Pin on net 2 resolves to the empty-string net name (slot preserved).
+    p2 = next(p for p in board.pins if p.part_refdes == "R1" and p.index == 2)
+    assert p2.net == ""
+
+
+def test_missing_nails_block_is_zero_nails(tmp_path: Path):
+    """A BRD2 file that omits the NAILS block entirely must parse with zero nails.
+
+    Real-world exporters (e.g. some motherboard `.brd` exports like the
+    some boards) emit no NAILS block at all when the board declares no
+    test points — they simply stop after the PINS block. The absent marker is
+    semantically identical to `NAILS: 0` and must not raise MalformedHeaderError.
+    """
+    f = tmp_path / "no_nails.brd"
+    f.write_text(
+        "0\n"
+        "BRDOUT: 4 100 100\n"
+        "0 0\n100 0\n100 100\n0 100\n"
+        "\n"
+        "NETS: 1\n"
+        "1 +3V3\n"
+        "\n"
+        "PARTS: 1\n"
+        "R1 0 0 10 10 0 1\n"
+        "\n"
+        "PINS: 1\n"
+        "5 5 1 1\n"
+        # NO NAILS block at all — stops here.
+    )
+    board = BRD2Parser().parse_file(f)
+    assert board.nails == []
+    assert len(board.parts) == 1
+    assert len(board.pins) == 1
+
+
 def test_pin_without_valid_net_id(tmp_path: Path):
     """net_id referencing a NET that doesn't exist (past end of NETS block) must fail."""
     f = tmp_path / "bad_net.brd"

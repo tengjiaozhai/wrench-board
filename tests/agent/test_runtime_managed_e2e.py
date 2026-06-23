@@ -57,17 +57,56 @@ class _FakeStream:
         raise StopAsyncIteration
 
 
-def _make_client(stream: _FakeStream) -> MagicMock:
-    """Build a fake AsyncAnthropic exposing only what the loop touches."""
+class _FakeEventsList:
+    """Async-iterable stand-in for `events.list(session_id)`.
+
+    The lossless-reconnect catch-up calls `events.list` and iterates the
+    result. By default it yields nothing (no gap to fill); pass `events`
+    to simulate server-side history present during a reconnect catch-up.
+    `stream` may itself be passed a list so each (re)connect of the live
+    tail yields a controlled batch.
+    """
+
+    def __init__(self, events=()):
+        self._events = list(events)
+
+    def __aiter__(self):
+        async def _gen():
+            for ev in self._events:
+                yield ev
+        return _gen()
+
+
+def _make_client(
+    stream: _FakeStream, *, list_factory=None,
+) -> MagicMock:
+    """Build a fake AsyncAnthropic exposing only what the loop touches.
+
+    `stream` may be a single _FakeStream (returned on every connect) or a
+    list of streams (one per consecutive connect, last repeated). `list_
+    factory` is a zero-arg callable returning a fresh _FakeEventsList for
+    each catch-up call; defaults to an empty history.
+    """
     client = MagicMock()
     client.beta = MagicMock()
     client.beta.sessions = MagicMock()
     client.beta.sessions.events = MagicMock()
-    # `.stream(session_id)` is awaited then used as `async with` — return the
-    # FakeStream wrapped in an awaitable.
-    client.beta.sessions.events.stream = AsyncMock(return_value=stream)
+
+    if isinstance(stream, list):
+        streams = list(stream)
+
+        async def _stream(_sid):
+            return streams.pop(0) if len(streams) > 1 else streams[0]
+
+        client.beta.sessions.events.stream = _stream
+    else:
+        client.beta.sessions.events.stream = AsyncMock(return_value=stream)
+
     client.beta.sessions.events.send = AsyncMock()
-    client.beta.sessions.events.list = MagicMock()
+    if list_factory is None:
+        client.beta.sessions.events.list = lambda _sid: _FakeEventsList()
+    else:
+        client.beta.sessions.events.list = lambda _sid: list_factory()
     return client
 
 
@@ -79,10 +118,13 @@ def _make_ws() -> MagicMock:
     return ws
 
 
-def _stale_settings(monkeypatch, rm, *, timeout: float = 600.0) -> None:
+def _stale_settings(
+    monkeypatch, rm, *, timeout: float = 600.0, max_reconnects: int = 4,
+) -> None:
     """Patch get_settings so the watchdog window is controllable in tests."""
     class _Settings:
         ma_stream_event_timeout_seconds = timeout
+        ma_stream_max_reconnects = max_reconnects
         ma_session_drain_timeout_seconds = 5.0
         ma_forwarder_unwind_timeout_seconds = 2.0
         ma_subagent_consultation_timeout_seconds = 120.0
@@ -95,22 +137,29 @@ def _stale_settings(monkeypatch, rm, *, timeout: float = 600.0) -> None:
 
 
 @pytest.mark.asyncio
-async def test_stream_emits_stream_error_on_transport_failure(
+async def test_persistent_transport_failure_exhausts_reconnects(
     monkeypatch, tmp_path,
 ):
-    """Non-timeout exceptions in the stream iterator must surface on the WS.
+    """A stream that keeps failing must reconnect up to the budget, then
+    surface `stream_error: reconnect_exhausted` and stop.
 
-    Prior to the fix, an SSL reset or ConnectionError raised inside
-    `__anext__()` propagated past the `except TimeoutError` and the task
-    ended without telling the client. The WS stayed open, the UI hung.
-    Now the loop catches `Exception`, sends `stream_error`, and breaks.
+    Prior contract emitted `stream_error` immediately and gave up on the
+    first transport failure. The lossless-reconnect contract instead treats
+    a transport drop as recoverable (the session may still be live with a
+    pending action), re-lists history + re-tails up to `ma_stream_max_
+    reconnects` consecutive times. Only when that budget is spent does it
+    give up — and it tells the WS *why* (reconnect_exhausted), not the raw
+    transport error.
     """
     from api.agent import runtime_managed as rm
     from api.session.state import SessionState
 
-    _stale_settings(monkeypatch, rm)
+    # Small budget so the test stays fast; empty catch-up history.
+    _stale_settings(monkeypatch, rm, max_reconnects=2)
 
     boom = ConnectionError("simulated TLS reset")
+    # Every (re)connect returns a stream that immediately raises, so no event
+    # is ever delivered and the reconnect budget is never reset.
     stream = _FakeStream(events=[], raise_after=boom)
     client = _make_client(stream)
     ws = _make_ws()
@@ -134,24 +183,31 @@ async def test_stream_emits_stream_error_on_transport_failure(
     payloads = [call.args[0] for call in ws.send_json.await_args_list]
     error_frames = [p for p in payloads if p.get("type") == "stream_error"]
     assert error_frames, (
-        f"expected a stream_error frame on transport failure, got {payloads!r}"
+        f"expected a stream_error frame after reconnects exhaust, got "
+        f"{payloads!r}"
     )
     err = error_frames[0]
-    assert err["error"] == "ConnectionError"
-    assert "simulated TLS reset" in err["message"]
+    assert err["error"] == "reconnect_exhausted"
     assert err["session_id"] == "sesn_test"
 
 
 @pytest.mark.asyncio
-async def test_stream_emits_stream_timeout_on_inactive_iterator(
+async def test_persistent_inactive_stream_exhausts_reconnects(
     monkeypatch, tmp_path,
 ):
-    """A stalled SSE iterator beyond the watchdog window emits stream_timeout."""
+    """A perpetually-stalled SSE iterator must trip the watchdog, reconnect
+    up to the budget, then surface `stream_error: reconnect_exhausted`.
+
+    The watchdog timeout is now a recoverable-drop trigger (transparent
+    reconnect) rather than an immediate `stream_timeout` give-up — a brief
+    Anthropic SSE stall self-heals without the technician seeing anything.
+    Only a persistent stall (budget exhausted) surfaces an error.
+    """
     from api.agent import runtime_managed as rm
     from api.session.state import SessionState
 
-    # 0.05 s window — short enough for a fast unit test.
-    _stale_settings(monkeypatch, rm, timeout=0.05)
+    # 0.02 s watchdog + tiny reconnect budget → fast.
+    _stale_settings(monkeypatch, rm, timeout=0.02, max_reconnects=2)
 
     class _NeverEmits:
         async def __aenter__(self): return self
@@ -174,11 +230,176 @@ async def test_stream_emits_stream_timeout_on_inactive_iterator(
     )
 
     payloads = [call.args[0] for call in ws.send_json.await_args_list]
-    timeout_frames = [p for p in payloads if p.get("type") == "stream_timeout"]
-    assert timeout_frames, (
-        f"expected a stream_timeout frame on inactive iterator, got {payloads!r}"
+    error_frames = [p for p in payloads if p.get("type") == "stream_error"]
+    assert error_frames, (
+        f"expected stream_error after watchdog reconnects exhaust, got "
+        f"{payloads!r}"
     )
-    assert timeout_frames[0]["timeout_seconds"] == pytest.approx(0.05)
+    assert error_frames[0]["error"] == "reconnect_exhausted"
+
+
+@pytest.mark.asyncio
+async def test_reconnect_recovers_pending_tool_from_catchup_history(
+    monkeypatch, tmp_path,
+):
+    """The deadlock fix: a `requires_action` whose tool_use only exists in
+    the catch-up history (emitted during a stream gap) must still be
+    dispatched after reconnect — not left hanging forever.
+
+    First connect: the live stream drops mid-turn (raises) BEFORE delivering
+    the tool_use or the requires_action. Those two events are present in the
+    server-side history. On reconnect, the catch-up `events.list` yields
+    them; the runtime caches the tool_use and dispatches the requires_action,
+    sending the `user.custom_tool_result` that unblocks the session.
+    """
+    from api.agent import runtime_managed as rm
+    from api.session.state import SessionState
+
+    _stale_settings(monkeypatch, rm, max_reconnects=2)
+
+    dispatch_calls: list[tuple[str, dict]] = []
+
+    async def fake_dispatch(name, payload, *_a, **_kw):
+        dispatch_calls.append((name, payload))
+        return {"ok": True, "echo": payload}
+
+    monkeypatch.setattr(rm, "_dispatch_tool", fake_dispatch)
+
+    tool_use = SimpleNamespace(
+        type="agent.custom_tool_use",
+        id="sevt_gap_001",
+        name="bv_highlight_component",
+        input={"refdes": "U7"},
+    )
+    requires_action = SimpleNamespace(
+        type="session.status_idle",
+        stop_reason=SimpleNamespace(
+            type="requires_action", event_ids=["sevt_gap_001"],
+        ),
+    )
+    terminated = SimpleNamespace(type="session.status_terminated")
+
+    # Connect #1: drops immediately (TLS reset) — the tool_use + requires_action
+    # were emitted during the gap and never reached the live stream.
+    first_stream = _FakeStream(
+        events=[], raise_after=ConnectionError("drop mid-turn"),
+    )
+    # Connect #2: live tail is quiet; the work happens via the catch-up pass.
+    # A terminated event on the second live tail ends the loop cleanly.
+    second_stream = _FakeStream(events=[terminated])
+
+    # The catch-up history (served on the reconnect) carries the gap events.
+    def _list_factory():
+        return _FakeEventsList([tool_use, requires_action])
+
+    client = _make_client(
+        [first_stream, second_stream], list_factory=_list_factory,
+    )
+    ws = _make_ws()
+    session_state = SessionState.from_device("nonexistent-slug")
+
+    await rm._forward_session_to_ws(
+        ws=ws, client=client, session_id="sesn_test",
+        device_slug="demo", memory_root=tmp_path,
+        events_by_id={}, session_state=session_state,
+        agent_model="claude-haiku-4-5", tier="fast",
+        environment_id="env_test", repair_id=None, conv_id=None,
+    )
+
+    # The gap tool was dispatched exactly once after reconnect.
+    assert dispatch_calls == [("bv_highlight_component", {"refdes": "U7"})], (
+        f"pending tool from catch-up history must be dispatched once, got "
+        f"{dispatch_calls!r}"
+    )
+    # Exactly one user.custom_tool_result reached MA — unblocking the session.
+    sent = client.beta.sessions.events.send.await_args_list
+    tool_results = [
+        ev for call in sent
+        for ev in call.kwargs.get("events", [])
+        if ev.get("type") == "user.custom_tool_result"
+    ]
+    assert len(tool_results) == 1
+    assert tool_results[0]["custom_tool_use_id"] == "sevt_gap_001"
+
+
+@pytest.mark.asyncio
+async def test_reconnect_catchup_does_not_redispatch_answered_tool(
+    monkeypatch, tmp_path,
+):
+    """A tool already answered before a drop must NOT be re-dispatched when
+    the same tool_use + requires_action reappear in the reconnect catch-up.
+
+    `responded_tool_ids` persists across reconnects, so the catch-up replay
+    of an already-answered requires_action is a no-op — no duplicate
+    `user.custom_tool_result` (which MA would reject with HTTP 400).
+    """
+    from api.agent import runtime_managed as rm
+    from api.session.state import SessionState
+
+    _stale_settings(monkeypatch, rm, max_reconnects=2)
+
+    dispatch_calls: list[tuple[str, dict]] = []
+
+    async def fake_dispatch(name, payload, *_a, **_kw):
+        dispatch_calls.append((name, payload))
+        return {"ok": True}
+
+    monkeypatch.setattr(rm, "_dispatch_tool", fake_dispatch)
+
+    tool_use = SimpleNamespace(
+        type="agent.custom_tool_use",
+        id="sevt_dup_001",
+        name="bv_focus_component",
+        input={"refdes": "C12"},
+    )
+    requires_action = SimpleNamespace(
+        type="session.status_idle",
+        stop_reason=SimpleNamespace(
+            type="requires_action", event_ids=["sevt_dup_001"],
+        ),
+    )
+    terminated = SimpleNamespace(type="session.status_terminated")
+
+    # Connect #1: delivers tool_use + requires_action live (we answer it),
+    # THEN drops before any terminal event.
+    first_stream = _FakeStream(
+        events=[tool_use, requires_action],
+        raise_after=ConnectionError("drop after answering"),
+    )
+    # Connect #2: quiet tail that terminates cleanly.
+    second_stream = _FakeStream(events=[terminated])
+
+    # Catch-up history re-serves the SAME already-answered events.
+    def _list_factory():
+        return _FakeEventsList([tool_use, requires_action])
+
+    client = _make_client(
+        [first_stream, second_stream], list_factory=_list_factory,
+    )
+    ws = _make_ws()
+    session_state = SessionState.from_device("nonexistent-slug")
+
+    await rm._forward_session_to_ws(
+        ws=ws, client=client, session_id="sesn_test",
+        device_slug="demo", memory_root=tmp_path,
+        events_by_id={}, session_state=session_state,
+        agent_model="claude-haiku-4-5", tier="fast",
+        environment_id="env_test", repair_id=None, conv_id=None,
+    )
+
+    # Dispatched exactly once (live), not again on catch-up.
+    assert len(dispatch_calls) == 1, (
+        f"answered tool must not re-dispatch on catch-up, got {dispatch_calls!r}"
+    )
+    sent = client.beta.sessions.events.send.await_args_list
+    tool_results = [
+        ev for call in sent
+        for ev in call.kwargs.get("events", [])
+        if ev.get("type") == "user.custom_tool_result"
+    ]
+    assert len(tool_results) == 1, (
+        f"exactly one tool_result across the drop+reconnect, got {tool_results!r}"
+    )
 
 
 @pytest.mark.asyncio

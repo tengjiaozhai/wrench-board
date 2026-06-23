@@ -304,7 +304,7 @@ async def extract_page_agentic(
             stats["submitted"] = True
             stats["elapsed_s"] = time.monotonic() - t0
             stats["raw_submission_keys"] = sorted(list(submission.keys())) if isinstance(submission, dict) else None
-            # Defensive unwrap: Opus 4.7 occasionally wraps the tool input under
+            # Defensive unwrap: Opus 4.7/4.8 occasionally wraps the tool input under
             # a single `$PARAMETER_NAME` key (schema-template literal that the
             # model interpreted as a parameter name). Observed on dense pages
             # with long `description` fields. Unwrap once if the shape matches.
@@ -402,7 +402,7 @@ async def main() -> None:
         help="Comma-separated 1-based page numbers (e.g. 6 or 6,17,31)",
     )
     parser.add_argument("--out-dir", default="/tmp/bench_agentic/")
-    parser.add_argument("--model", default=os.environ.get("ANTHROPIC_MODEL_MAIN", "claude-opus-4-7"))
+    parser.add_argument("--model", default=os.environ.get("ANTHROPIC_MODEL_MAIN", "claude-opus-4-8"))
     parser.add_argument("--dpi", type=int, default=200)
     parser.add_argument("--max-iterations", type=int, default=12)
     args = parser.parse_args()

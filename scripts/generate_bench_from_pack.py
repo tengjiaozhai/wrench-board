@@ -37,14 +37,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Anthropic model id. Defaults to settings.anthropic_model_main "
-            "(Opus, from .env) or 'claude-opus-4-7' if unset. "
+            "(Opus, from .env) or 'claude-opus-4-8' if unset. "
             "Pass 'claude-sonnet-4-6' here for the cheaper Sonnet baseline."
         ),
     )
     p.add_argument(
         "--escalate-rejects",
         action="store_true",
-        help="Re-propose rejected scenarios via Opus (claude-opus-4-7).",
+        help="Re-propose rejected scenarios via Opus (claude-opus-4-8).",
     )
     p.add_argument(
         "--output-dir",
@@ -72,7 +72,7 @@ async def main_async(argv: list[str]) -> int:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     settings = get_settings()
-    model = args.model or (getattr(settings, "anthropic_model_main", None) or "claude-opus-4-7")
+    model = args.model or (getattr(settings, "anthropic_model_main", None) or "claude-opus-4-8")
     client = AsyncAnthropic(
         api_key=settings.anthropic_api_key,
         max_retries=5,

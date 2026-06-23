@@ -1,4 +1,4 @@
-"""Generic BoardViewer .cad parser — umbrella over Test_Link + BRD2."""
+"""Generic `.cad` parser — umbrella over Test_Link + BRD2."""
 
 from __future__ import annotations
 

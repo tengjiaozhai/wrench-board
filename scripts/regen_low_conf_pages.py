@@ -99,7 +99,7 @@ async def main() -> None:
                    help="Defaults to memory/{slug}/schematic_pages_regen/")
     p.add_argument("--commit", action="store_true",
                    help="Overwrite the canonical baseline page with the winner")
-    p.add_argument("--model", default=os.environ.get("ANTHROPIC_MODEL_MAIN", "claude-opus-4-7"))
+    p.add_argument("--model", default=os.environ.get("ANTHROPIC_MODEL_MAIN", "claude-opus-4-8"))
     args = p.parse_args()
 
     pdf_path = Path(args.pdf).expanduser().resolve()

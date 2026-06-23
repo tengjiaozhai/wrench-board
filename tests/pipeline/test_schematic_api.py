@@ -278,7 +278,7 @@ def _write_analyzed_payload(pack_dir):
         "sequencer_refdes": "LPC",
         "global_confidence": 0.9,
         "ambiguities": [],
-        "model_used": "claude-opus-4-7",
+        "model_used": "claude-opus-4-8",
     }
     (pack_dir / "boot_sequence_analyzed.json").write_text(json.dumps(payload, indent=2))
 
@@ -380,7 +380,7 @@ def _write_nets_classified(pack_dir):
         },
         "domain_summary": {"power_rail": 1},
         "ambiguities": [],
-        "model_used": "claude-opus-4-7",
+        "model_used": "claude-opus-4-8",
     }
     (pack_dir / "nets_classified.json").write_text(json.dumps(payload, indent=2))
 
@@ -396,7 +396,7 @@ def test_get_schematic_surfaces_net_classification_when_present(memory_root, cli
     res = client.get(f"/pipeline/packs/{slug}/schematic")
     assert res.status_code == 200
     body = res.json()
-    assert body["net_domains_source"] == "claude-opus-4-7"
+    assert body["net_domains_source"] == "claude-opus-4-8"
     assert "+5V" in body["net_classification"]["nets"]
 
 

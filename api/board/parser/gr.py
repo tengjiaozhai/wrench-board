@@ -41,6 +41,17 @@ class GRParser(BoardParser):
                 "the Test_Link-shape ASCII variant only."
             )
         text = raw.decode("utf-8", errors="replace")
+        # Some `.gr` files in the wild are actually BRD2-format payloads (the
+        # UPPERCASE `BRDOUT:` block grammar), sometimes preceded by a one-line
+        # vendor title. Real example: `vendor-board boardview.gr`.
+        # The Test_Link-shape grammar below can't read those, so delegate to
+        # the BRD2 parser when the BRD2 outline marker is present — but keep
+        # `source_format="gr"` so the on-disk extension stays the source of truth.
+        if "BRDOUT:" in text:
+            from api.board.parser.brd2 import BRD2Parser
+
+            board = BRD2Parser().parse(raw, file_hash=file_hash, board_id=board_id)
+            return board.model_copy(update={"source_format": "gr"})
         return parse_test_link_shape(
             text,
             markers=_GR_MARKERS,

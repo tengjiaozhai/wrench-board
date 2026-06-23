@@ -44,13 +44,15 @@ def _seed_pack(tmp_path: Path, slug: str) -> Path:
     seed_registry = Registry(
         device_label="Test Device",
         taxonomy=DeviceTaxonomy(brand="TestCo", model="Thing"),
-        components=[RegistryComponent(canonical_name="U1", kind="ic")],
-        signals=[RegistrySignal(canonical_name="VCC", kind="power_rail")],
+        # T8 : kind en majuscules, canonical_name uppercase
+        components=[RegistryComponent(canonical_name="U1", kind="IC")],
+        signals=[RegistrySignal(canonical_name="VCC", kind="POWER_RAIL")],
     )
     (pack / "registry.json").write_text(seed_registry.model_dump_json(indent=2), encoding="utf-8")
     seed_rules = RulesSet(rules=[
         Rule(
-            id="rule-existing-001",
+            # T8 : Rule.id suit le pattern R-[A-Z0-9_-]{1,48}
+            id="R-EXISTING-001",
             symptoms=["prior symptom"],
             likely_causes=[Cause(refdes="U1", probability=0.5, mechanism="short")],
             confidence=0.6,
@@ -69,25 +71,27 @@ async def test_expand_pack_merges_new_components_and_rules(tmp_path, monkeypatch
     expanded_registry = Registry(
         device_label="Test Device",
         taxonomy=DeviceTaxonomy(brand="TestCo", model="Thing"),
+        # T8 : kind en majuscules, canonical_name uppercase
         components=[
-            RegistryComponent(canonical_name="U1", kind="ic"),
-            RegistryComponent(canonical_name="U3101", kind="ic"),
+            RegistryComponent(canonical_name="U1", kind="IC"),
+            RegistryComponent(canonical_name="U3101", kind="IC"),
         ],
         signals=[
-            RegistrySignal(canonical_name="VCC", kind="power_rail"),
-            RegistrySignal(canonical_name="VCC_AUDIO", kind="power_rail"),
+            RegistrySignal(canonical_name="VCC", kind="POWER_RAIL"),
+            RegistrySignal(canonical_name="VCC_AUDIO", kind="POWER_RAIL"),
         ],
     )
 
     expanded_rules = RulesSet(rules=[
         Rule(
-            id="rule-existing-001",
+            # T8 : Rule.id suit le pattern R-[A-Z0-9_-]{1,48}
+            id="R-EXISTING-001",
             symptoms=["prior symptom"],
             likely_causes=[Cause(refdes="U1", probability=0.5, mechanism="short")],
             confidence=0.6,
         ),
         Rule(
-            id="rule-audio-002",
+            id="R-AUDIO-002",
             symptoms=["no sound"],
             likely_causes=[
                 Cause(refdes="U3101", probability=0.7, mechanism="cold joint")
@@ -118,18 +122,27 @@ async def test_expand_pack_merges_new_components_and_rules(tmp_path, monkeypatch
     assert summary["new_signals_count"] == 1     # VCC_AUDIO
     assert summary["total_rules_after"] == 2
     assert summary["dump_bytes_added"] > 0
+    assert summary["expansion_id"].startswith("E-")  # T8 Option C
 
-    # Disk reflects the expansion.
-    updated_registry = Registry.model_validate_json((pack / "registry.json").read_text())
-    assert {c.canonical_name for c in updated_registry.components} == {"U1", "U3101"}
-    # Taxonomy was preserved.
-    assert updated_registry.taxonomy.brand == "TestCo"
+    # T8 Option C : le DELTA part dans promoted/, PAS à la racine (migrée en
+    # baseline/). Seuls les facts nouveaux/modifiés vs baseline sont écrits.
+    assert not (pack / "registry.json").exists()
+    assert not (pack / "rules.json").exists()
 
-    updated_rules = RulesSet.model_validate_json((pack / "rules.json").read_text())
-    assert {r.id for r in updated_rules.rules} == {"rule-existing-001", "rule-audio-002"}
+    promo_reg = json.loads((pack / "promoted" / "registry.json").read_text())
+    assert {it["canonical_name"] for it in promo_reg["items"]} == {"U3101", "VCC_AUDIO"}
 
-    # raw_research_dump.md carries the cumulative footprint.
-    dump = (pack / "raw_research_dump.md").read_text()
+    promo_rules = json.loads((pack / "promoted" / "rules.json").read_text())
+    assert {it["id"] for it in promo_rules["items"]} == {"R-AUDIO-002"}
+
+    # baseline conserve l'état d'origine (U1 / VCC).
+    base_reg = json.loads((pack / "baseline" / "registry.json").read_text())
+    assert {it["canonical_name"] for it in base_reg["items"]} == {"U1", "VCC"}
+    # Taxonomy préservée dans baseline/_meta.
+    assert base_reg["_meta"]["taxonomy"]["brand"] == "TestCo"
+
+    # Le dump cumulatif (audit/, privé moteur) porte l'empreinte.
+    dump = (pack / "audit" / "raw_research_dump.md").read_text()
     assert "no sound" in dump
     assert "Expansion" in dump  # separator header added
 
@@ -168,12 +181,14 @@ async def test_expand_pack_preserves_taxonomy_when_regenerate_returns_blank(
     blank_tax_registry = Registry(
         device_label="Test Device",
         taxonomy=DeviceTaxonomy(),  # all null
-        components=[RegistryComponent(canonical_name="U1", kind="ic")],
-        signals=[RegistrySignal(canonical_name="VCC", kind="power_rail")],
+        # T8 : kind en majuscules
+        components=[RegistryComponent(canonical_name="U1", kind="IC")],
+        signals=[RegistrySignal(canonical_name="VCC", kind="POWER_RAIL")],
     )
     same_rules = RulesSet(rules=[
         Rule(
-            id="rule-existing-001",
+            # T8 : Rule.id suit le pattern R-[A-Z0-9_-]{1,48}
+            id="R-EXISTING-001",
             symptoms=["prior symptom"],
             likely_causes=[Cause(refdes="U1", probability=0.5, mechanism="short")],
             confidence=0.6,
@@ -195,6 +210,11 @@ async def test_expand_pack_preserves_taxonomy_when_regenerate_returns_blank(
             memory_root=tmp_path,
         )
 
-    saved = json.loads((pack / "registry.json").read_text())
-    assert saved["taxonomy"]["brand"] == "TestCo"
-    assert saved["taxonomy"]["model"] == "Thing"
+    # T8 Option C : la taxonomy registry-level vit dans baseline/registry.json _meta
+    # (la migration y range les clés non-liste) et n'est JAMAIS réécrite par
+    # l'expansion → préservée par construction. La re-run blank-taxonomy ne peut
+    # plus la clobber. _prior_taxonomy() la réinjecte aussi dans le Registry vu
+    # par le Clinicien.
+    base_reg = json.loads((pack / "baseline" / "registry.json").read_text())
+    assert base_reg["_meta"]["taxonomy"]["brand"] == "TestCo"
+    assert base_reg["_meta"]["taxonomy"]["model"] == "Thing"

@@ -343,7 +343,7 @@ def _update_per_page_floor(per_page: list[dict]) -> None:
 async def _run(devices: dict[str, list[int]], verbose: bool) -> dict[str, Any]:
     settings = get_settings()
     memory_root = Path(settings.memory_root)
-    model = settings.anthropic_model_main  # Opus 4.7 — vision-grade
+    model = settings.anthropic_model_main  # Opus 4.8 — vision-grade
 
     if not settings.anthropic_api_key:
         return {"score": 0.0, "error": "ANTHROPIC_API_KEY missing"}

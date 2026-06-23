@@ -306,7 +306,7 @@ def test_try_walk_pins_at_huge_count_rejected():
 def test_to_board_stray_pins_route_to_test_pads():
     """Pins that don't land in any component bbox become test_pads, not Pins.
 
-    Tebo IctView's `.tvw` is a probe-target database — the layer pin
+    The production-binary `.tvw` is a probe-target database — the layer pin
     section mixes real SMD pads with thousands of ICT probe targets
     and vias. Without a component to attach them to, these go to the
     test_pad channel so they render as a discreet secondary layer
@@ -977,41 +977,41 @@ def test_to_board_drops_implausible_tvw_line_coords():
     assert board.traces[0].b.x == 10
 
 
-# --- Canonical mapping invariants on the R9 270 fixture ---
+# --- Canonical mapping invariants on the the sample GPU fixture ---
 #
 # These tests validate the canonical pad_index → layer.pins[idx] mapping
 # end-to-end on a real graphics-card .tvw. They are marked `slow` so
 # they only run in `make test-all`; the fast suite gets the synthetic
-# coverage above. The fixture (Gigabyte R9 270 / Tahiti GPU) ships with
+# coverage above. The fixture (a sample GPU board) ships with
 # a well-documented BOM whose pin counts the parser must reproduce
 # exactly: U1 = 1737-pin BGA, U2700-U2400 = 170-pin BGAs each, …
 
 
-_R9270_FIXTURE = (
+_SAMPLE_GPU_FIXTURE = (
     "memory/mnt-motherboard/uploads/"
-    "20260504T010452Z-boardview-GV-R927XOC-2GD-1.01.tvw"
+    "sample-gpu-boardview.tvw"
 )
 
 
 @pytest.fixture(scope="module")
-def r9270_board():
-    """Parse the R9 270 fixture once per test module."""
+def sample_gpu_board():
+    """Parse the the sample GPU fixture once per test module."""
     import os
-    fixture_path = _R9270_FIXTURE
+    fixture_path = _SAMPLE_GPU_FIXTURE
     if not os.path.exists(fixture_path):
-        pytest.skip(f"R9 270 fixture not present at {fixture_path}")
+        pytest.skip(f"the sample GPU fixture not present at {fixture_path}")
     with open(fixture_path, "rb") as f:
         raw = f.read()
     file = parse(raw)
     from api.board.parser._tvw_engine.board_mapper import to_board as _to_board
-    board = _to_board(file, board_id="r9270", file_hash="00")
+    board = _to_board(file, board_id="sample_gpu", file_hash="00")
     return file, board
 
 
 @pytest.mark.slow
-def test_r9270_invariant1_all_declared_pins_attached(r9270_board):
+def test_sample_gpu_invariant1_all_declared_pins_attached(sample_gpu_board):
     """Invariant 1: sum(c.pin_count) == sum(len(p.pin_refs))."""
-    file, board = r9270_board
+    file, board = sample_gpu_board
     declared = sum(c.pin_count for c in file.components)
     attached = sum(len(p.pin_refs) for p in board.parts)
     assert declared == attached, (
@@ -1021,7 +1021,7 @@ def test_r9270_invariant1_all_declared_pins_attached(r9270_board):
 
 
 @pytest.mark.slow
-def test_r9270_invariant2_test_pads_distinct_canonical_records(r9270_board):
+def test_sample_gpu_invariant2_test_pads_distinct_canonical_records(sample_gpu_board):
     """Invariant 2: test_pads are pin records the canonical pass did
     NOT claim — they don't share an underlying pad_index with any Pin.
 
@@ -1039,9 +1039,9 @@ def test_r9270_invariant2_test_pads_distinct_canonical_records(r9270_board):
         len(unique pad records covered by pins) + len(test_pads)
             == total pin records claimed-or-unclaimed.
     """
-    file, board = r9270_board
+    file, board = sample_gpu_board
 
-    # On the R9 270 we expect roughly 7000 component pins and ~10000
+    # On the the sample GPU we expect roughly 7000 component pins and ~10000
     # test_pads (probe targets / vias / exposed-copper points).
     assert len(board.pins) >= 7000
     assert len(board.test_pads) >= 5000
@@ -1092,10 +1092,10 @@ def test_r9270_invariant2_test_pads_distinct_canonical_records(r9270_board):
 
 
 @pytest.mark.slow
-def test_r9270_invariant3_every_pin_has_a_name(r9270_board):
+def test_sample_gpu_invariant3_every_pin_has_a_name(sample_gpu_board):
     """Invariant 3: every Pin attached via the canonical mapping
     carries the silkscreen pin name (e.g. 'A1', 'B14', '1', '2')."""
-    _file, board = r9270_board
+    _file, board = sample_gpu_board
     unnamed = [p for p in board.pins if not p.name]
     assert unnamed == [], (
         f"{len(unnamed)} pins missing a name (sample: "
@@ -1104,11 +1104,11 @@ def test_r9270_invariant3_every_pin_has_a_name(r9270_board):
 
 
 @pytest.mark.slow
-def test_r9270_invariant4_pad_shape_distribution(r9270_board):
+def test_sample_gpu_invariant4_pad_shape_distribution(sample_gpu_board):
     """Invariant 4: pad_shape comes from the aperture's `type_` field
     (or the per-pin pad_bbox extension), not from a `w == h` heuristic.
 
-    The R9 270 mixes round (BGA balls), rect (SMD rectangular pads —
+    The the sample GPU mixes round (BGA balls), rect (SMD rectangular pads —
     including the type=5 "Custom" apertures which describe rectangles
     on this fixture, the file's polygon table being board-scale shapes
     rather than pad shapes), and a long tail of oblong / through-hole
@@ -1116,7 +1116,7 @@ def test_r9270_invariant4_pad_shape_distribution(r9270_board):
     masquerades type=5 rectangles as circles.
     """
     from collections import Counter
-    _file, board = r9270_board
+    _file, board = sample_gpu_board
     shapes = Counter(p.pad_shape for p in board.pins)
     # Both round and rectangular pads must appear — a graphics card
     # has BGA balls (round) and bulk SMD passives + connector pads
@@ -1129,16 +1129,16 @@ def test_r9270_invariant4_pad_shape_distribution(r9270_board):
 
 
 @pytest.mark.slow
-def test_r9270_invariant5_side_distribution_deterministic(r9270_board):
+def test_sample_gpu_invariant5_side_distribution_deterministic(sample_gpu_board):
     """Invariant 5: the side of every Part is decided by the canonical
     pad_index → layer mapping (TOP wins vs BOTTOM wins). The previous
     `kind & 1` LSB heuristic only matched ~85% of components — the
     canonical resolver matches 100%. We assert that the distribution
-    has both sides represented and matches the documented R9 270
+    has both sides represented and matches the documented the sample GPU
     layout (most placed components are bottom-side passive pour, GPU
     + memory chips on the top-side).
     """
-    _file, board = r9270_board
+    _file, board = sample_gpu_board
     from api.board.model import Layer
     sides = {Layer.TOP: 0, Layer.BOTTOM: 0}
     for p in board.parts:
@@ -1158,17 +1158,17 @@ def test_r9270_invariant5_side_distribution_deterministic(r9270_board):
 
 
 @pytest.mark.slow
-def test_r9270_invariant6_ground_truth_pin_counts(r9270_board):
+def test_sample_gpu_invariant6_ground_truth_pin_counts(sample_gpu_board):
     """Invariant 6 (proxy for net mapping quality): the canonical
     mapping reproduces the documented BOM pin counts exactly.
 
-    The Gigabyte R9 270 / Tahiti's BOM lists U1 = 1737-pin BGA,
+    The the sample GPU board's BOM lists U1 = 1737-pin BGA,
     U2700-U2400 = 170-pin BGAs (memory chips), MPCIE1 = 82-pin
     PCI Express slot, J1900 = 62-pin DVI / D-DVI connector,
-    MJ1900 = 36-pin Foxconn header. Any drop in these counts means
+    MJ1900 = 36-pin connector header. Any drop in these counts means
     pad_index resolution lost canonical references.
     """
-    _file, board = r9270_board
+    _file, board = sample_gpu_board
     expected = {
         "U1": 1737,
         "U2700": 170, "U2600": 170, "U2500": 170, "U2400": 170,
@@ -1185,12 +1185,12 @@ def test_r9270_invariant6_ground_truth_pin_counts(r9270_board):
 
 
 @pytest.mark.slow
-def test_r9270_invariant7_package_outlines_attached(r9270_board):
+def test_sample_gpu_invariant7_package_outlines_attached(sample_gpu_board):
     """Invariant 7: per-footprint body outlines from the PACKAGE table
     attach to every component whose `footprint` matches a table entry.
 
     The PACKAGE table ships ~130 named footprint outlines for the
-    R9 270. Each real component carries a `footprint` string
+    the sample GPU. Each real component carries a `footprint` string
     (`EDGECON_PCI_EXPRESS_16`, `BGA0_8X1_2MM40X40-1737`, …); the
     mapper looks each one up and populates `Part.body_lines` with
     the outline rotated by the component's rotation and translated
@@ -1203,7 +1203,7 @@ def test_r9270_invariant7_package_outlines_attached(r9270_board):
       * `BGA0_8X1_2MM40X40-1737` (U1, Tahiti GPU) ships a 102-segment
         polygonal approximation of the round BGA package.
     """
-    file, board = r9270_board
+    file, board = sample_gpu_board
 
     # Coverage gate: every component on this fixture should have
     # body_lines populated from the PACKAGE table. The decoder accepts
@@ -1231,7 +1231,7 @@ def test_r9270_invariant7_package_outlines_attached(r9270_board):
     )
 
     # Sanity on the PACKAGE-table dict itself: at least 100 named
-    # entries (the R9 270 ships ~130), all with non-empty segment
+    # entries (the the sample GPU ships ~130), all with non-empty segment
     # lists. The multi-pad family (LFPAK MOSFETs) decodes to ~130
     # segments per package once the marker=11 sub-shape variant is
     # accepted alongside the canonical marker=10.
@@ -1254,11 +1254,11 @@ def test_r9270_invariant7_package_outlines_attached(r9270_board):
 
 
 @pytest.mark.slow
-def test_r9270_components_count_matches_ground_truth(r9270_board):
-    """The R9 270 fixture should yield ~1648 components (the documented
+def test_sample_gpu_components_count_matches_ground_truth(sample_gpu_board):
+    """The the sample GPU fixture should yield ~1648 components (the documented
     BOM total). Allow a small margin for the regex anchor's edge cases.
     """
-    _file, board = r9270_board
+    _file, board = sample_gpu_board
     # Expected ~1647-1648 components; allow ±5.
     assert 1640 <= len(board.parts) <= 1655, (
         f"expected ~1647 components, got {len(board.parts)}"
@@ -1270,7 +1270,7 @@ def test_r9270_components_count_matches_ground_truth(r9270_board):
 # A previous revision of `_parse_component_at` modelled the trailing
 # string region as `(sep_v + value) + (sep_c + comment) + (footprint)`,
 # i.e. two leading-separator Pascal fields then a footprint Pascal. We
-# tested this against the R9 270 fixture, where every component has
+# tested this against the the sample GPU fixture, where every component has
 # `comment == ""`, so the duplicate-zero plen byte aliased onto the
 # expected `_sep_c` and the footprint landed on the correct boundary.
 #

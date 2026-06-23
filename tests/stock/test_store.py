@@ -1,6 +1,7 @@
 
 import pytest
 
+from api.agent.owner_ref import set_owner_ref
 from api.stock.schemas import StockInventory
 from api.stock.store import (
     consume_part,
@@ -9,6 +10,7 @@ from api.stock.store import (
     unconsume_part,
     unmark_donor,
 )
+from api.stock.tools import stock_list_donors, stock_mark_donor
 
 
 @pytest.fixture
@@ -17,6 +19,33 @@ def stock_root(tmp_path, monkeypatch):
     root = tmp_path / "_stock"
     monkeypatch.setattr("api.stock.store._stock_root", lambda: root)
     return root
+
+
+@pytest.fixture
+def reset_owner():
+    """Clear the agent owner-context after the test so it can't leak into others
+    (a ContextVar persists within the process otherwise)."""
+    yield
+    set_owner_ref(None)
+
+
+def test_agent_stock_tools_scope_to_the_session_owner(stock_root, tmp_path, monkeypatch, reset_owner):
+    """The diagnostic agent's stock tools write to the CURRENT session owner's
+    inventory (set from the cloud's X-Owner-Ref). Two tenants' agents never see
+    each other's donors; standalone (no owner) is isolated from both."""
+    monkeypatch.setattr("api.stock.store._memory_root", lambda: tmp_path)
+    monkeypatch.setattr("api.stock.tools._memory_root", lambda: tmp_path)
+    (tmp_path / "iphone-x").mkdir()
+
+    set_owner_ref("tenant-a")
+    assert stock_mark_donor({"device_slug": "iphone-x", "label": "A board"})["created"]
+    assert [d["label"] for d in stock_list_donors()["donors"]] == ["A board"]
+
+    set_owner_ref("tenant-b")
+    assert stock_list_donors()["donors"] == []  # B's agent sees none of A's
+
+    set_owner_ref(None)
+    assert stock_list_donors()["donors"] == []  # standalone sees neither
 
 
 def test_load_inventory_empty_creates(stock_root):

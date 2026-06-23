@@ -9,9 +9,9 @@
  */
 
 // Net category regexes — extended over the backend's strict patterns
-// to handle Apple-style XZZ naming (PPBUS_G3H, PP1V8_CODEC,
+// to handle vendor-style XZZ naming (PPBUS_G3H, PP1V8_CODEC,
 // GND_AUDIO_CODEC, L83_VCP_FILT_GND, …) which iPhone/MacBook
-// boardviews use heavily. Without this, every Apple power rail and
+// boardviews use heavily. Without this, every such power rail and
 // every suffixed ground net falls through to 'signal' and renders
 // uniformly grey-white.
 //
@@ -26,7 +26,7 @@ const PCB_NET_POWER_RE = new RegExp([
     '^VBAT[A-Z0-9_]*$',                        // VBAT, VBAT_RTC
     '^VBUS[A-Z0-9_]*$',                        // VBUS, VBUS_USB
     '^V_[A-Z0-9_]+$',                          // V_AUDIO, V_3V3
-    '^PP[A-Z0-9][A-Z0-9_]*$',                  // Apple: PPBUS_G3H, PP1V8_CODEC
+    '^PP[A-Z0-9][A-Z0-9_]*$',                  // e.g. PPBUS_G3H, PP1V8_CODEC
     '^PWR[A-Z0-9_]*$',                         // PWR_GOOD, PWR_EN (rail-side)
     '^PVDD[A-Z0-9_]*$',                        // PVDD, PVDD_CPU
 ].join('|'), 'i');
@@ -147,8 +147,16 @@ function readDesignTokens() {
     return tokens;
 }
 
+// Active viewer instance — set on construction so the net-colour window API
+// (defined at the bottom of this file) can push live recolours to the rendered
+// board. Was previously the job of the legacy SVG brd_viewer.js; folded in here
+// when that file was retired so pcb_viewer owns the whole colour surface
+// (defaults + storage + live recolour).
+let _activeViewer = null;
+
 class PCBViewerOptimized {
     constructor(canvasId) {
+        _activeViewer = this;
         this.canvas = document.getElementById(canvasId);
         this.container = document.getElementById('pcb-canvas-container');
         this.boardData = null;
@@ -246,7 +254,7 @@ class PCBViewerOptimized {
         // individually for incremental clear/replace; cleared as a group
         // by the bv_reset_view path.
         this._agentAnnotations = new Map();   // id → { sprite, refdes, label }
-        this._agentArrows = new Map();        // id → THREE.Group (line + head)
+        this._agentArrows = new Map();        // id → THREE.Group (filled shaft+head mesh + halo)
         this._agentMeasurements = new Map();  // id → THREE.Group (line + label)
         // Protocol step badges — numbered cyan/amber pins above each step's
         // target component, set by bv_propose_protocol via the bridge.
@@ -443,7 +451,7 @@ class PCBViewerOptimized {
      * Resolve a pin's display colour, factoring in the parent
      * component_type. Test points (XW probe pads, TEST_PAD_*, TPxxx)
      * carrying a non-ground signal use the dedicated gold colour —
-     * mirrors Apple/MacBook board markings where probe pads on
+     * mirrors some board markings where probe pads on
      * active signals are hand-tinted gold while GND probe pads stay
      * grey/inert. Pins on regular components fall through to the
      * net-category colour.
@@ -650,6 +658,16 @@ class PCBViewerOptimized {
         this.canvas.addEventListener('click', (e) => this.onClick(e));
         this.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
+        // Touch: 1 finger = pan, 2 fingers = pinch-zoom (to the midpoint), a
+        // short 1-finger tap = select (forwarded to the click path). passive:
+        // false so we can preventDefault the browser's native pan/pinch-zoom.
+        this.canvas.addEventListener('touchstart', (e) => this.onTouchStart(e), { passive: false });
+        this.canvas.addEventListener('touchmove', (e) => this.onTouchMove(e), { passive: false });
+        this.canvas.addEventListener('touchend', (e) => this.onTouchEnd(e), { passive: false });
+        this.canvas.addEventListener('touchcancel', () => this.onTouchEnd(), { passive: false });
+        // Disable native gestures (double-tap zoom, scroll) over the canvas.
+        this.canvas.style.touchAction = 'none';
+
         const closeBtn = document.getElementById('info-close');
         if (closeBtn) closeBtn.addEventListener('click', () => this.clearSelection());
     }
@@ -668,23 +686,25 @@ class PCBViewerOptimized {
         this._updateSilkscreenLabelScale();
         this._updateFlyLineDashes();
         this._updateSideArrowScale();
+        this._updateAgentArrowScale();
+        this._updateAgentAnnotationScale();
         this.requestRender();
     }
 
     onWheel(e) {
         e.preventDefault();
-
-        // Zoom-to-cursor: convert the cursor's pixel position to the
-        // world point BEFORE the frustum change, apply the zoom, then
-        // shift the camera so the same world point still sits under the
-        // cursor. Default behaviour was zoom-to-centre which forced the
-        // user to click-pan after every scroll wheel step.
         const rect = this.container.getBoundingClientRect();
-        const offsetX = e.clientX - rect.left;
-        const offsetY = e.clientY - rect.top;
-        const worldBefore = this.screenToWorld(offsetX, offsetY);
+        // Zoom toward the cursor (see _zoomAtPoint).
+        this._zoomAtPoint(e.clientX - rect.left, e.clientY - rect.top, e.deltaY > 0 ? 1.1 : 0.9);
+    }
 
-        const zoomFactor = e.deltaY > 0 ? 1.1 : 0.9;
+    // Zoom-to-point: convert the anchor's pixel position to the world point
+    // BEFORE the frustum change, apply the zoom, then shift the camera so the
+    // same world point still sits under the anchor. Shared by the wheel and the
+    // two-finger pinch (anchor = cursor / pinch midpoint) so zoom-to-centre
+    // never forces a re-pan after each step.
+    _zoomAtPoint(offsetX, offsetY, zoomFactor) {
+        const worldBefore = this.screenToWorld(offsetX, offsetY);
         this.frustumSize *= zoomFactor;
         // Allow generous zoom-out (10× the board diagonal) so dense
         // boards like the MSI V300 (46 mm GPU section, 5k+ vias) can
@@ -693,17 +713,96 @@ class PCBViewerOptimized {
         const maxSize = this.boardData ? Math.max(this.boardData.board_width, this.boardData.board_height) * 10 : 2000;
         this.frustumSize = Math.max(0.5, Math.min(maxSize, this.frustumSize));
         this.zoom = 100 / this.frustumSize;
-
-        // Recompute frustum extents and renderer size, then read the
-        // post-zoom world position of the cursor and apply the offset.
         this.onResize();
         const worldAfter = this.screenToWorld(offsetX, offsetY);
         this.camera.position.x += worldBefore.x - worldAfter.x;
         this.camera.position.y += worldBefore.y - worldAfter.y;
-
         const zoomEl = document.getElementById('zoom-level');
         if (zoomEl) zoomEl.textContent = Math.round(this.zoom * 100);
         this.requestRender();
+    }
+
+    // Pan the camera by a pixel delta (shared by mouse drag + touch pan).
+    _panByPixels(dxPx, dyPx) {
+        const w = this.container.clientWidth, h = this.container.clientHeight;
+        const aspect = w / h;
+        this.camera.position.x -= dxPx * (this.frustumSize * aspect) / w;
+        this.camera.position.y += dyPx * this.frustumSize / h;
+        this.requestRender();
+    }
+
+    _touchDist(t) { return Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY); }
+    _touchMid(t) { return { x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 }; }
+
+    // A single-finger tap with no real movement selects the item under it —
+    // mobile has no hover, so we update the picking ray + hover at the tap
+    // point, then route through the same onClick stack-picking path as mouse.
+    _forwardTapAsClick(clientX, clientY) {
+        const rect = this.container.getBoundingClientRect();
+        const w = this.container.clientWidth, h = this.container.clientHeight;
+        this.mouse.x = ((clientX - rect.left) / w) * 2 - 1;
+        this.mouse.y = -((clientY - rect.top) / h) * 2 + 1;
+        this.checkHover();
+        this._pressStart = { x: clientX, y: clientY };
+        this.onClick({ clientX, clientY });
+    }
+
+    onTouchStart(e) {
+        if (e.touches.length === 1) {
+            e.preventDefault();
+            const t = e.touches[0];
+            this._touchMode = 'pan';
+            this._lastTouch = { x: t.clientX, y: t.clientY };
+            this._touchStart = { x: t.clientX, y: t.clientY };
+            this._touchMoved = false;
+        } else if (e.touches.length === 2) {
+            e.preventDefault();
+            this._touchMode = 'pinch';
+            this._pinchPrevDist = this._touchDist(e.touches);
+            this._pinchPrevMid = this._touchMid(e.touches);
+            this._touchMoved = true; // a pinch is never a tap
+        }
+    }
+
+    onTouchMove(e) {
+        if (this._touchMode === 'pan' && e.touches.length === 1) {
+            e.preventDefault();
+            const t = e.touches[0];
+            if (Math.abs(t.clientX - this._touchStart.x) > 6 || Math.abs(t.clientY - this._touchStart.y) > 6) {
+                this._touchMoved = true;
+            }
+            this._panByPixels(t.clientX - this._lastTouch.x, t.clientY - this._lastTouch.y);
+            this._lastTouch = { x: t.clientX, y: t.clientY };
+        } else if (this._touchMode === 'pinch' && e.touches.length === 2) {
+            e.preventDefault();
+            const dist = this._touchDist(e.touches);
+            const mid = this._touchMid(e.touches);
+            const rect = this.container.getBoundingClientRect();
+            if (this._pinchPrevDist > 0) {
+                // Fingers apart → dist↑ → factor<1 → frustum shrinks → zoom IN.
+                this._zoomAtPoint(mid.x - rect.left, mid.y - rect.top, this._pinchPrevDist / dist);
+            }
+            // Two-finger drag also pans (midpoint movement).
+            this._panByPixels(mid.x - this._pinchPrevMid.x, mid.y - this._pinchPrevMid.y);
+            this._pinchPrevDist = dist;
+            this._pinchPrevMid = mid;
+        }
+    }
+
+    onTouchEnd(e) {
+        if (this._touchMode === 'pan' && !this._touchMoved && this._touchStart) {
+            this._forwardTapAsClick(this._touchStart.x, this._touchStart.y);
+        }
+        // One finger left after lifting the other (pinch → pan): keep panning
+        // from its position; otherwise end the gesture.
+        if (e && e.touches && e.touches.length === 1) {
+            this._touchMode = 'pan';
+            this._lastTouch = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+            this._touchStart = { ...this._lastTouch };
+            this._touchMoved = true; // tail of a multi-touch, not a fresh tap
+        } else {
+            this._touchMode = null;
+        }
     }
 
     onMouseDown(e) {
@@ -1304,8 +1403,8 @@ class PCBViewerOptimized {
             const el = document.getElementById(id);
             if (el) el.textContent = txt;
         };
-        setText('info-id', item.id || '—');
-        setText('info-value', item.value || item.net || '—');
+        setText('info-id', item.id || '…');
+        setText('info-value', item.value || item.net || '…');
         setText('info-type', (item.type || 'Pin').toUpperCase());
         setText('info-layer', (item.layer || 'top').toUpperCase());
         setText('info-pos',
@@ -1348,7 +1447,7 @@ class PCBViewerOptimized {
 
         // Manufacturer-tagged diagnostic expectation for this net,
         // when the source format ships one (XZZ post-v6 block on
-        // iPad/iPhone dumps, see api/board/parser/_xzz_engine_extras
+        // some dumps, see api/board/parser/_xzz_engine_extras
         // .py). Hides the whole block when the net is unknown or
         // carries no expectation.
         const diagLabel = document.getElementById('info-diag-label');
@@ -1402,7 +1501,7 @@ class PCBViewerOptimized {
                     const li = document.createElement('li');
                     if (alt) {
                         const fp = alt.footprint || alt.id;
-                        const v = alt.value || '(non listé au BOM — DNP)';
+                        const v = alt.value || '(non listé au BOM, DNP)';
                         li.innerHTML =
                             `<span class="mono">${refdes}</span> ` +
                             `<span class="muted">${fp}</span><br>` +
@@ -1894,7 +1993,7 @@ class PCBViewerOptimized {
         this.dualOutline = data.dual_outline || null;
         this.sideMode = 'both';
 
-        // Net diagnostic expectations (XZZ post-v6 block on iPad/iPhone
+        // Net diagnostic expectations (XZZ post-v6 block on some boards
         // manufacturer dumps). Indexed by net name for O(1) lookup at
         // selection time. Empty Map on boards without diagnostic data
         // — the inspector keeps the rows hidden in that case.
@@ -1954,7 +2053,7 @@ class PCBViewerOptimized {
         }
 
         // 6b. Manufacturer inspection markers (XZZ type_03 overlays).
-        // Empty on most boards — iPad Air 3 ships 15 such rectangles
+        // Empty on most boards — some boards ship 15 such rectangles
         // that the OEM tagged as zones of interest for diagnosis.
         // Render as semi-transparent amber-stroked rectangles above
         // the board layer, below the pins, no fill.
@@ -2812,7 +2911,7 @@ class PCBViewerOptimized {
 
             // A via with no net is a mechanical drill (mounting hole,
             // screw hole) — paint its outer ring in the same gold as
-            // signal test pads to mirror the iPhone/iPad silkscreen
+            // signal test pads to mirror the silkscreen
             // convention. Electrical vias inherit their net's category
             // colour so they visually integrate with the rails / signals
             // they belong to (power vias copper-orange, ground vias dark
@@ -2981,9 +3080,9 @@ class PCBViewerOptimized {
     /**
      * Render XZZ type_03 blocks as undocumented-component overlays.
      * Each one is a real part on the physical board (verified by the
-     * user against an iPad Air 3 motherboard he owns) — but the file
+     * user against a board they own) — but the file
      * ships only its bounding box, not its pins or net assignments.
-     * Apple appears to strip the pin layout the same way it strips
+     * Some vendors strip the pin layout the same way they strip
      * the real refdes (U1 placeholder seen on every component name).
      *
      * Render style mirrors a regular "headless" component (no
@@ -3047,7 +3146,7 @@ class PCBViewerOptimized {
             // grid lookup uses `x, y` (centre), `_setItemHighlight`
             // patches `_mesh.material.color`, `selectItem` reads id /
             // value / type / layer / width / height / net to populate
-            // the inspector. Marker is anonymous (Apple ships the
+            // the inspector. Marker is anonymous (the file ships the
             // bbox without pinout), so id is synthesized "IC_N" and
             // value tells the tech the data is stripped.
             const itemData = {
@@ -4558,22 +4657,53 @@ class PCBViewerOptimized {
             depthTest: false,
         });
         const sprite = new THREE.Sprite(material);
-        // Anchor above the component bbox top edge. item.x/item.y is
-        // the centre (set by createComponent), so back out half-height.
-        const halfH = (item.height || 1) / 2;
-        const offsetY = halfH + 1.5;  // sit ~1.5 mm above the part body
-        sprite.position.set(item.x, item.y + offsetY, 8);
-        // Initial scale — recomputed every zoom by the legacy refdes
-        // updater would be ideal, but a static world size keeps the
-        // implementation contained. ~6 mm wide reads at typical
-        // diagnostic zoom levels.
-        const aspect = canvas.width / canvas.height;
-        const baseH = 1.5;
-        sprite.scale.set(baseH * aspect, baseH, 1);
-        sprite.userData = { _agentAnnotation: id, _side: item._side || null };
+        // Anchor just above the component's top edge. item.x/item.y is the
+        // centre (set by createComponent), so back out half-height to get the
+        // top. The label used to render at a STATIC ~1.5 mm world height, so it
+        // collapsed to a few unreadable pixels whenever the board was zoomed
+        // out — you had to zoom in to read it. Instead size + position it in
+        // SCREEN PIXELS and rebuild that on every zoom
+        // (`_updateAgentAnnotationScale`), the same fixed-pixel approach as the
+        // refdes labels and the arrows.
+        sprite.position.x = item.x;
+        sprite.position.z = 8;
+        sprite.userData = {
+            _agentAnnotation: id,
+            _side: item._side || null,
+            _annAspect: canvas.width / canvas.height,
+            _annTopY: item.y + (item.height || 1) / 2,
+        };
+        this._layoutAgentAnnotation(sprite, this._agentArrowPixelSize());
         this.scene.add(sprite);
         this._agentAnnotations.set(id, { sprite, refdes, label: text });
         this.requestRender();
+    }
+
+    /**
+     * Size + position one agent annotation for the current zoom. The pill is
+     * held at a constant ON-SCREEN height (readable at any zoom, like a map
+     * label) and pinned just above its component's top edge. The source canvas
+     * is 512×96 with the pill band filling ~40/96 of the height, so the sprite
+     * (which spans the full canvas) scales to `PILL_PX × 96/40` and the anchor
+     * backs out half the pill band so its bottom hovers over — not on — the body.
+     */
+    _layoutAgentAnnotation(sprite, pixelSize) {
+        const PILL_PX = 26;            // on-screen height of the visible pill band
+        const CANVAS_RATIO = 96 / 40;  // full sprite height ÷ pill-band height
+        const GAP_PX = 6;              // breathing room above the component
+        const aspect = sprite.userData._annAspect || (512 / 96);
+        const worldH = PILL_PX * CANVAS_RATIO * pixelSize;
+        sprite.scale.set(worldH * aspect, worldH, 1);
+        sprite.position.y = sprite.userData._annTopY + (GAP_PX + PILL_PX / 2) * pixelSize;
+    }
+
+    /** Keep every agent annotation at a constant on-screen size as zoom changes. */
+    _updateAgentAnnotationScale() {
+        if (!this._agentAnnotations || !this._agentAnnotations.size) return;
+        const pixelSize = this._agentArrowPixelSize();
+        for (const { sprite } of this._agentAnnotations.values()) {
+            this._layoutAgentAnnotation(sprite, pixelSize);
+        }
     }
 
     removeAnnotation(id) {
@@ -4835,48 +4965,112 @@ class PCBViewerOptimized {
         if (!id) id = `arr-${Math.random().toString(36).slice(2, 10)}`;
         this.removeAgentArrow(id);
         if (!fromMm || !toMm) return;
-        const dx = toMm.x - fromMm.x;
-        const dy = toMm.y - fromMm.y;
-        const len = Math.hypot(dx, dy);
-        if (len < 0.01) return;
-        const ux = dx / len;
-        const uy = dy / len;
-        const headLen = Math.min(Math.max(len * 0.12, 1.5), 4);
-        const halfHead = headLen * 0.45;
-        // Stop the shaft at the base of the arrowhead so the head's V
-        // sits cleanly without overlapping a thick shaft tip.
-        const tipBaseX = toMm.x - ux * headLen;
-        const tipBaseY = toMm.y - uy * headLen;
-        // Perpendicular for the head's two flanks.
-        const px = -uy;
-        const py = ux;
+        if (Math.hypot(toMm.x - fromMm.x, toMm.y - fromMm.y) < 0.01) return;
 
-        const color = 0xc084fc;  // violet — matches the action / arrow family
-        const mat = new THREE.LineBasicMaterial({
-            color,
-            transparent: true,
-            opacity: 0.95,
-            depthTest: false,
-        });
+        // A WebGL `Line` ignores `linewidth` on virtually every platform, so the
+        // old arrow was a 1px hairline shaft tipped with an open 1px "V" — it
+        // barely read as an arrow. Build it as a filled 2D mesh instead
+        // (rectangular shaft + solid triangular head + a soft halo), crisp under
+        // the orthographic camera. All cross-axis sizes are screen-pixel constant
+        // (see `_layoutAgentArrow`): the geometry is rebuilt on zoom by
+        // `_updateAgentArrowScale` so the arrow keeps the same slim weight on
+        // screen regardless of zoom — only its length tracks the board.
         const group = new THREE.Group();
+        const halo = new THREE.Mesh(
+            new THREE.ShapeGeometry(new THREE.Shape()),
+            new THREE.MeshBasicMaterial({ color: 0x7c3aed, transparent: true, opacity: 0.32, depthTest: false }),
+        );
+        halo.position.z = 5.9;
+        halo.renderOrder = 10;
+        const body = new THREE.Mesh(
+            new THREE.ShapeGeometry(new THREE.Shape()),
+            new THREE.MeshBasicMaterial({ color: 0xc084fc, transparent: true, opacity: 0.98, depthTest: false }),
+        );
+        body.position.z = 6;
+        body.renderOrder = 11;
+        group.add(halo);
+        group.add(body);
 
-        const shaftGeom = new THREE.BufferGeometry().setFromPoints([
-            new THREE.Vector3(fromMm.x, fromMm.y, 6),
-            new THREE.Vector3(tipBaseX, tipBaseY, 6),
-        ]);
-        group.add(new THREE.Line(shaftGeom, mat));
+        group.userData = {
+            _agentArrow: id,
+            fromMm: { x: fromMm.x, y: fromMm.y },
+            toMm: { x: toMm.x, y: toMm.y },
+            body,
+            halo,
+        };
+        this._layoutAgentArrow(group, this._agentArrowPixelSize());
 
-        const headGeom = new THREE.BufferGeometry().setFromPoints([
-            new THREE.Vector3(tipBaseX + px * halfHead, tipBaseY + py * halfHead, 6),
-            new THREE.Vector3(toMm.x, toMm.y, 6),
-            new THREE.Vector3(tipBaseX - px * halfHead, tipBaseY - py * halfHead, 6),
-        ]);
-        group.add(new THREE.Line(headGeom, mat));
-
-        group.userData = { _agentArrow: id };
         this.scene.add(group);
         this._agentArrows.set(id, group);
         this.requestRender();
+    }
+
+    /** World units per screen pixel at the current zoom (mm/px). */
+    _agentArrowPixelSize() {
+        const h = (this.container && this.container.clientHeight) || 800;
+        return this.frustumSize / h;
+    }
+
+    /**
+     * (Re)build an agent arrow's geometry for the current zoom. The arrow is
+     * authored in a local frame running along +X from the (inset) source to the
+     * tip, then the whole group is rotated to the real heading and dropped at the
+     * source. Cross-axis dimensions (shaft thickness, head size, insets) are in
+     * SCREEN PIXELS × pixelSize, so they stay visually constant at any zoom;
+     * only the shaft LENGTH follows the real board distance. If the two parts
+     * sit closer than the head can fit, the arrow hides itself until zoom-in.
+     */
+    _layoutAgentArrow(group, pixelSize) {
+        const { fromMm, toMm, body, halo } = group.userData;
+        const dx = toMm.x - fromMm.x;
+        const dy = toMm.y - fromMm.y;
+        const len = Math.hypot(dx, dy);
+        if (len < 0.01) { group.visible = false; return; }
+        const ux = dx / len;
+        const uy = dy / len;
+
+        // Target on-screen weights (px) → world units. Slim, sharp, well-balanced.
+        const shaftHalf  = 1.1 * pixelSize;   // ~2.2 px shaft
+        const headLen    = 11  * pixelSize;   // tip length
+        const headHalf   = 5   * pixelSize;   // ~10 px head base
+        const haloOut     = 1.2 * pixelSize;  // halo outset
+        const tipInset   = 7   * pixelSize;   // breathe off the target centre
+        const startInset = 4   * pixelSize;   // breathe off the source centre
+
+        const drawLen = len - tipInset - startInset;
+        if (drawLen <= headLen * 1.15) { group.visible = false; return; }  // parts too close on screen
+        group.visible = true;
+        const shaftEnd = drawLen - headLen;
+
+        const buildGeom = (out) => {
+            const s = new THREE.Shape();
+            s.moveTo(-out,           shaftHalf + out);
+            s.lineTo(shaftEnd,       shaftHalf + out);
+            s.lineTo(shaftEnd,       headHalf + out);
+            s.lineTo(drawLen + out,  0);            // tip
+            s.lineTo(shaftEnd,      -headHalf - out);
+            s.lineTo(shaftEnd,      -shaftHalf - out);
+            s.lineTo(-out,          -shaftHalf - out);
+            s.closePath();
+            return new THREE.ShapeGeometry(s);
+        };
+
+        body.geometry.dispose();
+        body.geometry = buildGeom(0);
+        halo.geometry.dispose();
+        halo.geometry = buildGeom(haloOut);
+
+        group.position.set(fromMm.x + ux * startInset, fromMm.y + uy * startInset, 0);
+        group.rotation.z = Math.atan2(uy, ux);
+    }
+
+    /** Keep every agent arrow at a constant on-screen weight as zoom changes. */
+    _updateAgentArrowScale() {
+        if (!this._agentArrows || !this._agentArrows.size) return;
+        const pixelSize = this._agentArrowPixelSize();
+        for (const group of this._agentArrows.values()) {
+            this._layoutAgentArrow(group, pixelSize);
+        }
     }
 
     removeAgentArrow(id) {
@@ -5189,4 +5383,45 @@ if (typeof window !== 'undefined') {
 }
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = PCBViewerOptimized;
+}
+
+// ---------- Net-category colour API (window globals) ----------
+//
+// The Tweaks colour picker (web/js/main.js) drives net-category colours through
+// these four globals. They were historically defined by the legacy SVG
+// brd_viewer.js; that file is retired, so pcb_viewer — which already owns the
+// palette defaults (PCB_DEFAULT_NET_HEX), the 'msa.pcb.netColors' store, and the
+// live recolour path (setNetCategoryColor) — now provides them directly.
+// `get*` are pure data (usable before any board loads); the setters push a live
+// recolour to the active viewer when one exists AND persist, so a choice made
+// with no board on screen still survives to the next load.
+if (typeof window !== 'undefined') {
+    window.getBoardviewColorDefaults = () => ({ ...PCB_DEFAULT_NET_HEX });
+    window.getBoardviewColors = () => loadPcbNetColors();
+    window.setBoardviewNetColor = (category, hex) => {
+        if (_activeViewer) {
+            // setNetCategoryColor persists (savePcbNetColors) AND recolours.
+            _activeViewer.setNetCategoryColor(category, hex);
+            return;
+        }
+        // No board on screen yet — persist only. Mirror setNetCategoryColor's
+        // 'default' -> 'no-net' storage-key remap so the next load matches.
+        const hexStr = typeof hex === 'string'
+            ? (hex.startsWith('#') ? hex : '#' + hex)
+            : '#' + Number(hex).toString(16).padStart(6, '0');
+        const storeKey = category === 'default' ? 'no-net' : category;
+        const colors = loadPcbNetColors();
+        if (storeKey in colors) {
+            colors[storeKey] = hexStr;
+            savePcbNetColors(colors);
+        }
+    };
+    window.resetBoardviewColors = () => {
+        savePcbNetColors({ ...PCB_DEFAULT_NET_HEX });
+        if (_activeViewer) {
+            for (const [cat, hex] of Object.entries(PCB_DEFAULT_NET_HEX)) {
+                _activeViewer.setNetCategoryColor(cat, hex);
+            }
+        }
+    };
 }

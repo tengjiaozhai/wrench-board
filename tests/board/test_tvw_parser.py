@@ -1,4 +1,4 @@
-"""Tebo .tvw parser — rotation cipher round-trip + happy-path parse."""
+"""Encoded .tvw parser — rotation round-trip + happy-path parse."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ def test_dispatches_tvw_extension(tmp_path: Path):
         "abcdefghijklmnopqrstuvwxyz\n",
         "ABCDEFGHIJKLMNOPQRSTUVWXYZ\n",
         "0123456789\n",
-        "Tebo-ictview files.\n",
+        "header-line files.\n",
         "var_data: 1 2 3 4\nParts: R1 5 1 C1 10 1\n",
         "Refdes: R1 -> net +3V3 / side 1 (pin #4)\n",
     ],
@@ -69,16 +69,16 @@ def test_rejects_payload_that_doesnt_decode_to_boardview(tmp_path: Path):
 
 
 def test_rejects_production_binary_tvw_with_clear_hint(tmp_path: Path):
-    """A binary-layout production TVW file (Tebo IctView 3.0/4.0 native
+    """A binary-layout production TVW file (production-binary 3.0/4.0 native
     output — little-endian ints + Pascal strings + layer sections) must
     get a clear error pointing the user at the format-scope note. The
     rotation-cipher parser cannot decode the binary container."""
     from api.board.parser.base import ObfuscatedFileError
 
-    # Synthetic binary-TVW-looking payload: Pascal string "Teboview" then
+    # Synthetic binary-TVW-looking payload: Pascal string "ICTBoard" then
     # a pile of little-endian int32s and colour bytes. ~60% non-printable.
     binary_blob = bytes(
-        [8] + list(b"Teboview")  # Pascal string header
+        [8] + list(b"ICTBoard")  # Pascal string header
         + [0x00, 0x00, 0x00, 0x01]  # uint32 unknown
         + [4] + list(b"Main")
         + [0x33]  # section marker

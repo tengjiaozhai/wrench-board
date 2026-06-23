@@ -49,7 +49,7 @@ async def main() -> None:
     log.info("running single-shot baseline on page %d (this is run B1)...", args.page)
     new_graph = await extract_page(
         client=client,
-        model=os.environ.get("ANTHROPIC_MODEL_MAIN", "claude-opus-4-7"),
+        model=os.environ.get("ANTHROPIC_MODEL_MAIN", "claude-opus-4-8"),
         rendered=target,
         total_pages=len(pages),
         device_label=args.slug,

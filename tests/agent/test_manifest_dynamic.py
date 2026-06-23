@@ -75,29 +75,32 @@ def test_no_description_exceeds_managed_agents_limit() -> None:
 
 
 def test_manifest_without_board_has_only_mb_profile_protocol_tools() -> None:
-    from api.agent.manifest import PROFILE_TOOLS, PROTOCOL_TOOLS, STOCK_TOOLS
+    from api.agent.manifest import PROFILE_TOOLS, PROTOCOL_TOOLS, RECALL_TOOLS, STOCK_TOOLS
     session = SessionState()  # board=None
     manifest = build_tools_manifest(session)
     names = {t["name"] for t in manifest}
     expected = (
         {t["name"] for t in MB_TOOLS}
+        | {t["name"] for t in RECALL_TOOLS}
         | {t["name"] for t in PROFILE_TOOLS}
         | {t["name"] for t in STOCK_TOOLS}
         | {t["name"] for t in PROTOCOL_TOOLS}
     )
     assert names == expected
     assert len(manifest) == (
-        len(MB_TOOLS) + len(PROFILE_TOOLS) + len(STOCK_TOOLS) + len(PROTOCOL_TOOLS)
+        len(MB_TOOLS) + len(RECALL_TOOLS) + len(PROFILE_TOOLS)
+        + len(STOCK_TOOLS) + len(PROTOCOL_TOOLS)
     )
 
 
 def test_manifest_with_board_adds_bv_tools() -> None:
-    from api.agent.manifest import PROFILE_TOOLS, PROTOCOL_TOOLS, STOCK_TOOLS
+    from api.agent.manifest import PROFILE_TOOLS, PROTOCOL_TOOLS, RECALL_TOOLS, STOCK_TOOLS
     session = _session_with_board()
     manifest = build_tools_manifest(session)
     names = {t["name"] for t in manifest}
     expected = (
         {t["name"] for t in MB_TOOLS}
+        | {t["name"] for t in RECALL_TOOLS}
         | {t["name"] for t in BV_TOOLS}
         | {t["name"] for t in PROFILE_TOOLS}
         | {t["name"] for t in STOCK_TOOLS}
@@ -106,6 +109,7 @@ def test_manifest_with_board_adds_bv_tools() -> None:
     assert names == expected
     assert len(manifest) == (
         len(MB_TOOLS)
+        + len(RECALL_TOOLS)
         + len(BV_TOOLS)
         + len(PROFILE_TOOLS)
         + len(STOCK_TOOLS)

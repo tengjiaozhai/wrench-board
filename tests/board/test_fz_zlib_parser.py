@@ -1,5 +1,5 @@
 """Tests for the FZ-zlib variant — the most common real-world `.fz` layout
-(Quanta, ASRock, ASUS Prime, Gigabyte boards). Synthetic fixtures only;
+(several vendors' boards). Synthetic fixtures only;
 real-world files are exercised by `test_real_files_runner.py`."""
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ def _wrap_fz_zlib(text: str) -> bytes:
 def _wrap_fz_two_streams(content_text: str, bom_text: str) -> bytes:
     """Build a real-shape `.fz` container with both content + BOM streams.
 
-    Layout matches what the AMD/ASUS dumps ship:
+    Layout matches what the GPU dumps ship:
       [0..4)              LE32 size of content (decompressed)
       [4..S1_END)         zlib stream 1 (pipe-delimited content)
       [S1_END..S1_END+8)  8-byte stream-2 header (we fill with anything)
@@ -368,7 +368,7 @@ def test_dnp_alternates_unplaced_with_no_overlap_stays_unflagged():
 
 
 def test_pin_pad_shape_falls_back_to_bom_description():
-    """Asus DUAL 1060 dumps duplicate the refdes in `SYM_NAME` so the
+    """some vendor dumps duplicate the refdes in `SYM_NAME` so the
     footprint inference returns None. The BOM stream carries the real
     package keyword (`MLCC 0.1UF/16V(0402)X7R`, `N-MOSFET BSS138 SOT-23`).
     `_build_pins` must fall back to inferring against `Part.value`

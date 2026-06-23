@@ -44,9 +44,9 @@ def _binary_blob(size: int = 1024) -> bytes:
     [
         (BVParser, ".bv", "ATE BoardView"),
         (GRParser, ".gr", "BoardView R5.0"),
-        (CSTParser, ".cst", "Castw"),
-        (F2BParser, ".f2b", "ProntoPLACE"),
-        (CADParser, ".cad", "BoardViewer"),
+        (CSTParser, ".cst", ".cst"),
+        (F2BParser, ".f2b", "vendor"),
+        (CADParser, ".cad", ".cad"),
         (TVWParser, ".tvw", "TVW"),
     ],
 )

@@ -1,9 +1,9 @@
-"""ASUS TSICT `.asc` parser.
+"""TSICT `.asc` parser.
 
-ASUS's internal viewer writes a directory of five files: `format.asc`
+the vendor's internal viewer writes a directory of five files: `format.asc`
 (outline), `parts.asc` (components), `pins.asc` (pin placements),
 `nails.asc` (test points), and `nets.asc` (net catalogue). Lines
-inside each file follow the Test_Link grammar. Redistributed ASUS
+inside each file follow the Test_Link grammar. Redistributed vendor
 boards in the community are packaged two ways:
 
 1. **Combined single file** — the five sections concatenated with

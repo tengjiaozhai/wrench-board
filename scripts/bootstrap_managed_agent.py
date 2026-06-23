@@ -4,7 +4,7 @@ Creates **three tier-scoped agents** that differ only by `model`:
 
     fast    — claude-haiku-4-5  (default, cheapest)
     normal  — claude-sonnet-4-6 (balanced)
-    deep    — claude-opus-4-7   (deep reasoning)
+    deep    — claude-opus-4-8   (deep reasoning)
 
 All three share the **same** system prompt and the **same** tools
 (`mb_*` + `bv_*` + `profile_*` sourced from `api/agent/manifest`). No
@@ -31,7 +31,7 @@ The following Messages-API parameters are *intentionally absent* from
   - `output_config.effort` (low|medium|high|xhigh|max) — not accepted
     on `agents.create` nor `sessions.create`. MA decides effort from
     its own internal heuristics. See `runtime_direct.py` for the
-    Messages-API equivalent (we set `effort=xhigh` on Opus 4.7 there).
+    Messages-API equivalent (we set `effort=xhigh` on Opus 4.8 there).
 
   - `output_config.task_budget` (beta `task-budgets-2026-03-13`) —
     same: not exposed by MA. The MA control plane has its own budget
@@ -43,7 +43,7 @@ The following Messages-API parameters are *intentionally absent* from
     `agent.thinking` events on the session stream. The runtime relays
     them to the WS — see `runtime_managed.py::_forward_session_to_ws`.
 
-  - Sampling parameters (`temperature`, `top_p`, `top_k`) — Opus 4.7
+  - Sampling parameters (`temperature`, `top_p`, `top_k`) — Opus 4.8
     400s on these via Messages API, and MA strips them anyway. Never
     set them.
 
@@ -60,7 +60,7 @@ On-disk format (`managed_ids.json`, gitignored):
       "agents": {
         "fast":   {"id": "agent_...", "version": 1, "model": "claude-haiku-4-5"},
         "normal": {"id": "agent_...", "version": 1, "model": "claude-sonnet-4-6"},
-        "deep":   {"id": "agent_...", "version": 1, "model": "claude-opus-4-7"}
+        "deep":   {"id": "agent_...", "version": 1, "model": "claude-opus-4-8"}
       }
     }
 
@@ -524,7 +524,7 @@ TOOLS_NO_CONSULT = _ma_filter(_BASE_TOOLS) + [_AGENT_TOOLSET]
 TIERS = {
     "fast":   {"model": "claude-haiku-4-5",  "name": "wrench-board-coordinator-fast",   "tools": TOOLS_WITH_CONSULT},
     "normal": {"model": "claude-sonnet-4-6", "name": "wrench-board-coordinator-normal", "tools": TOOLS_WITH_CONSULT},
-    "deep":   {"model": "claude-opus-4-7",   "name": "wrench-board-coordinator-deep",   "tools": TOOLS_NO_CONSULT},
+    "deep":   {"model": "claude-opus-4-8",   "name": "wrench-board-coordinator-deep",   "tools": TOOLS_NO_CONSULT},
 }
 
 

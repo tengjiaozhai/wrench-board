@@ -9,13 +9,11 @@ actually in the wild — see the module docstring for the layout.
 """
 from __future__ import annotations
 
-import struct
-
 from api.board.parser._xzz_engine_extras import (
-    _parse_resistance_payload,
-    _parse_voltage_payload,
-    _parse_signal_payload,
     _parse_menu_payload,
+    _parse_resistance_payload,
+    _parse_signal_payload,
+    _parse_voltage_payload,
     extract_post_v6_diagnostics,
 )
 

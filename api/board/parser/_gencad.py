@@ -1,8 +1,7 @@
 """GenCAD 1.4 parser — used in the wild for `.cad` boardview files.
 
 GenCAD is a public ASCII interchange format for PCB CAD data,
-originally introduced by Mentor Graphics and now used by Cadence
-Allegro Free Physical Viewer, BoardViewer 2.x, and various repair-
+used by various PCB CAD and viewer tools, and various repair-
 shop redistributions. Files start with `$HEADER` / `GENCAD 1.4` and
 carry a sequence of `$SECTION ... $ENDSECTION` blocks.
 
@@ -33,7 +32,7 @@ is on BOTTOM. Pin layer follows the component layer (TOP or BOTTOM).
 Coordinates in GenCAD files are typically floats; we round to int
 mils to match the unified `Board` model.
 
-Written from scratch by inspecting real `.cad` files (ASUS Prime,
+Written from scratch by inspecting real `.cad` files (various vendors,
 Granger). No code copied from any external codebase.
 """
 
@@ -43,7 +42,19 @@ import math
 import re
 from dataclasses import dataclass, field
 
-from api.board.model import Arc, Board, Layer, MechanicalHole, Nail, Net, Part, Pin, Point, Trace, Via
+from api.board.model import (
+    Arc,
+    Board,
+    Layer,
+    MechanicalHole,
+    Nail,
+    Net,
+    Part,
+    Pin,
+    Point,
+    Trace,
+    Via,
+)
 from api.board.parser._ascii_boardview import GROUND_RE, POWER_RE
 from api.board.parser.base import InvalidBoardFile, MalformedHeaderError
 
@@ -544,7 +555,7 @@ def _parse_components(body: str) -> list[_Component]:
         elif toks[0] == "SHAPE" and len(toks) >= 2:
             # SHAPE <name> [MIRRORY|MIRRORX|FLIP] [optional numeric extras…]
             # The name is always the first token after SHAPE in observed
-            # files (ASUS, GRANGER). Trailing tokens are flags or version
+            # files (various vendors). Trailing tokens are flags or version
             # numbers — flags set `mirror`, numbers are dropped.
             current.shape_name = toks[1]
             mirror = False

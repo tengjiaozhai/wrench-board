@@ -70,3 +70,53 @@ def test_malformed_var_data_raises(tmp_path: Path):
     f.write_text("var_data: 1 not-an-int 2 0\nFormat:\n0 0\n")
     with pytest.raises(MalformedHeaderError):
         BVParser().parse_file(f)
+
+
+# ---------------------------------------------------------------------------
+# Binary JET4 (MS Access) `.bv` — the native ATE shape.
+# ---------------------------------------------------------------------------
+
+# jet4_min.bv is OUR OWN synthetic JET4 database (built by the engine's own page
+# writer — not a third-party corpus file), holding a 2-part / 4-pin Pin table, a
+# 1-row Nail table, and a 4-point Layout outline. It exercises the full
+# binary-dispatch + table-mapping path that real exports use.
+
+
+def test_parses_binary_jet4_bv_fixture():
+    board = BVParser().parse_file(FIXTURE_DIR / "jet4_min.bv")
+    assert board.source_format == "bv"
+    assert {p.refdes for p in board.parts} == {"R1", "C1"}
+    assert len(board.pins) == 4
+    assert len(board.outline) == 4
+    assert len(board.nails) == 1
+
+    # Side mapping: (T) -> TOP, (B) -> BOTTOM.
+    assert board.part_by_refdes("R1").layer == Layer.TOP
+    assert board.part_by_refdes("C1").layer == Layer.BOTTOM
+
+    # Power / ground classification rides the shared net heuristics.
+    gnd = board.net_by_name("GND")
+    assert gnd is not None and gnd.is_ground is True
+    v33 = board.net_by_name("+3V3")
+    assert v33 is not None and v33.is_power is True
+
+
+def test_binary_jet4_dispatches_through_extension(tmp_path: Path):
+    # A binary JET4 payload routed through the public parser entry point.
+    raw = (FIXTURE_DIR / "jet4_min.bv").read_bytes()
+    f = tmp_path / "demo.bv"
+    f.write_bytes(raw)
+    board = parser_for(f).parse_file(f)
+    assert board.source_format == "bv"
+    assert len(board.parts) == 2
+
+
+def test_rejects_non_jet4_binary(tmp_path: Path):
+    # Binary-looking but NOT the Standard Jet DB shape -> clear ObfuscatedFileError,
+    # never a silent empty Board.
+    from api.board.parser.base import ObfuscatedFileError
+
+    f = tmp_path / "weird.bv"
+    f.write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(range(256)) * 8)
+    with pytest.raises(ObfuscatedFileError):
+        BVParser().parse_file(f)

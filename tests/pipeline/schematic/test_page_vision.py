@@ -115,7 +115,7 @@ async def test_extract_page_validates_and_returns_schematic_page_graph(
     mock_client, _ = _stream_client(_build_mock_response())
     graph = await extract_page(
         client=mock_client,
-        model="claude-opus-4-7",
+        model="claude-opus-4-8",
         rendered=rendered,
         total_pages=12,
         device_label="MNT Reform v2.5",
@@ -133,7 +133,7 @@ async def test_extract_page_registers_the_submit_schematic_page_tool(
 
     await extract_page(
         client=mock_client,
-        model="claude-opus-4-7",
+        model="claude-opus-4-8",
         rendered=rendered,
         total_pages=12,
     )
@@ -158,7 +158,7 @@ async def test_extract_page_sends_the_png_as_base64_image_block(
 
     await extract_page(
         client=mock_client,
-        model="claude-opus-4-7",
+        model="claude-opus-4-8",
         rendered=rendered,
         total_pages=12,
     )
@@ -192,7 +192,7 @@ async def test_extract_page_overrides_wrong_page_number_from_model(
     mock_client, _ = _stream_client(_build_mock_response(input_payload=bad_payload))
     graph = await extract_page(
         client=mock_client,
-        model="claude-opus-4-7",
+        model="claude-opus-4-8",
         rendered=rendered,
         total_pages=12,
     )
@@ -215,7 +215,7 @@ async def test_extract_page_mentions_scanned_hint_when_flagged(
 
     await extract_page(
         client=mock_client,
-        model="claude-opus-4-7",
+        model="claude-opus-4-8",
         rendered=scanned,
         total_pages=12,
     )

@@ -11,7 +11,7 @@ toward the Managed-Agents hackathon track). For each scenario the harness:
   3. Captures every agent message (post-sanitizer text), tool_use, memory
      tool, and turn_cost event.
   4. Scores binary checks against the scenario's `checks` block.
-  5. Asks an Opus 4.7 judge for a 0-10 quality rating against the rubric.
+  5. Asks an Opus 4.8 judge for a 0-10 quality rating against the rubric.
   6. Computes scenario_score = 0.7 * mean(binary) + 0.3 * judge/10.
   7. Cleans the ephemeral repair dir (no home-view pollution).
 
@@ -55,7 +55,7 @@ DEFAULT_HOST = "http://localhost:8000"
 DEFAULT_BENCH = REPO / "benchmark" / "agent_scenarios.jsonl"
 DEFAULT_TIER = "normal"
 
-JUDGE_MODEL = "claude-opus-4-7"
+JUDGE_MODEL = "claude-opus-4-8"
 JUDGE_MAX_TOKENS = 800
 JUDGE_TIMEOUT_S = 60.0
 
@@ -200,11 +200,11 @@ async def _create_repair(host: str, slug: str, label: str, complaint: str) -> st
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(
             f"{host}/pipeline/repairs",
-            json={
+            data={
                 "device_label": label,
                 "device_slug": slug,
                 "symptom": f"eval_diagnostic_agent — {complaint[:80]}",
-                "force_rebuild": False,
+                "force_rebuild": "false",
             },
         )
         resp.raise_for_status()

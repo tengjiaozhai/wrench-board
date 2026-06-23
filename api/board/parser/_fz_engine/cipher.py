@@ -26,7 +26,6 @@ from __future__ import annotations
 import os
 import struct
 
-
 FZ_KEY_ENV = "WRENCH_BOARD_FZ_KEY"
 
 
@@ -64,6 +63,16 @@ KEY_WORDS: tuple[int, ...] | None = _load_key_words()
 _WINDOW = 16
 _ROUNDS = 20
 
+# Accélération OPTIONNELLE : le cœur du cipher (boucle bit/byte, ~0,02 Mo/s en
+# Python pur à cause de dizaines de M d'appels rotate-32) est réécrit en Rust/PyO3
+# (`rust/wb_fz_cipher/`, build maturin) avec une sortie GARANTIE byte-identique
+# (tests `tests/board/test_fz_cipher_rust.py`). S'il n'est pas construit (self-host
+# sans toolchain Rust), on retombe sur le cœur Python pur — jamais une dépendance dure.
+try:
+    from wb_fz_cipher import decrypt_fz_xor as _rust_decrypt
+except ImportError:  # pragma: no cover - dépend de la présence du build Rust
+    _rust_decrypt = None
+
 
 def _rol32(v: int, s: int) -> int:
     """Rotate a 32-bit unsigned value left by `s` bits.
@@ -98,6 +107,19 @@ def decrypt_fz_xor(cipher: bytes, key: tuple[int, ...] | None = None) -> bytes:
         )
     if len(key) != 44:
         raise ValueError(f"FZ-xor key must be 44 uint32 words, got {len(key)}")
+    # Délègue le hot-loop au cœur natif s'il est construit (sortie byte-identique
+    # au cœur Python — vérifié par les tests d'équivalence). Sinon, Python pur.
+    if _rust_decrypt is not None:
+        return _rust_decrypt(bytes(cipher), list(key))
+    return _decrypt_core_py(cipher, key)
+
+
+def _decrypt_core_py(cipher: bytes, key: tuple[int, ...]) -> bytes:
+    """Cœur Python pur du cipher FZ-xor (fallback quand le module Rust est absent).
+
+    Réplique exactement l'algorithme ; le module Rust `wb_fz_cipher` en est la
+    traduction byte-identique accélérée.
+    """
     K = key
     window = bytearray(_WINDOW)
     n5 = n4 = n3 = n2 = 0

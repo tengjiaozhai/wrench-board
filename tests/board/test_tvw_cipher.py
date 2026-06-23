@@ -1,8 +1,6 @@
 """Tests for the TVW header substitution cipher."""
 from __future__ import annotations
 
-import pytest
-
 from api.board.parser._tvw_engine.cipher import decode, encode
 
 

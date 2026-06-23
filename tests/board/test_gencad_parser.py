@@ -1,5 +1,5 @@
 """Tests for the GenCAD 1.4 parser — the format real `.cad` files actually
-ship in (verified against ASUS Prime A520M and GRANGER 6050A2977701)."""
+ship in (verified against real vendor `.cad` files)."""
 
 from __future__ import annotations
 
@@ -147,7 +147,7 @@ def test_testpins_become_nails():
 
 
 def test_shape_with_trailing_numeric_args_is_handled():
-    """Real ASUS files write `SHAPE name 0 0` — extra numeric tokens after
+    """Real vendor files write `SHAPE name 0 0` — extra numeric tokens after
     the shape name must not be treated as part of the name."""
     board = parse_gencad(_GENCAD_DEMO, file_hash="sha256:x", board_id="x")
     r2 = board.part_by_refdes("R2")

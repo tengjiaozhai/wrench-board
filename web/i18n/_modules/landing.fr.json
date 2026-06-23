@@ -5,24 +5,36 @@
     "delete_aria": "Supprimer cette réparation",
     "delete_title": "Supprimer",
     "count_one": "{n} réparation",
-    "count_many": "{n} réparations"
+    "count_many": "{n} réparations",
+    "state_building": "En construction",
+    "state_paused": "À confirmer",
+    "state_failed": "Échec du build",
+    "locked_hint": "Le pack de connaissances se construit. Tu peux fermer cette page, ça continue.",
+    "resume_aria": "Voir la progression de ce build"
   },
   "hero": {
     "title": "Ton assistant de réparation hardware.",
-    "sub": "Donne-moi ton appareil et le symptôme — je construis la connaissance et j'ouvre le diagnostic.",
+    "sub": "Donne-moi ton appareil et le symptôme : je construis la connaissance et j'ouvre le diagnostic.",
     "device_placeholder": "Appareil (ex. MNT Reform motherboard, iPhone 11, Framework 13)",
     "device_aria": "Quel appareil",
     "symptom_placeholder": "Symptôme (ex. ne s'allume plus, pas de charge, écran noir)",
     "symptom_aria": "Quel est le symptôme",
     "submit": "Lancer le diagnostic"
   },
-  "chips": {
-    "mnt_label": "MNT Reform — pas de boot",
-    "mnt_symptom": "pas de boot, écran noir",
-    "iphone_label": "iPhone 11 — pas de charge",
-    "iphone_symptom": "ne charge plus",
-    "framework_label": "Framework — écran noir",
-    "framework_symptom": "écran noir au démarrage"
+  "preflight": {
+    "badge": "Nouvel appareil",
+    "title": "Lancer le diagnostic · {device}",
+    "intro": "Aucune fiche de connaissances n'existe encore pour cet appareil. Le lancement va en construire une de zéro.",
+    "credit": "Ce diagnostic consomme 1 crédit pour construire le pack de connaissances de l'appareil.",
+    "time": "La construction complète peut prendre plus de 15 minutes. Tu peux fermer cette page, ça continue de travailler.",
+    "schematic_label": "Schéma : c'est le moment de l'ajouter",
+    "schematic_none": "Aucun schéma fourni. Si tu as le PDF du schéma, ajoute-le maintenant. Il améliore nettement le pack.",
+    "schematic_attached": "Schéma joint. Il sera ingéré pour affiner le pack.",
+    "schematic_replace": "Choisir un autre PDF",
+    "email_optin": "Préviens-moi par email quand l'appareil est prêt, pour ne pas attendre ici.",
+    "close": "Fermer",
+    "cancel": "Annuler",
+    "confirm": "Lancer le diagnostic"
   },
   "timeline": {
     "title_default": "Construction de la fiche…",
@@ -31,21 +43,38 @@
     "title_loading": "Chargement de la fiche · {device}",
     "title_ready": "Fiche prête · {status}",
     "title_failed": "Pipeline échoué",
+    "title_queued": "En file d'attente · position {position}",
     "elapsed": "Écoulé · {n}s",
     "phase_scout": "Scout · recherche web",
     "phase_registry": "Registry · vocabulaire canonique",
     "phase_mapper": "Mapper · refdes ↔ graphe",
     "phase_writers": "Writers · graphe + règles + glossaire",
     "phase_audit": "Auditor · validation",
-    "phase_expand": "Recherche ciblée sur ton symptôme"
+    "phase_schematic_ingest": "Schéma · vision page par page",
+    "phase_device_kind": "Type de carte · classification",
+    "phase_expand": "Recherche ciblée sur ton symptôme",
+    "detail": "détail",
+    "detail_hide": "masquer",
+    "step": {
+      "search_round": "recherche web · tour {index}",
+      "page": "page {index}/{total}",
+      "writer_graph": "graphe ✓ {count} nœuds",
+      "writer_rules": "règles ✓ {count}",
+      "writer_dict": "dico ✓ {count}",
+      "audit": "audit en cours",
+      "revision": "révision {index}"
+    }
   },
   "status": {
     "pipeline_started": "Pipeline démarré sur {device}.",
+    "queued": "En attente : position {position} dans la file ({ahead} devant). Le diagnostic démarre automatiquement dès qu'un créneau se libère.",
     "checking": "J'enregistre ta réparation et je vérifie si je connais déjà cet appareil…",
     "rule_match": "Je connais déjà ce cas ({rule_id}). J'ouvre le diagnostic…",
     "device_known": "Je connais déjà {device}. J'ouvre le diagnostic…",
     "expand": "Je connais {device}. J'ajoute ton symptôme spécifique (~3 min).",
-    "build_new": "Nouveau pour moi — je construis la fiche en arrière-plan. Tu peux regarder.",
+    "build_new": "Nouveau pour moi : je construis la fiche en arrière-plan. Tu peux regarder.",
+    "build_delay": "Nouvel appareil : je prépare sa fiche de connaissances. Ça peut prendre un moment. Tu peux fermer cette page et revenir, la préparation continue.",
+    "notify_armed": "C'est noté. On t'envoie un email dès que l'appareil est prêt.",
     "ready": "C'est prêt. J'ouvre le diagnostic…",
     "ws_lost": "Connexion au pipeline interrompue. Recharge la page si rien ne bouge.",
     "error_create": "Échec de la création : {error}",
@@ -53,17 +82,73 @@
     "error_unknown": "inconnue",
     "error_invalid_response": "réponse invalide du serveur",
     "error_delete": "Échec de la suppression : {error}",
-    "validation_device": "Précise l'appareil — au moins quelques mots.",
+    "validation_device": "Précise l'appareil (au moins quelques mots).",
     "validation_symptom": "Décris un peu plus le symptôme."
   },
   "delete": {
     "confirm": "Supprimer cette réparation ? La conversation et les notes de l'agent seront effacées définitivement."
   },
+  "kind": {
+    "none": "(type de carte, optionnel)",
+    "aria": "Type de carte"
+  },
+  "knowledge": {
+    "button": "Connaissance",
+    "aria": "Ajouter de la connaissance sur l'appareil",
+    "badge": "Optionnel",
+    "title": "Ajouter de la connaissance sur l'appareil",
+    "close": "Fermer",
+    "intro": "Plus de contexte affine le pack. Tout ici est optionnel.",
+    "done": "OK"
+  },
+  "board_number": {
+    "label": "Numéro de carte (optionnel)",
+    "placeholder": "820-02016",
+    "aria": "Numéro de carte",
+    "hint": "Gravé sur le PCB. Débloque les specs connues de ta révision exacte."
+  },
+  "schematic": {
+    "cta": "Joindre un PDF de schéma (optionnel)",
+    "aria": "Schéma PDF",
+    "already_ingested": "Schéma déjà ingéré ✓ (pas besoin de joindre)"
+  },
   "suggest": {
     "aria": "Suggestions d'appareils",
-    "draft": "brouillon"
+    "draft": "brouillon",
+    "graph_label": "graphe",
+    "graph_title": "Graphe électrique prêt"
   },
   "tools": {
     "stock": "Stock"
+  },
+  "free": {
+    "locked_hint": "Plan gratuit : choisis un appareil déjà analysé (✓) dans la liste pour lancer un diagnostic.",
+    "upgrade_cta": "Passer à Pro pour analyser un nouvel appareil →"
+  },
+  "catalogue": {
+    "button": "Parcourir les appareils",
+    "aria": "Parcourir les appareils disponibles",
+    "title": "Appareils disponibles",
+    "search_placeholder": "Cherche un appareil, une marque, un numéro de carte…",
+    "filter_aria": "Filtrer par type d'appareil",
+    "filter_all": "Tous",
+    "empty": "Aucun appareil ne correspond.",
+    "draft": "brouillon",
+    "graph": "graphe",
+    "fiche_back": "Tous les appareils",
+    "fiche_known": "Ce qu'on connaît",
+    "fiche_registry": "Registre",
+    "fiche_graph": "Graphe de connaissances",
+    "fiche_rules": "Règles de diagnostic",
+    "fiche_dictionary": "Glossaire",
+    "fiche_boardview": "Boardview",
+    "fiche_schematic": "Schéma",
+    "fiche_symptom_placeholder": "Décris le problème (ex. ne s'allume pas, ne charge pas)",
+    "fiche_launch": "Lancer le diagnostic",
+    "fiche_draft_locked": "Cet appareil est encore en construction : diagnostic indisponible pour l'instant.",
+    "present": "oui",
+    "absent": "non",
+    "button_short": "Parcourir",
+    "crumb_types": "Types"
   }
 }

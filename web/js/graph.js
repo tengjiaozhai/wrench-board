@@ -3,6 +3,10 @@
 // inside #canvas. Relies on d3 being available as a global (loaded via
 // the CDN <script> in index.html).
 
+import { escapeHtml as escHtml } from "./shared/dom.js";
+import { getPackGraph } from "./services/packs.js";
+import { getDeviceSlug } from "./shared/context.js";
+
 /* =========================================================
    GRAPH DATA — loaded at runtime from GET /pipeline/packs/{slug}/graph.
    Starts empty until loadGraphFromBackend() resolves; the UI shows an
@@ -13,26 +17,19 @@
    ========================================================= */
 let DATA = { nodes: [], edges: [] };
 
-function escHtml(s) {
-  if (s === null || s === undefined) return "";
-  return String(s).replace(/[&<>"']/g, c => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-  }[c]));
-}
-
 export async function loadGraphFromBackend() {
-  const params = new URLSearchParams(window.location.search);
-  const slug = params.get("device");
+  const slug = getDeviceSlug();
   if (!slug) return null;
   try {
-    const res = await fetch(`/pipeline/packs/${encodeURIComponent(slug)}/graph`);
-    if (!res.ok) {
-      console.warn(`loadGraphFromBackend: ${res.status} for slug=${slug}`);
-      return null;
-    }
-    return await res.json();
+    return await getPackGraph(slug);
   } catch (err) {
-    console.error("loadGraphFromBackend: fetch failed", err);
+    // ApiError carries .status for non-ok responses; preserve the
+    // status-aware warning, fall through to the generic error log otherwise.
+    if (err && typeof err.status === "number") {
+      console.warn(`loadGraphFromBackend: ${err.status} for slug=${slug}`);
+    } else {
+      console.error("loadGraphFromBackend: fetch failed", err);
+    }
     return null;
   }
 }
@@ -392,7 +389,7 @@ function selectNode(d){
   if (d.confidence<0.6) note = t("graph.inspector.conf_low");
   else if (d.confidence<0.8) note = t("graph.inspector.conf_medium");
   document.getElementById("confNote").textContent = note;
-  document.getElementById("inspDesc").textContent = d.description || "—";
+  document.getElementById("inspDesc").textContent = d.description || "…";
 
   const mg = document.getElementById("metaGrid"); mg.innerHTML="";
   const entries = Object.entries(d.meta || {});

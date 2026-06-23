@@ -1,10 +1,9 @@
-"""IBM Lenovo Card Analysis Support Tool `.cst` parser.
+"""`.cst` boardview parser.
 
-**Scope honesty.** Castw v3.32 (IBM's internal ICT viewer for
-ThinkPad service dumps) is a 1990s-era tool with no published
+**Scope honesty.** The `.cst` format is a 1990s-era boardview format with no published
 file-format spec. This parser assumes a Test_Link-shape ASCII
 variant with INI-style bracketed section headers (`[Format]`,
-`[Components]`, `[Pins]`, `[Nails]`). Real Castw files in the field
+`[Components]`, `[Pins]`, `[Nails]`). Real `.cst` files in the field
 are more likely a binary container. Until a binary fixture lands in
 `board_assets/`, this stays best-effort: the parser detects clearly
 binary payloads and rejects them with a clear hint instead of
@@ -46,7 +45,7 @@ class CSTParser(BoardParser):
     def parse(self, raw: bytes, *, file_hash: str, board_id: str) -> Board:
         if looks_like_binary(raw):
             raise ObfuscatedFileError(
-                "cst: this file looks like a binary IBM Castw container "
+                "cst: this file looks like a binary `.cst` container "
                 "(non-printable byte ratio > 30%). Current parser supports "
                 "the Test_Link-shape ASCII variant only."
             )

@@ -109,11 +109,11 @@ async def _create_repair(host: str, slug: str) -> str:
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(
             f"{host}/pipeline/repairs",
-            json={
+            data={
                 "device_label": "MNT Reform motherboard (bench)",
                 "device_slug": slug,
                 "symptom": "bench_agent_flow — scripted U13 buck-dead scenario",
-                "force_rebuild": False,
+                "force_rebuild": "false",
             },
         )
         resp.raise_for_status()

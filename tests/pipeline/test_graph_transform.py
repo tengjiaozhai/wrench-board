@@ -244,3 +244,46 @@ def test_single_rule_action_keeps_original_shape():
     assert "count" not in actions[0]["meta"]
     assert "rule_ids" not in actions[0]["meta"]
     assert actions[0]["meta"]["rule_id"] == "rule-demo-001"
+
+
+def test_symptom_backfill_long_label_id_within_bounds():
+    """Un symptôme avec un libellé très long (≥ 50 chars) doit produire un id
+    conforme au pattern ^N-[A-Z0-9_-]{1,48}$ — jamais plus de 50 chars au total.
+    Vérifie aussi que KnowledgeNode valide l'id sans lever d'exception.
+
+    Fix B (T8) : le slug est tronqué à 40 chars avant d'assembler N-S_<slug>
+    (réserve 4 chars pour le suffixe d'unicité éventuel, et 4 pour le préfixe
+    "N-S_"), soit len(N-S_<slug>) ≤ 44 < 50 en toutes circonstances.
+    """
+    import re
+
+    from api.pipeline.schemas import KnowledgeNode
+
+    long_symptom = "device completely fails to power on after liquid damage on board"
+    assert len(long_symptom) > 50  # s'assurer que le cas est bien couvert
+
+    reg = {"schema_version": "1.0", "device_label": "synth",
+           "components": [], "signals": []}
+    rules_payload = {"schema_version": "1.0", "rules": [
+        {
+            "id": "R-LONG-001",
+            "confidence": 0.7,
+            "symptoms": [long_symptom],
+            "likely_causes": [],
+        }
+    ]}
+    payload = pack_to_graph_payload(
+        registry=reg,
+        knowledge_graph={"schema_version": "1.0", "nodes": [], "edges": []},
+        rules=rules_payload,
+        dictionary={"schema_version": "1.0", "entries": []},
+    )
+
+    symptom_nodes = [n for n in payload["nodes"] if n["type"] == "symptom"]
+    assert len(symptom_nodes) == 1
+    sid = symptom_nodes[0]["id"]
+
+    assert re.match(r"^N-[A-Z0-9_-]{1,48}$", sid), f"id hors pattern : {sid!r}"
+    assert len(sid) <= 50, f"id trop long ({len(sid)} chars) : {sid!r}"
+    # Valide via le schéma Pydantic — lève si le pattern est violé.
+    KnowledgeNode(id=sid, kind="symptom", label=long_symptom, properties={})

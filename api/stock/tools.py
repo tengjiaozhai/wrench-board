@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from api.agent.owner_ref import current_owner_ref
 from api.config import get_settings
 from api.stock.schemas import PartsIndex, StockSearchQuery
 from api.stock.search import stock_search as _search_impl
@@ -24,9 +25,12 @@ def _memory_root() -> Path:
     return Path(get_settings().memory_root)
 
 
+# Every agent stock tool scopes to the session's tenant (current_owner_ref):
+# the cloud front-door set it from X-Owner-Ref, so a tenant's agent only ever
+# touches that tenant's private inventory. None (standalone) → the global store.
 def stock_search(payload: dict[str, Any]) -> dict[str, Any]:
     query = StockSearchQuery.model_validate(payload)
-    res = _search_impl(query)
+    res = _search_impl(query, current_owner_ref())
     return res.model_dump(mode="json")
 
 
@@ -35,7 +39,8 @@ def stock_consume(payload: dict[str, Any]) -> dict[str, Any]:
     refdes = payload["refdes"]
     notes = payload.get("notes")
     repair_id = payload.get("repair_id")
-    ok = consume_part(donor_id=donor_id, refdes=refdes, repair_id=repair_id, notes=notes)
+    ok = consume_part(donor_id=donor_id, refdes=refdes, repair_id=repair_id, notes=notes,
+                      owner_ref=current_owner_ref())
     if not ok:
         return {"ok": False, "reason": f"donor_id {donor_id!r} not found in stock"}
     return {"ok": True, "donor_id": donor_id, "refdes": refdes}
@@ -47,7 +52,8 @@ def stock_mark_donor(payload: dict[str, Any]) -> dict[str, Any]:
     condition = payload.get("condition", "donor_only")
 
     try:
-        donor_id = mark_donor(device_slug=device_slug, label=label, condition=condition)
+        donor_id = mark_donor(device_slug=device_slug, label=label, condition=condition,
+                              owner_ref=current_owner_ref())
     except FileNotFoundError:
         return {"created": False, "reason": f"device_slug {device_slug!r} not found in memory/"}
 
@@ -63,13 +69,13 @@ def stock_mark_donor(payload: dict[str, Any]) -> dict[str, Any]:
 
 def stock_unmark_donor(payload: dict[str, Any]) -> dict[str, Any]:
     donor_id = payload["donor_id"]
-    if not unmark_donor(donor_id):
+    if not unmark_donor(donor_id, owner_ref=current_owner_ref()):
         return {"ok": False, "reason": f"donor_id {donor_id!r} not found"}
     return {"ok": True}
 
 
 def stock_list_donors(payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    inv = load_inventory()
+    inv = load_inventory(current_owner_ref())
     out = []
     memory_dir = _memory_root()
     for donor in inv.donors.values():

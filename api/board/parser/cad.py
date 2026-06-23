@@ -1,6 +1,6 @@
-"""Generic BoardViewer 2.1.0.8 `.cad` parser.
+"""Generic `.cad` boardview parser.
 
-The `.cad` extension is an umbrella used by the generic BoardViewer
+The `.cad` extension is an umbrella used by the generic `.cad`
 2.1.0.8 distribution. The reliable path is the BRD2 sniff: when the
 upload starts with `BRDOUT:` we delegate to `BRD2Parser` (verified
 on real open-hardware BRD2 files). The Test_Link-shape ASCII fallback
@@ -21,6 +21,7 @@ from api.board.parser._ascii_boardview import (
     looks_like_binary,
     parse_test_link_shape,
 )
+from api.board.parser._cpd_neutral import looks_like_cpd_neutral, parse_cpd_neutral
 from api.board.parser._fz_zlib import looks_like_fz_zlib, parse_fz_zlib
 from api.board.parser._gencad import looks_like_gencad, parse_gencad
 from api.board.parser.base import BoardParser, ObfuscatedFileError, register
@@ -57,9 +58,16 @@ class CADParser(BoardParser):
         if "BRDOUT:" in text[:1024]:
             board = BRD2Parser().parse(raw, file_hash=file_hash, board_id=board_id)
             return board.model_copy(update={"source_format": "cad"})
+        # A CPD3 "neutral file" — a `#`-commented, `###`-sectioned
+        # ASCII export the CPD toolchain writes (`COMP`/`C_PIN`/`NET`). Unrelated
+        # to the generic Test_Link `.cad` dialect above; routed by signature.
+        if looks_like_cpd_neutral(text):
+            return parse_cpd_neutral(
+                text, file_hash=file_hash, board_id=board_id, source_format="cad"
+            )
         if looks_like_binary(raw):
             raise ObfuscatedFileError(
-                "cad: this file looks like a binary BoardViewer container "
+                "cad: this file looks like a binary `.cad` container "
                 "(non-printable byte ratio > 30%). Current parser supports "
                 "FZ-zlib, GenCAD 1.4, BRD2, and Test_Link-shape ASCII."
             )

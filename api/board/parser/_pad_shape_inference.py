@@ -30,6 +30,7 @@ leaving the caller free to keep whatever upstream shape was set.
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 
 # Boundary regex: match start, end, or any non-letter (digit, dash, dot,
 # underscore). Python's `\b` treats `_` as a word character, so `\b` does
@@ -100,8 +101,8 @@ _RECT_PATTERNS = [
     # Shorting pads / bridges — flat SMD lands.
     re.compile(_LB + r"SHORTPIN", re.IGNORECASE),
     re.compile(_LB + r"NET_SHORT", re.IGNORECASE),
-    # Connector refdes prefixes (CN1, CN12, J1, J100). ASUS dumps with
-    # the SYM_NAME==REFDES quirk (DUAL 1060 etc.) ship no footprint or
+    # Connector refdes prefixes (CN1, CN12, J1, J100). Vendor dumps with
+    # the SYM_NAME==REFDES quirk (some dumps) ship no footprint or
     # BOM value for the PCI-Express edge connector or the screw-on IO
     # connectors — `^CN\d` / `^J\d` are the safe last-resort match.
     re.compile(r"^(CN|J)\d+(?:_|$)", re.IGNORECASE),
@@ -128,7 +129,7 @@ _RECT_PATTERNS = [
     # descriptions like `POSCAP 330UF/2.5V(3528)`.
     re.compile(_LB + r"(7343|7520|3528|6032|2917|2812|1812)" + _RB),
     # BOM-description keywords — used as a fallback when the SYM_NAME
-    # column duplicates the refdes (Asus DUAL 1060 dumps). These are
+    # column duplicates the refdes (some vendor dumps). These are
     # plain English / lowercase-aware words from the BOM stream.
     re.compile(_LB + r"MOSFET", re.IGNORECASE),
     re.compile(_LB + r"MLCC" + _RB, re.IGNORECASE),
@@ -163,6 +164,7 @@ _CIRCLE_PATTERNS = [
 ]
 
 
+@lru_cache(maxsize=8192)
 def infer_pad_shape(footprint: str | None) -> str | None:
     """Return `"rect"` / `"circle"` for the given footprint, `None` when
     no rule applies.
@@ -170,6 +172,10 @@ def infer_pad_shape(footprint: str | None) -> str | None:
     Rect rules are tried first so chip-under-BGA suffixes like
     `CAP1005_0_55H_BGA` resolve to rect (matching the chip's actual
     package) instead of circle (matching the trailing position tag).
+
+    Pure function of `footprint` → memoised: called once per pin in the FZ
+    pin-build loop (tens of thousands of calls), but distinct footprints are a
+    small set, so the ~35 regex searches run once per unique footprint, not per pin.
     """
     if not footprint or not footprint.strip():
         return None

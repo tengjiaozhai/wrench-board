@@ -175,13 +175,18 @@ def _parse_nets(lines: list[str]) -> list[str]:
     names: list[str] = []
     for raw in body:
         parts = raw.split(maxsplit=1)
-        if len(parts) < 2:
+        if not parts:
             raise MalformedHeaderError("NETS")
         try:
             int(parts[0])
         except ValueError as exc:
             raise MalformedHeaderError("NETS") from exc
-        names.append(parts[1].strip())
+        # A NET line may carry only an id and no name (`<id> ` with trailing
+        # whitespace) — an unnamed/unconnected net. Several vendors' `.brd`
+        # exports (e.g. LA-E921P, BK3, X81K) declare their trailing nets this
+        # way. The positional slot MUST be kept (PINS/NAILS reference 1-based
+        # net ids), so record an empty name rather than raising.
+        names.append(parts[1].strip() if len(parts) >= 2 else "")
     return names
 
 
@@ -247,8 +252,15 @@ _NailRaw = tuple[int, int, int, int, int]
 def _parse_nails(lines: list[str]) -> list[_NailRaw]:
     """Parse the `NAILS: <n>` block. Each line is `probe x y net_id side`.
 
-    `NAILS: 0` is legal (no test points declared).
+    `NAILS: 0` is legal (no test points declared). An entirely absent NAILS
+    block is also legal and equivalent to `NAILS: 0`: some real-world exporters
+    (e.g. some motherboard `.brd` exports) simply
+    stop after the PINS block when the board declares no test points. We treat a
+    missing marker as zero nails rather than raising — NAILS is the trailing,
+    optional block, distinct from the structurally-required BRDOUT/PARTS/PINS.
     """
+    if not any(ln.strip().startswith("NAILS:") for ln in lines):
+        return []
     header_idx, n = _find_block(lines, "NAILS:")
     if n == 0:
         return []

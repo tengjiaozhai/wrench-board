@@ -8,6 +8,8 @@
 // then call viewer.loadBoard() on every subsequent navigation / pin
 // switch.
 
+import { getDeviceSlug } from "./shared/context.js";
+
 let viewer = null;
 let boardPayload = null;
 let _refdesMap = null;
@@ -18,8 +20,9 @@ let _netSet = null;
 let _loadedSlug = null;
 
 function resolveSlug() {
-  const qs = new URLSearchParams(window.location.search);
-  return qs.get("device") || qs.get("board") || null;
+  return getDeviceSlug()
+      || new URLSearchParams(window.location.search).get("board")
+      || null;
 }
 
 function rebuildIndexes(payload) {
@@ -112,18 +115,12 @@ console.log(
   typeof window.PCBViewerOptimized
 );
 
-// Snapshot the SVG initBoardview as a fallback for slugs we can't resolve.
-const _svgInitBoardview = window.initBoardview;
-
 window.initBoardview = async function bridgedInit(_containerEl) {
   // _containerEl is the legacy SVG mount target — we ignore it because the
   // native PCB section ships its own canvas / info panel layout.
   const slug = resolveSlug();
   console.log("[pcb_viewer_bridge] bridgedInit slug=", slug);
-  if (!slug) {
-    if (typeof _svgInitBoardview === "function") return _svgInitBoardview(_containerEl);
-    return;
-  }
+  if (!slug) return;
   // Already loaded — just resize the canvas to the now-visible
   // section and bail. The user toggling between #home and #pcb
   // shouldn't pay for a fresh decrypt + rebuild every time.
@@ -133,11 +130,9 @@ window.initBoardview = async function bridgedInit(_containerEl) {
     if (viewer.requestRender) viewer.requestRender();
     return;
   }
-  const ok = await ensureViewerAndLoad(slug);
-  if (!ok && typeof _svgInitBoardview === "function") {
-    console.warn("[pcb_viewer_bridge] viewer load failed — SVG fallback");
-    return _svgInitBoardview(_containerEl);
-  }
+  // WebGL is the only renderer now (the SVG brd_viewer.js fallback was
+  // retired). A failure here surfaces in ensureViewerAndLoad's own error UI.
+  await ensureViewerAndLoad(slug);
 };
 
 // ---------- window.Boardview override ----------
@@ -447,44 +442,11 @@ window.Boardview = {
   },
 };
 
-// ---------- Net-category color wrapping ----------
-//
-// brd_viewer.js (SVG) defines window.setBoardviewNetColor /
-// window.resetBoardviewColors and main.js wires the Tweaks <input
-// type="color"> rows to them. Wrap those globals so any SVG-side colour
-// change ALSO recolours the WebGL viewer's pin instances. This keeps
-// the picker code (main.js) format-agnostic — no need to know whether
-// the WebGL viewer is alive.
-
-(function wrapBoardviewColorAPI() {
-  const origSet = window.setBoardviewNetColor;
-  if (typeof origSet === "function" && !origSet.__wrappedForWebGL) {
-    const wrapped = function (category, hex) {
-      try { origSet(category, hex); } catch (_) {}
-      if (viewer && typeof viewer.setNetCategoryColor === "function") {
-        try { viewer.setNetCategoryColor(category, hex); } catch (_) {}
-      }
-    };
-    wrapped.__wrappedForWebGL = true;
-    window.setBoardviewNetColor = wrapped;
-  }
-
-  const origReset = window.resetBoardviewColors;
-  if (typeof origReset === "function" && !origReset.__wrappedForWebGL) {
-    const wrapped = function () {
-      try { origReset(); } catch (_) {}
-      // After reset, replay each default through the WebGL viewer too.
-      if (viewer && typeof viewer.setNetCategoryColor === "function") {
-        const defaults = (window.getBoardviewColors && window.getBoardviewColors()) || {};
-        for (const cat of Object.keys(defaults)) {
-          try { viewer.setNetCategoryColor(cat, defaults[cat]); } catch (_) {}
-        }
-      }
-    };
-    wrapped.__wrappedForWebGL = true;
-    window.resetBoardviewColors = wrapped;
-  }
-})();
+// Net-category colour API note: the four window.*BoardviewColor* globals are
+// now defined directly by pcb_viewer.js (which owns the palette defaults, the
+// 'msa.pcb.netColors' store, and the live-recolour path). The Tweaks picker in
+// main.js talks to them unchanged. No bridge wrapping is needed anymore — the
+// legacy SVG brd_viewer.js that used to define them has been retired.
 
 // ---------- Toolbar wiring (Fit + Top/Bottom) ----------
 //

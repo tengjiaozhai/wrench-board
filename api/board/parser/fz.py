@@ -28,8 +28,8 @@ from __future__ import annotations
 from api.board.model import Board
 from api.board.parser._fz_engine.cipher import (
     FZ_KEY_ENV,
-    FZKeyNotConfigured,
     KEY_WORDS,
+    FZKeyNotConfigured,
     decrypt_fz_xor,
 )
 from api.board.parser._fz_zlib import looks_like_fz_zlib, parse_fz_zlib

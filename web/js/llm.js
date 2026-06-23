@@ -24,9 +24,6 @@
 // Activated by ⌘/Ctrl+J and by clicking the topbar "Agent" button.
 
 import {
-  blobToBase64,
-  captureFrame,
-  isCameraAvailable,
   selectedCameraDeviceId,
   selectedCameraLabel,
 } from './camera.js';
@@ -36,19 +33,72 @@ import {
   openPreview,
 } from './camera_preview.js';
 import { mountMascot, setMascotState } from './mascot.js';
-
-const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;  // 5MB raw, mirrors backend cap
+import { escapeHtml as escapeHTML } from './shared/dom.js';
+import { getDeviceSlug, getRepairId } from './shared/context.js';
+import { connectDiagnostic } from './services/diagnosticSocket.js';
+// Same ?v=quest4 query main.js uses — ESM keys modules by URL, so a bare
+// './protocol.js' would create a second instance with its own state, missing
+// the Protocol.init() wiring main.js applied.
+import * as Protocol from './protocol.js?v=quest4';
+// SimulationController owns the schematic observation UI; we mirror agent
+// measurement events onto it. Same ?v=fitzoom query main.js uses (single
+// module instance). schematic.js does not import llm.js → no cycle.
+import { SimulationController } from './schematic.js?v=fitzoom';
+import { store } from './store.js';
+import {
+  TOOL_PHRASES,
+  MEMORY_TOOL_PHRASES,
+  toolFallback,
+  memToolFallback,
+} from './features/repair/diagnostic/toolPhrases.js';
+import {
+  fmtUsd,
+  updateCostTotal,
+  resetCost,
+  recordTurnCost,
+} from './features/repair/diagnostic/costDisplay.js';
+import {
+  sendCapabilities,
+  handleMacroUpload,
+  handleCaptureRequest,
+} from './features/repair/diagnostic/filesVision.js';
+import {
+  logMessage,
+  logSys,
+  renderContextLost,
+  renderResumeSummary,
+  appendProtocolSystemEvent,
+  renderInlineProtocolCard,
+  ensureTurn,
+  closeTurn,
+  getCurrentTurn,
+  ensurePendingNode,
+  appendStep,
+  addExpandToStep,
+  appendTurnMessage,
+  appendTurnFoot,
+} from './features/repair/diagnostic/chatLog.js';
 
 let ws = null;
+// Route scope the live socket was dialed with ({slug, repairId}). openPanel()
+// compares it to the CURRENT route: SPA navigation repair A → repair B never
+// closes the old socket, and a live socket used to short-circuit the
+// reconnect — leaving the panel (and every typed message) bound to repair A.
+let wsScope = null;
 let currentTier = "deep";
 // Cached <svg.mascot> mounted into #llmMascot at panel-fragment init time.
 // `setPanelMascot()` is the single chokepoint for animating it from WS events
 // and form submission — null-safe when the fragment hasn't loaded yet.
 let panelMascot = null;
 let _errorRecoveryT = null;
+let _typingHoldT = null;
+function _clearMascotTimers() {
+  if (_errorRecoveryT) { clearTimeout(_errorRecoveryT); _errorRecoveryT = null; }
+  if (_typingHoldT) { clearTimeout(_typingHoldT); _typingHoldT = null; }
+}
 function setPanelMascot(state) {
   if (!panelMascot) return;
-  if (_errorRecoveryT) { clearTimeout(_errorRecoveryT); _errorRecoveryT = null; }
+  _clearMascotTimers();
   setMascotState(panelMascot, state);
   if (state === "error") {
     _errorRecoveryT = setTimeout(() => {
@@ -56,6 +106,19 @@ function setPanelMascot(state) {
       _errorRecoveryT = null;
     }, 1800);
   }
+}
+// The WS delivers the assistant message as one block (no token stream), so
+// "typing" wouldn't otherwise be visible. Flash it for a readable window when
+// the answer lands, then settle to idle — unless the turn does more work
+// (a tool_use flips it to "working", cancelling this hold).
+function flashPanelMascotTyping() {
+  if (!panelMascot) return;
+  _clearMascotTimers();
+  setMascotState(panelMascot, "typing");
+  _typingHoldT = setTimeout(() => {
+    _typingHoldT = null;
+    setMascotState(panelMascot, "idle");
+  }, 1800);
 }
 // True once the tech has explicitly chosen a tier this page-load (clicked
 // the popover, or any path that calls switchTier). Until that happens,
@@ -71,291 +134,22 @@ let userPickedTier = false;
 let currentConvId = null;
 let conversationsCache = [];
 let pendingConvParam = null;
-// Session cost accumulator — reset on each (re)connect. The backend emits
-// `turn_cost` after every agent inference turn; we attach a chip to the most
-// recent assistant message and bump the running total in the status bar.
-let sessionCostUsd = 0;
+// Auto-reconnect after an UNEXPECTED socket drop (idle-cut by an upstream proxy,
+// a brief network blip, a cloud redeploy). The cloud relay now keep-alives the
+// tunnel, so these are rare — but when one slips through we resume the same
+// conversation transparently instead of stranding the tech on "erreur socket"
+// with a manual reload. Voluntary closes (tier/conv switch, route change, panel
+// teardown) reassign or null the module `ws`, so the closing socket is no longer
+// the live one and we DON'T reconnect it. Capped exponential backoff; after the
+// last attempt we surface the error and stop.
+let _reconnectT = null;
+let _reconnectAttempts = 0;
+const _RECONNECT_DELAYS_MS = [1000, 2000, 4000, 8000, 15000];
+function _clearReconnect() {
+  if (_reconnectT) { clearTimeout(_reconnectT); _reconnectT = null; }
+  _reconnectAttempts = 0;
+}
 import { ICON_CHECK } from './icons.js';
-
-let sessionTurns = 0;
-let lastTurnCostUsd = 0;
-
-// Turn-block state machine.
-// currentTurn is the DOM node receiving the next incoming thinking / tool_use /
-// message event. A user.message closes it (set to null). An assistant.message
-// that arrives when currentTurn already has a .turn-message opens a new turn
-// (agent emitted two messages back-to-back without a user interjection).
-let currentTurn = null;
-
-// Family icons for tool-call steps. 12×12, inline SVG, stroke currentColor.
-const ICON_MB =
-  '<svg class="step-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" ' +
-  'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" ' +
-  'aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/>' +
-  '<circle cx="12" cy="12" r="3"/></svg>';
-const ICON_BV =
-  '<svg class="step-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" ' +
-  'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" ' +
-  'aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/>' +
-  '<circle cx="12" cy="12" r="1.2" fill="currentColor"/></svg>';
-// MEM = MA-native filesystem ops on the device's memory store (read / write /
-// edit / grep / glob), surfaced via the agent_toolset_20260401 toolset. Cylinder
-// = persistent storage. Distinct from MB (knowledge bank queries via mb_*).
-const ICON_MEM =
-  '<svg class="step-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" ' +
-  'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" ' +
-  'aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="2.5"/>' +
-  '<path d="M4 5v14c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5V5"/>' +
-  '<path d="M4 12c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5"/></svg>';
-// STOCK = donor inventory + parts harvest. Box / crate metaphor matches
-// the rail icon for #stock so the chat step is recognisable as the same
-// surface the technician sees in the workspace section.
-const ICON_STOCK =
-  '<svg class="step-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" ' +
-  'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" ' +
-  'aria-hidden="true"><rect x="3" y="6" width="18" height="13" rx="1.5"/>' +
-  '<path d="M3 10h18M8 6v4M16 6v4"/></svg>';
-
-// Localized paraphrase + family icon for each known tool name. Each entry
-// is a function receiving the tool input object and returning
-// {icon, phraseHTML}. phraseHTML may embed a <span class="refdes"> or
-// <span class="net"> for typographic emphasis on the target; all user
-// input is passed through escapeHTML before interpolation. Strings come
-// from i18n via window.t() so they re-render on locale switch.
-const TOOL_PHRASES = {
-  // --- MB (memory bank — perception / reading) ---
-  mb_get_component: (i) => ({
-    icon: ICON_MB,
-    phraseHTML: t('chat.tool.mb_get_component', { refdes: escapeHTML(i?.refdes || "?") }),
-  }),
-  mb_get_rules_for_symptoms: (i) => {
-    const syms = Array.isArray(i?.symptoms) ? i.symptoms.join(", ") : (i?.symptoms || "");
-    return {
-      icon: ICON_MB,
-      phraseHTML: t('chat.tool.mb_get_rules_for_symptoms', { symptoms: escapeHTML(syms) }),
-    };
-  },
-  mb_list_findings: (i) => ({
-    icon: ICON_MB,
-    phraseHTML: i?.device
-      ? t('chat.tool.mb_list_findings_for', { device: escapeHTML(i.device) })
-      : t('chat.tool.mb_list_findings'),
-  }),
-  mb_record_finding: () => ({
-    icon: ICON_MB,
-    phraseHTML: t('chat.tool.mb_record_finding'),
-  }),
-  mb_expand_knowledge: (i) => {
-    const scope = [i?.component, i?.symptom].filter(Boolean).join(" / ");
-    return {
-      icon: ICON_MB,
-      phraseHTML: scope
-        ? t('chat.tool.mb_expand_knowledge_scope', { scope: escapeHTML(scope) })
-        : t('chat.tool.mb_expand_knowledge'),
-    };
-  },
-  mb_schematic_graph: () => ({
-    icon: ICON_MB,
-    phraseHTML: t('chat.tool.mb_schematic_graph'),
-  }),
-
-  // --- BV (boardview — action) ---
-  bv_highlight: (i) => {
-    const r = Array.isArray(i?.refdes) ? i.refdes.join(", ") : (i?.refdes || "?");
-    return {
-      icon: ICON_BV,
-      phraseHTML: t('chat.tool.bv_highlight', { refdes: escapeHTML(r) }),
-    };
-  },
-  bv_focus: (i) => ({
-    icon: ICON_BV,
-    phraseHTML: t('chat.tool.bv_focus', { refdes: escapeHTML(i?.refdes || "?") }),
-  }),
-  bv_reset_view: () => ({ icon: ICON_BV, phraseHTML: t('chat.tool.bv_reset_view') }),
-  bv_highlight_net: (i) => ({
-    icon: ICON_BV,
-    phraseHTML: t('chat.tool.bv_highlight_net', { net: escapeHTML(i?.net || "?") }),
-  }),
-  bv_flip: () => ({ icon: ICON_BV, phraseHTML: t('chat.tool.bv_flip') }),
-  bv_annotate: (i) => {
-    let phraseHTML;
-    if (i?.refdes) {
-      phraseHTML = t('chat.tool.bv_annotate_near', { refdes: escapeHTML(i.refdes) });
-    } else if (Number.isFinite(i?.x) && Number.isFinite(i?.y)) {
-      phraseHTML = t('chat.tool.bv_annotate_at', { x: i.x, y: i.y });
-    } else {
-      phraseHTML = t('chat.tool.bv_annotate_blank');
-    }
-    return { icon: ICON_BV, phraseHTML };
-  },
-  bv_filter_by_type: (i) => ({
-    icon: ICON_BV,
-    phraseHTML: t('chat.tool.bv_filter_by_type', { prefix: escapeHTML(i?.prefix || "?") }),
-  }),
-  bv_draw_arrow: (i) => ({
-    icon: ICON_BV,
-    phraseHTML: t('chat.tool.bv_draw_arrow', {
-      from: escapeHTML(i?.from_refdes || "?"),
-      to: escapeHTML(i?.to_refdes || "?"),
-    }),
-  }),
-  bv_measure: (i) => ({
-    icon: ICON_BV,
-    phraseHTML: t('chat.tool.bv_measure', {
-      a: escapeHTML(i?.refdes_a || "?"),
-      b: escapeHTML(i?.refdes_b || "?"),
-    }),
-  }),
-  bv_show_pin: (i) => ({
-    icon: ICON_BV,
-    phraseHTML: t('chat.tool.bv_show_pin', {
-      pin: escapeHTML(String(i?.pin ?? "?")),
-      refdes: escapeHTML(i?.refdes || "?"),
-    }),
-  }),
-  bv_dim_unrelated: () => ({ icon: ICON_BV, phraseHTML: t('chat.tool.bv_dim_unrelated') }),
-  bv_layer_visibility: (i) => ({
-    icon: ICON_BV,
-    phraseHTML: t('chat.tool.bv_layer_visibility', { layer: escapeHTML(i?.layer || "?") }),
-  }),
-  bv_scene: (i) => {
-    const parts = [];
-    const hl = Array.isArray(i?.highlights) ? i.highlights.length : 0;
-    const an = Array.isArray(i?.annotations) ? i.annotations.length : 0;
-    const ar = Array.isArray(i?.arrows) ? i.arrows.length : 0;
-    if (hl) parts.push(t(hl > 1 ? 'chat.tool.scene_highlight_many' : 'chat.tool.scene_highlight_one', { n: hl }));
-    if (an) parts.push(t(an > 1 ? 'chat.tool.scene_annotation_many' : 'chat.tool.scene_annotation_one', { n: an }));
-    if (ar) parts.push(t(ar > 1 ? 'chat.tool.scene_arrow_many' : 'chat.tool.scene_arrow_one', { n: ar }));
-    if (i?.focus?.refdes) parts.push(t('chat.tool.scene_focus', { refdes: escapeHTML(i.focus.refdes) }));
-    if (i?.dim_unrelated) parts.push(t('chat.tool.scene_dim'));
-    if (i?.reset) parts.unshift(t('chat.tool.scene_reset'));
-    return {
-      icon: ICON_BV,
-      phraseHTML: parts.length ? t('chat.tool.bv_scene', { parts: parts.join(", ") }) : t('chat.tool.bv_scene_empty'),
-    };
-  },
-
-  // --- Stock (donor inventory + part harvest) ---
-  stock_search: (i) => {
-    const tp = i?.type || "";
-    const v = i?.value_canonical || i?.mpn || "";
-    return {
-      icon: ICON_STOCK,
-      phraseHTML: (tp || v)
-        ? t('chat.tool.stock_search', { type: escapeHTML(tp), value: escapeHTML(v) })
-        : t('chat.tool.stock_search_minimal'),
-    };
-  },
-  stock_consume: (i) => ({
-    icon: ICON_STOCK,
-    phraseHTML: t('chat.tool.stock_consume', {
-      refdes: escapeHTML(i?.refdes || "?"),
-      donor_id: escapeHTML(i?.donor_id || "?"),
-    }),
-  }),
-  stock_mark_donor: (i) => ({
-    icon: ICON_STOCK,
-    phraseHTML: t('chat.tool.stock_mark_donor', { device_slug: escapeHTML(i?.device_slug || "?") }),
-  }),
-  stock_unmark_donor: (i) => ({
-    icon: ICON_STOCK,
-    phraseHTML: t('chat.tool.stock_unmark_donor', { donor_id: escapeHTML(i?.donor_id || "?") }),
-  }),
-  stock_list_donors: () => ({
-    icon: ICON_STOCK,
-    phraseHTML: t('chat.tool.stock_list_donors'),
-  }),
-};
-
-function toolFallback(name) {
-  return {
-    icon: "",
-    phraseHTML: `<span class="tool-name-raw">${escapeHTML(name)}</span>`,
-  };
-}
-
-// Strip the `/mnt/memory/{slug}/` MA-mount prefix so memory paths read as
-// short relative paths (`outcomes/abc.json`) instead of full absolute ones.
-function memPath(p) {
-  if (!p) return "";
-  const m = String(p).match(/^\/mnt\/memory\/[^/]+\/(.+)$/);
-  return m ? m[1] : String(p);
-}
-
-function memPathChip(p) {
-  return `<code class="mem-path">${escapeHTML(memPath(p))}</code>`;
-}
-
-// Localized paraphrase + ICON_MEM for each MA-native filesystem tool. Same
-// shape contract as TOOL_PHRASES — receives the tool input object and
-// returns {icon, phraseHTML}.
-const MEMORY_TOOL_PHRASES = {
-  read: (i) => ({
-    icon: ICON_MEM,
-    phraseHTML: t('chat.memtool.read', { path: memPathChip(i?.file_path || i?.path) }),
-  }),
-  write: (i) => ({
-    icon: ICON_MEM,
-    phraseHTML: t('chat.memtool.write', { path: memPathChip(i?.file_path || i?.path) }),
-  }),
-  edit: (i) => ({
-    icon: ICON_MEM,
-    phraseHTML: t('chat.memtool.edit', { path: memPathChip(i?.file_path || i?.path) }),
-  }),
-  view: (i) => ({
-    icon: ICON_MEM,
-    phraseHTML: t('chat.memtool.view', { path: memPathChip(i?.file_path || i?.path) }),
-  }),
-  grep: (i) => ({
-    icon: ICON_MEM,
-    phraseHTML: i?.path
-      ? t('chat.memtool.grep_in', { pattern: escapeHTML(String(i?.pattern || "")), path: memPathChip(i.path) })
-      : t('chat.memtool.grep', { pattern: escapeHTML(String(i?.pattern || "")) }),
-  }),
-  glob: (i) => ({
-    icon: ICON_MEM,
-    phraseHTML: t('chat.memtool.glob', { pattern: escapeHTML(String(i?.pattern || "")) }),
-  }),
-  list: (i) => ({
-    icon: ICON_MEM,
-    phraseHTML: i?.path
-      ? t('chat.memtool.list_at', { path: memPathChip(i.path) })
-      : t('chat.memtool.list'),
-  }),
-  ls: (i) => ({
-    icon: ICON_MEM,
-    phraseHTML: i?.path
-      ? t('chat.memtool.list_at', { path: memPathChip(i.path) })
-      : t('chat.memtool.list'),
-  }),
-};
-
-function memToolFallback(name) {
-  return {
-    icon: ICON_MEM,
-    phraseHTML: `<span class="tool-name-raw">${escapeHTML(name)}</span>`,
-  };
-}
-
-function fmtUsd(amount) {
-  if (amount >= 1) return `$${amount.toFixed(2)}`;
-  if (amount >= 0.01) return `$${amount.toFixed(3)}`;
-  if (amount >= 0.0001) return `$${amount.toFixed(4)}`;
-  return amount > 0 ? `<$0.0001` : `$0.00`;
-}
-
-function updateCostTotal() {
-  const el2 = el("llmCostTotal");
-  if (!el2) return;
-  if (sessionTurns === 0) {
-    el2.style.display = "none";
-    return;
-  }
-  el2.style.display = "";
-  const deltaPart = lastTurnCostUsd > 0 ? ` · +${fmtUsd(lastTurnCostUsd)} last` : "";
-  el2.textContent = `${fmtUsd(sessionCostUsd)} · ${sessionTurns} turn${sessionTurns > 1 ? "s" : ""}${deltaPart}`;
-  el2.classList.toggle("hot", sessionCostUsd >= 0.50 || lastTurnCostUsd >= 0.10);
-}
 
 function el(id) { return document.getElementById(id); }
 
@@ -366,579 +160,22 @@ function statusTone(tone, label) {
   el("llmStatusText").textContent = label;
 }
 
-function logRow(cls, innerHTML) {
-  const log = el("llmLog");
-  const row = document.createElement("div");
-  row.className = cls;
-  row.innerHTML = innerHTML;
-  log.appendChild(row);
-  log.scrollTop = log.scrollHeight;
-  return row;
-}
-
-function logMessage(role, text, isReplay = false) {
-  const roleLabel = role === "user" ? t('chat.roles.user') : t('chat.roles.agent');
-  const cls = `msg ${role}${isReplay ? " replay" : ""}`;
-  const replaySuffix = isReplay ? t('chat.roles.replay_suffix') : "";
-  logRow(
-    cls,
-    `<span class="role">${escapeHTML(roleLabel)}${escapeHTML(replaySuffix)}</span>${escapeHTML(text)}`,
-  );
-}
-
-// Distinct card rendered when MA dropped the prior session AND we had
-// no local JSONL backup to summarize from. The agent was recreated from
-// scratch; it has zero memory of the prior turns. Amber alert (different
-// from the violet "resumed-with-summary" card) so the tech knows their
-// next message hits a blank-slate model.
-function renderContextLost(payload) {
-  const oldId = payload?.old_session_id || "";
-  const newId = payload?.new_session_id || "";
-  const reason = payload?.reason === "ma_events_empty"
-    ? t('chat.context_lost.reason_ma_empty')
-    : t('chat.context_lost.reason_generic');
-  // `preserved` summarises what survived on disk independently of MA.
-  // The backend already pushed these facts to the fresh agent (intro
-  // block on resumed=False, synthetic user.message on resumed=True).
-  // This UI just tells the tech which artefacts the agent now has so they
-  // know what NOT to re-explain.
-  const preserved = payload?.preserved || {};
-  const mCount = Number(preserved.measurements || 0);
-  const proto = preserved.protocol;
-  const outcome = !!preserved.outcome;
-  const preservedItems = [];
-  if (mCount > 0) {
-    preservedItems.push(t(mCount > 1 ? 'chat.context_lost.preserved_measurements_many' : 'chat.context_lost.preserved_measurements_one', { n: mCount }));
-  }
-  if (proto) {
-    preservedItems.push(t('chat.context_lost.preserved_protocol', {
-      title: escapeHTML(proto.title || ""),
-      completed: proto.completed || 0,
-      total: proto.total || 0,
-    }));
-  }
-  if (outcome) preservedItems.push(t('chat.context_lost.preserved_outcome'));
-  const preservedHTML = preservedItems.length
-    ? `<p class="preserved"><strong>${escapeHTML(t('chat.context_lost.preserved_label'))}</strong> : ${preservedItems.join(" · ")}.</p>`
-    : `<p class="preserved muted">${escapeHTML(t('chat.context_lost.preserved_none'))}</p>`;
-  logRow(
-    "context-lost",
-    `<header>
-       <span class="icon-dot"></span>
-       <span class="title">${escapeHTML(t('chat.context_lost.title'))}</span>
-     </header>
-     <div class="body">
-       <p>${escapeHTML(reason)}</p>
-       <p>${escapeHTML(t('chat.context_lost.context_reinject'))}</p>
-       ${preservedHTML}
-       <p>${t('chat.context_lost.lost_explainer')}</p>
-       ${oldId ? `<p class="meta">old=<code>${escapeHTML(oldId)}</code> · new=<code>${escapeHTML(newId)}</code></p>` : ""}
-     </div>`,
-  );
-}
-
-// Distinct card rendered when an expired MA session had to be recreated and
-// Haiku summarised the prior conversation for the fresh agent. Shows the
-// same block the new agent is seeing, so the tech knows what carried over.
-function renderResumeSummary(payload) {
-  const summary = payload?.summary || "";
-  const tokIn = payload?.tokens_in ?? "—";
-  const tokOut = payload?.tokens_out ?? "—";
-  let bodyHTML = escapeHTML(summary);
-  if (typeof window.marked !== "undefined" && typeof window.DOMPurify !== "undefined") {
-    try {
-      bodyHTML = window.DOMPurify.sanitize(window.marked.parse(summary));
-    } catch (e) { /* keep escaped fallback */ }
-  }
-  logRow(
-    "resume-summary",
-    `<header>
-       <span class="icon-dot"></span>
-       <span class="title">${escapeHTML(t('chat.resume.title'))}</span>
-       <span class="meta">${escapeHTML(t('chat.resume.meta_summary', { tok_in: tokIn, tok_out: tokOut }))}</span>
-     </header>
-     <div class="body">${bodyHTML}</div>`,
-  );
-}
-
-function logSys(text, isErr = false) {
-  logRow(isErr ? "sys err" : "sys", escapeHTML(text));
-}
-
-function escapeHTML(s) {
-  return String(s ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-// Append a small terminal-state chip to the chat log (abandoned / completed).
-// Distinct visual from agent/user messages — centered, muted, mono — so the
-// tech can scroll back through the conv and see when a sequence was dropped
-// or finished, and why. Idempotent on protocol_id+kind to avoid duplicates
-// when the same event arrives twice (replay race, double-emit, etc.).
-function appendProtocolSystemEvent(kind, { protocol_id, reason } = {}) {
-  const log = el("llmLog");
-  if (!log) return;
-  const dedupeKey = `${kind}:${protocol_id || "none"}`;
-  if (log.querySelector(`.protocol-system-event[data-key="${dedupeKey}"]`)) return;
-  const chip = document.createElement("div");
-  chip.className = `protocol-system-event is-${kind}`;
-  chip.dataset.key = dedupeKey;
-  const label = kind === "abandoned"
-    ? (window.t?.("protocol.system_event.abandoned") || "Protocol abandoned")
-    : (window.t?.("protocol.system_event.completed") || "Protocol completed");
-  // Inline SVG matches the project's icon convention (16/12 px,
-  // stroke="currentColor", stroke-width=1.6) — no font icon dependency.
-  const icon = kind === "abandoned"
-    ? `<svg class="pse-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6l-12 12"/></svg>`
-    : `<svg class="pse-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>`;
-  chip.innerHTML = icon + `<span>${escapeHTML(label)}</span>`;
-  if (reason && reason !== "tech_dismiss") {
-    const r = document.createElement("span");
-    r.className = "pse-reason";
-    r.textContent = `· ${reason}`;
-    chip.appendChild(r);
-  }
-  log.appendChild(chip);
-  log.scrollTop = log.scrollHeight;
-}
-
-// Mode C — inline protocol step card in the chat stream when no board is loaded.
-// Renders only the active step (past steps are summarized in the wizard).
-// One card per active step id; subsequent events for the same id no-op.
-function renderInlineProtocolCard(_ev) {
-  const proto = window.Protocol?.getProtocol?.();
-  if (!proto) return;
-  const active = proto.steps.find((s) => s.id === proto.current_step_id);
-  if (!active) return;
-  const log = el("llmLog");
-  if (!log) return;
-  if (log.querySelector(`.protocol-inline-card[data-step="${active.id}"]`)) return;
-  const card = document.createElement("div");
-  card.className = "protocol-inline-card";
-  card.dataset.step = active.id;
-  card.innerHTML =
-    `<div class="protocol-step-target">${escapeHTML(active.target || active.test_point || "—")}</div>` +
-    `<p class="protocol-step-instruction">${escapeHTML(active.instruction)}</p>` +
-    `<p class="protocol-step-rationale">${escapeHTML(active.rationale)}</p>`;
-  if (window.Protocol?.buildStepForm) {
-    card.appendChild(window.Protocol.buildStepForm(active));
-  }
-  log.appendChild(card);
-  log.scrollTop = log.scrollHeight;
-}
-
-// Create a fresh turn-block container and append it to the log.
-function createTurn() {
-  const log = el("llmLog");
-  const turn = document.createElement("div");
-  turn.className = "turn";
-  const rail = document.createElement("div");
-  rail.className = "turn-rail";
-  turn.appendChild(rail);
-  log.appendChild(turn);
-  log.scrollTop = log.scrollHeight;
-  return turn;
-}
-
-function ensureTurn() {
-  if (!currentTurn) currentTurn = createTurn();
-  return currentTurn;
-}
-
-function closeTurn() {
-  currentTurn = null;
-}
-
-function ensurePendingNode(turn, label) {
-  const rail = turn.querySelector(".turn-rail");
-  if (!rail || rail.querySelector(".step.pending")) return;
-  const finalLabel = label != null ? label : t('chat.pending.thinking');
-  const step = document.createElement("div");
-  step.className = "step pending";
-  step.innerHTML =
-    `<span class="node"></span>` +
-    `<span class="step-phrase">${escapeHTML(finalLabel)}` +
-    `<span class="pending-dots"><span>.</span><span>.</span><span>.</span></span>` +
-    `</span>`;
-  rail.appendChild(step);
-  el("llmLog").scrollTop = el("llmLog").scrollHeight;
-}
-
-function clearPendingNode(turn) {
-  const p = turn.querySelector(".step.pending");
-  if (p) p.remove();
-}
-
-// Append a .step into the turn's rail. kind ∈ {"thinking","mb","bv"}.
-// phraseHTML is trusted HTML (callers escape user-provided fragments
-// themselves — currently only tool names + refdes which are validated).
-function appendStep(turn, kind, phraseHTML) {
-  clearPendingNode(turn);
-  const rail = turn.querySelector(".turn-rail");
-  const step = document.createElement("div");
-  step.className = `step ${kind}`;
-  step.innerHTML = `<span class="node"></span><span class="step-phrase">${phraseHTML}</span>`;
-  rail.appendChild(step);
-  ensurePendingNode(turn);
-  el("llmLog").scrollTop = el("llmLog").scrollHeight;
-  return step;
-}
-
-function addExpandToStep(step, payloadObj) {
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "step-expand";
-  btn.setAttribute("aria-expanded", "false");
-  btn.title = t('chat.step.expand_title');
-  btn.innerHTML =
-    '<svg class="chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" ' +
-    'stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' +
-    '<polyline points="9 6 15 12 9 18"/></svg>';
-  step.appendChild(btn);
-
-  const pre = document.createElement("pre");
-  pre.className = "step-payload";
-  const hasResult = payloadObj && typeof payloadObj === "object" && "result" in payloadObj;
-  const body = hasResult
-    ? JSON.stringify(payloadObj, null, 2)
-    : JSON.stringify(payloadObj, null, 2) + "\n\n" + t('chat.step.no_result');
-  pre.textContent = body;
-  step.appendChild(pre);
-
-  btn.addEventListener("click", () => {
-    const expanded = step.classList.toggle("expanded");
-    btn.setAttribute("aria-expanded", expanded ? "true" : "false");
-  });
-}
-
-// Regex shapes. Kept loose — the semantic filter is the Boardview lookup.
-const RE_REFDES = /\b[A-Z]{1,3}\d{1,4}\b/g;
-// Nets: common naming conventions used in iPhone / Mac / Pi schematics.
-// Over-matches on purpose; Boardview.hasNet is the truth gate.
-const RE_NET = /\b(?:PP_[A-Z0-9_]+|[PN]P_[A-Z0-9_]+|L\d{1,3}|VCC(?:_[A-Z0-9_]+)?|VDD(?:_[A-Z0-9_]+)?|AVDD(?:_[A-Z0-9_]+)?|DVDD(?:_[A-Z0-9_]+)?|GND(?:_[A-Z0-9_]+)?|[A-Z][A-Z0-9_]{3,})\b/g;
-const RE_UNKNOWN_REFDES = /⟨\?([A-Z]{1,3}\d{1,4})⟩/g;
-
-function appendTurnMessage(turn, text) {
-  let msg = turn.querySelector(".turn-message");
-  if (msg) {
-    // Second assistant message in the same turn — open a new turn.
-    closeTurn();
-    turn = ensureTurn();
-    msg = null;
-  }
-  clearPendingNode(turn);
-  msg = document.createElement("div");
-  msg.className = "turn-message";
-  renderAgentMarkup(msg, text || "");
-  turn.appendChild(msg);
-  el("llmLog").scrollTop = el("llmLog").scrollHeight;
-  return msg;
-}
-
-// Parse markdown → sanitize → walk text nodes → replace validated tokens
-// with clickable chips. If marked / DOMPurify aren't on the page, fall back
-// to plain text (defensive: network hiccup loading the CDN).
-function renderAgentMarkup(container, text) {
-  let html;
-  if (typeof marked !== "undefined" && typeof DOMPurify !== "undefined") {
-    const raw = marked.parse(text, { breaks: true, gfm: true });
-    html = DOMPurify.sanitize(raw, {
-      ALLOWED_TAGS: ["p", "br", "strong", "em", "ul", "ol", "li", "code"],
-      ALLOWED_ATTR: [],
-    });
-  } else {
-    html = escapeHTML(text).replaceAll("\n", "<br>");
-  }
-  container.innerHTML = html;
-  decorateChipsIn(container);
-}
-
-// Walk all text nodes under `root` and replace validated refdes / net
-// tokens with clickable chips, plus unknown-refdes ⟨?U999⟩ with amber
-// span. Text inside <code> is skipped (agent's verbatim intent).
-function decorateChipsIn(root) {
-  const hasBoard = !!(window.Boardview && window.Boardview.hasBoard && window.Boardview.hasBoard());
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    acceptNode(n) {
-      if (!n.nodeValue) return NodeFilter.FILTER_REJECT;
-      if (n.parentElement && n.parentElement.closest("code, .refdes-unknown, .chip-refdes, .chip-net"))
-        return NodeFilter.FILTER_REJECT;
-      return NodeFilter.FILTER_ACCEPT;
-    },
-  });
-  const targets = [];
-  while (walker.nextNode()) targets.push(walker.currentNode);
-  for (const textNode of targets) decorateOneTextNode(textNode, hasBoard);
-}
-
-function decorateOneTextNode(textNode, hasBoard) {
-  const original = textNode.nodeValue;
-  const matches = [];
-  for (const m of original.matchAll(RE_UNKNOWN_REFDES)) {
-    matches.push({ kind: "unknown", start: m.index, end: m.index + m[0].length, raw: m[0], inner: m[1] });
-  }
-  for (const m of original.matchAll(RE_REFDES)) {
-    if (hasBoard && window.Boardview.hasRefdes(m[0])) {
-      matches.push({ kind: "refdes", start: m.index, end: m.index + m[0].length, raw: m[0] });
-    }
-  }
-  for (const m of original.matchAll(RE_NET)) {
-    if (hasBoard && window.Boardview.hasNet(m[0])) {
-      matches.push({ kind: "net", start: m.index, end: m.index + m[0].length, raw: m[0] });
-    }
-  }
-  if (matches.length === 0) return;
-  // Resolve overlaps: earliest-start first, ties broken by longest-wins.
-  matches.sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
-  const cleaned = [];
-  let cursor = 0;
-  for (const m of matches) {
-    if (m.start < cursor) continue;
-    cleaned.push(m);
-    cursor = m.end;
-  }
-  const frag = document.createDocumentFragment();
-  let i = 0;
-  for (const m of cleaned) {
-    if (m.start > i) frag.appendChild(document.createTextNode(original.slice(i, m.start)));
-    frag.appendChild(makeChipNode(m));
-    i = m.end;
-  }
-  if (i < original.length) frag.appendChild(document.createTextNode(original.slice(i)));
-  textNode.parentNode.replaceChild(frag, textNode);
-}
-
-// Chip-click target: switch the main view to #pcb if we're not already there,
-// then run the boardview action. The panel is push-mode so the board shows
-// to the left while the chat stays visible on the right (420 px strip). When
-// we have to navigate, wait two animation frames so the section becomes
-// visible and brd_viewer's ResizeObserver sees non-zero canvas dimensions —
-// otherwise the focus pan would compute against a 0×0 canvas and end up off
-// screen (the ResizeObserver now flushes any pending focus on its own, but
-// the nav-then-apply ordering also lets non-focus actions see the real DOM).
-function gotoBoardviewThen(fn) {
-  if (window.location.hash === "#pcb") {
-    fn();
-    return;
-  }
-  window.location.hash = "#pcb";
-  requestAnimationFrame(() => requestAnimationFrame(fn));
-}
-
-function makeChipNode(match) {
-  if (match.kind === "refdes") {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "chip-refdes";
-    btn.dataset.refdes = match.raw;
-    btn.textContent = match.raw;
-    btn.addEventListener("click", () => {
-      gotoBoardviewThen(() => window.Boardview?.focusRefdes?.(match.raw));
-    });
-    return btn;
-  }
-  if (match.kind === "net") {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "chip-net";
-    btn.dataset.net = match.raw;
-    btn.textContent = match.raw;
-    btn.addEventListener("click", () => {
-      gotoBoardviewThen(() => window.Boardview?.highlightNet?.(match.raw));
-    });
-    return btn;
-  }
-  const span = document.createElement("span");
-  span.className = "refdes-unknown";
-  span.textContent = match.raw;
-  return span;
-}
-
-function appendTurnFoot(turn, payload) {
-  // Terminal signal for this turn — clear transient indicators.
-  clearPendingNode(turn);
-  let foot = turn.querySelector(".turn-foot");
-  if (!foot) {
-    foot = document.createElement("div");
-    foot.className = "turn-foot";
-    turn.appendChild(foot);
-  }
-  const priceLabel = payload.priced ? fmtUsd(payload.cost_usd) : "—";
-  const modelLabel = payload.model ? payload.model.replace("claude-", "") : "?";
-  const tokensLabel = `${(payload.input_tokens || 0) + (payload.cache_read_input_tokens || 0) + (payload.cache_creation_input_tokens || 0)}→${payload.output_tokens || 0} tok`;
-  foot.innerHTML =
-    `<span class="foot-cost">${priceLabel}</span>` +
-    `<span class="foot-sep">·</span>` +
-    `<span class="foot-tokens">${tokensLabel}</span>` +
-    `<span class="foot-sep">·</span>` +
-    `<span class="foot-model">${escapeHTML(modelLabel)}</span>`;
-}
-
 function safeJSON(v) {
   try { return JSON.stringify(v ?? {}); } catch { return String(v); }
 }
 
 function currentDeviceSlug() {
-  return new URLSearchParams(window.location.search).get("device");
+  return getDeviceSlug();
 }
 
 function currentRepairId() {
-  return new URLSearchParams(window.location.search).get("repair") || null;
-}
-
-function wsURL(slug, tier, repairId, convParam) {
-  const scheme = window.location.protocol === "https:" ? "wss" : "ws";
-  const params = new URLSearchParams();
-  if (tier) params.set("tier", tier);
-  if (repairId) params.set("repair", repairId);
-  if (convParam) params.set("conv", convParam);
-  const q = params.toString() ? `?${params.toString()}` : "";
-  return `${scheme}://${window.location.host}/ws/diagnostic/${encodeURIComponent(slug)}${q}`;
+  return getRepairId();
 }
 
 function setSendEnabled(enabled) {
   el("llmSend").disabled = !enabled;
   el("llmStop").disabled = !enabled;
 }
-
-// --- Files+Vision (Flow A + Flow B) ---------------------------------------
-
-function sendCapabilities() {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  try {
-    ws.send(JSON.stringify({
-      type: "client.capabilities",
-      camera_available: isCameraAvailable(),
-      selected_device_id: selectedCameraDeviceId(),
-    }));
-  } catch (err) {
-    console.warn("[llm] sendCapabilities failed", err);
-  }
-}
-
-// Optimistic image bubble in the chat log. URL is either a blob: URL
-// (Flow A optimistic local render) or a /api/macros/... URL (replay).
-function appendImageBubble(role, srcUrl, captionText) {
-  const log = el("llmLog");
-  if (!log) return;
-  const row = document.createElement("div");
-  row.className = `msg ${role} msg-image`;
-  const roleLabel = role === "user" ? t('chat.roles.user') : t('chat.roles.agent');
-  const img = document.createElement("img");
-  img.src = srcUrl;
-  img.alt = captionText || t('chat.image_bubble.alt');
-  img.className = "llm-bubble-img";
-  img.addEventListener("click", () => openImageModal(srcUrl, captionText));
-  const cap = document.createElement("div");
-  cap.className = "llm-bubble-caption";
-  cap.textContent = captionText || "";
-  row.innerHTML = `<span class="role">${escapeHTML(roleLabel)}</span>`;
-  row.appendChild(img);
-  if (captionText) row.appendChild(cap);
-  log.appendChild(row);
-  log.scrollTop = log.scrollHeight;
-}
-
-function openImageModal(srcUrl, captionText) {
-  let modal = document.getElementById("llmImageModal");
-  if (!modal) {
-    modal = document.createElement("div");
-    modal.id = "llmImageModal";
-    modal.className = "llm-image-modal";
-    modal.addEventListener("click", () => modal.remove());
-    document.body.appendChild(modal);
-  } else {
-    modal.innerHTML = "";
-  }
-  const img = document.createElement("img");
-  img.src = srcUrl;
-  img.alt = captionText || "";
-  modal.appendChild(img);
-}
-
-async function handleMacroUpload(file) {
-  if (!file) return;
-  if (file.size > MAX_UPLOAD_BYTES) {
-    logSys(t('chat.upload.too_large', { size: (file.size / 1024 / 1024).toFixed(1) }), true);
-    return;
-  }
-  if (!["image/png", "image/jpeg"].includes(file.type)) {
-    logSys(t('chat.upload.unsupported', { mime: file.type }), true);
-    return;
-  }
-  if (!ws || ws.readyState !== WebSocket.OPEN) {
-    logSys(t('chat.upload.socket_closed'), true);
-    return;
-  }
-  // Optimistic local render — blob URL stays valid for the page lifetime.
-  const url = URL.createObjectURL(file);
-  appendImageBubble("user", url, t('chat.image_bubble.macro_caption'));
-  try {
-    const base64 = await blobToBase64(file);
-    ws.send(JSON.stringify({
-      type: "client.upload_macro",
-      base64,
-      mime: file.type,
-      filename: file.name || "macro.jpg",
-    }));
-  } catch (err) {
-    logSys(t('chat.upload.failed', { error: err.message || err }), true);
-  }
-}
-
-async function handleCaptureRequest(payload) {
-  const { request_id, tool_use_id, reason } = payload;
-  const deviceId = selectedCameraDeviceId();
-  if (!deviceId) {
-    // Tool exposed but no camera selected — surface to the tech and let
-    // the backend's is_error response close the loop on the agent side.
-    logSys(t('chat.capture.no_camera'), true);
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({
-        type: "client.capture_response",
-        request_id, base64: "", mime: "", device_label: "",
-      }));
-    }
-    return;
-  }
-  logSys(t('chat.capture.requested', { reason: reason || t('chat.capture.no_reason') }));
-  try {
-    const blob = await captureFrame({
-      deviceId, mime: "image/jpeg", quality: 0.92,
-    });
-    if (!blob) throw new Error("canvas.toBlob returned null");
-    const base64 = await blobToBase64(blob);
-    // Optimistic render so the tech sees what the agent received.
-    const url = URL.createObjectURL(blob);
-    appendImageBubble("user", url, t('chat.image_bubble.capture_caption', { label: selectedCameraLabel() }));
-    ws.send(JSON.stringify({
-      type: "client.capture_response",
-      request_id,
-      base64,
-      mime: "image/jpeg",
-      device_label: selectedCameraLabel(),
-    }));
-  } catch (err) {
-    console.error("captureFrame failed", err);
-    logSys(t('chat.capture.failed', { error: err.message || err }), true);
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({
-        type: "client.capture_response",
-        request_id, base64: "", mime: "", device_label: "",
-      }));
-    }
-  }
-}
-
-// Expose for camera.js to re-trigger after the user changes the picker.
-window.LLM = window.LLM || {};
-window.LLM.sendCapabilities = sendCapabilities;
-
-// --- end Files+Vision ----------------------------------------------------
 
 // Interrupt the live agent turn. The server translates this into an
 // official `user.interrupt` session event (see
@@ -956,12 +193,24 @@ function interruptAgent() {
 }
 
 function connect() {
+  // Any fresh dial supersedes a queued reconnect (tier/conv switch, route
+  // change all funnel through here).
+  _clearReconnect();
   const slug = currentDeviceSlug();
   if (!slug) {
     console.warn("[llm] connect() called without ?device= in the URL — aborting.");
     return;
   }
   const repairId = currentRepairId();
+  // The shipped example repair is READ-ONLY (the cloud refuses its agent WS to
+  // protect quota/credits). Don't even dial — surface a notice instead of a
+  // silent failed socket. Defense-in-depth; the security boundary is the cloud.
+  if (repairId && String(repairId).startsWith("example-")) {
+    statusTone("closed", t('chat.status.idle'));
+    logSys(t('chat.demo.read_only'));
+    setSendEnabled(false);
+    return;
+  }
   el("llmDevice").textContent = repairId
     ? t('chat.session.device_label_with_repair', { slug, repair: repairId.slice(0, 8) })
     : t('chat.session.device_label_simple', { slug });
@@ -973,10 +222,8 @@ function connect() {
   }
   // New connection = new cost scope. Replayed history doesn't re-bill so we
   // reset here and let live turns accumulate fresh.
-  sessionCostUsd = 0;
-  sessionTurns = 0;
-  lastTurnCostUsd = 0;
-  currentTurn = null;
+  resetCost();
+  closeTurn();
   currentConvId = null;
   // Clear the log — the next session_ready / history_replay_start will
   // rebuild the right content. Without this, switching conv or tier
@@ -987,45 +234,94 @@ function connect() {
     log.classList.remove("replay");
   }
   updateCostTotal();
-  const url = wsURL(slug, currentTier, repairId, pendingConvParam);
+  const conv = pendingConvParam;
   pendingConvParam = null;  // consume after this connect
   statusTone("connecting", t('chat.status.connecting', { slug, tier: currentTier }));
 
   try {
-    ws = new WebSocket(url);
-    window.__diagnosticWS = ws;
+    wsScope = { slug, repairId: repairId || null };
+    ws = connectDiagnostic(
+      slug,
+      { tier: currentTier, repairId, conv },
+      {
+        onOpen: () => {
+          // A clean open clears any pending reconnect: we're live again.
+          _clearReconnect();
+          statusTone("connected", t('chat.status.connected', { slug, tier: currentTier }));
+          setSendEnabled(true);
+          // Files+Vision : announce camera availability so the backend gates
+          // cam_capture in the manifest (runtime_direct) and can short-circuit
+          // empty captures (managed runtime).
+          sendCapabilities();
+        },
+        onClose: (ev) => {
+          statusTone("closed", t('chat.status.closed'));
+          setSendEnabled(false);
+          setPanelMascot("idle");
+          // Reconnect only if THIS is still the live socket (a voluntary close
+          // reassigned/nulled `ws` first) — see scheduleReconnect for the rest
+          // of the guards (panel open + same route).
+          if (ev && ev.target === ws) scheduleReconnect();
+        },
+        onError: () => {
+          statusTone("error", t('chat.status.error_socket'));
+          setSendEnabled(false);
+          setPanelMascot("error");
+        },
+      },
+    );
   } catch (err) {
     statusTone("error", t('chat.status.url_invalid'));
     logSys(t('chat.send.connect_failed', { error: err.message }), true);
     return;
   }
 
-  ws.addEventListener("open", () => {
-    statusTone("connected", t('chat.status.connected', { slug, tier: currentTier }));
-    setSendEnabled(true);
-    // Files+Vision : announce camera availability so the backend gates
-    // cam_capture in the manifest (runtime_direct) and can short-circuit
-    // empty captures (managed runtime).
-    sendCapabilities();
-  });
-
-  ws.addEventListener("close", () => {
-    statusTone("closed", t('chat.status.closed'));
-    setSendEnabled(false);
-    setPanelMascot("idle");
-  });
-
-  ws.addEventListener("error", () => {
-    statusTone("error", t('chat.status.error_socket'));
-    setSendEnabled(false);
-    setPanelMascot("error");
-  });
-
   ws.addEventListener("message", ev => {
     let payload;
     try { payload = JSON.parse(ev.data); }
     catch { payload = { type: "message", role: "assistant", text: ev.data }; }
+    handleDiagnosticFrame(payload);
+  });
+}
 
+// Schedule a reconnect after an unexpected drop. Bails (no reconnect) when the
+// panel is closed (reopening dials fresh) or the live route has moved on since
+// the socket was dialed — reconnecting then would resume the WRONG session.
+// Otherwise it redials on a capped backoff, resuming the SAME conversation
+// (pendingConvParam = currentConvId), and gives up after the last delay.
+function scheduleReconnect() {
+  if (_reconnectT) return; // a retry is already queued
+  const panelOpen = el("llmPanel")?.classList.contains("open");
+  const sameRoute = wsScope
+    && wsScope.slug === currentDeviceSlug()
+    && wsScope.repairId === (currentRepairId() || null);
+  if (!panelOpen || !sameRoute) return;
+  if (_reconnectAttempts >= _RECONNECT_DELAYS_MS.length) {
+    // Out of attempts — leave the tech on the socket error so a manual reload
+    // is the clear next step.
+    statusTone("error", t('chat.status.error_socket'));
+    return;
+  }
+  const delay = _RECONNECT_DELAYS_MS[_reconnectAttempts++];
+  statusTone("connecting", t('chat.status.connecting', { slug: currentDeviceSlug(), tier: currentTier }));
+  _reconnectT = setTimeout(() => {
+    _reconnectT = null;
+    // Resume the same thread; connect() consumes pendingConvParam then resets
+    // currentConvId, so capture it here first.
+    pendingConvParam = currentConvId || null;
+    ws = null;
+    connect();
+  }, delay);
+}
+
+// Dispatch a single diagnostic-WS frame (boardview/protocol/simulation routing
+// + the main type switch). Extracted from the live socket listener so the
+// onboarding demo replayer can feed recorded frames through the EXACT same
+// rendering path. All helpers + module state it references (ws, currentTier,
+// currentConvId, pendingConvParam, Protocol, window.Boardview, el, logSys,
+// recordTurnCost, setPanelMascot, …) are module-scoped, so it behaves
+// identically whether driven by a live frame or a replayed one.
+export function handleDiagnosticFrame(payload) {
     // Boardview events are visual mutations — not chat content. Route them
     // to the renderer (or its pending buffer if the renderer hasn't mounted).
     if (typeof payload.type === "string" && payload.type.startsWith("boardview.")) {
@@ -1039,7 +335,7 @@ function connect() {
     // (Mode C) so the tech still sees the active step + form even without
     // the wizard column visible.
     if (typeof payload.type === "string" && payload.type.startsWith("protocol_")) {
-      window.Protocol?.applyEvent(payload);
+      Protocol.applyEvent(payload);
       // Surface terminal-state chips in the chat stream regardless of board
       // mode — abandon and completion are session-level events the tech
       // should see in their scrollback. Reason is the human-supplied
@@ -1077,7 +373,7 @@ function connect() {
     // onto the schematic UI in real time. Same one-way channel, different
     // controller (SimulationController lives in schematic.js).
     if (typeof payload.type === "string" && payload.type.startsWith("simulation.")) {
-      const SC = window.SimulationController;
+      const SC = SimulationController;
       if (payload.type === "simulation.observation_set" && SC) {
         const parsed = (typeof payload.target === "string" && payload.target.includes(":"))
           ? payload.target.split(":", 2) : [null, null];
@@ -1187,6 +483,7 @@ function connect() {
         } else {
           const turn = ensureTurn();
           appendTurnMessage(turn, payload.text || "");
+          if (payload.replay !== true) flashPanelMascotTyping();
         }
         break;
       case "tool_use": {
@@ -1196,8 +493,8 @@ function connect() {
                      name.startsWith("stock_") ? "stock" :
                      name.startsWith("mb_") ? "mb" : "mb";
         const renderer = TOOL_PHRASES[name];
-        const { icon, phraseHTML } = renderer ? renderer(payload.input || {}) : toolFallback(name);
-        const step = appendStep(turn, kind, `${icon}${phraseHTML}`);
+        const { icon, phraseHTML, group } = renderer ? renderer(payload.input || {}) : toolFallback(name);
+        const step = appendStep(turn, kind, `${icon}${phraseHTML}`, group);
         const payloadJSON = {
           args: payload.input || {},
           ...(payload.result != null ? { result: payload.result } : {}),
@@ -1218,8 +515,8 @@ function connect() {
         }
         const name = payload.name || "?";
         const renderer = MEMORY_TOOL_PHRASES[name];
-        const { icon, phraseHTML } = renderer ? renderer(payload.input || {}) : memToolFallback(name);
-        const step = appendStep(turn, "mem", `${icon}${phraseHTML}`);
+        const { icon, phraseHTML, group } = renderer ? renderer(payload.input || {}) : memToolFallback(name);
+        const step = appendStep(turn, "mem", `${icon}${phraseHTML}`, group);
         addExpandToStep(step, { args: payload.input || {} });
         setPanelMascot("working");
         break;
@@ -1230,22 +527,35 @@ function connect() {
         setPanelMascot("thinking");
         break;
       }
-      case "turn_cost":
-        lastTurnCostUsd = Number(payload.cost_usd || 0);
-        sessionCostUsd += lastTurnCostUsd;
-        sessionTurns += 1;
-        updateCostTotal();
-        if (currentTurn) appendTurnFoot(currentTurn, payload);
-        clearTimeout(window._llmConvRefreshT);
-        window._llmConvRefreshT = setTimeout(() => loadConversations(), 500);
+      case "turn_cost": {
+        recordTurnCost(payload);
+        const ct = getCurrentTurn();
+        if (ct) appendTurnFoot(ct, payload);
+        // Offline demo replay has no live conversation list to refresh — skip
+        // the network round-trip (it would 404-flood on the demo repair id).
+        if (!_demoOffline) {
+          clearTimeout(window._llmConvRefreshT);
+          window._llmConvRefreshT = setTimeout(() => loadConversations(), 500);
+        }
         break;
+      }
       case "error":
         logSys(t('chat.error.generic', { text: payload.text }), true);
         // If the dashboard fix button is pending, clear its spinner so the
         // tech can retry instead of staring at "… Claude valide" forever.
-        if (typeof window.__resetDashboardFixBtn === "function") {
-          window.__resetDashboardFixBtn();
-        }
+        // The dashboard subscribes to this store key (it owns the button).
+        store.set("fixButtonReset", true);
+        setPanelMascot("error");
+        break;
+      case "stream_error":
+        // Terminal: the engine ended the turn (Anthropic API error — e.g. a
+        // spending-limit 400 — or a stream stall) and will NOT stream more.
+        // Without this the "thinking" mascot spins forever (the symptom Alex
+        // hit). Surface the message, close the turn, settle the indicator.
+        // The engine sends `message` (not `text`); fall back across both.
+        logSys(t('chat.error.generic', { text: payload.message || payload.text || '' }), true);
+        store.set("fixButtonReset", true);
+        closeTurn();
         setPanelMascot("error");
         break;
       case "session_terminated":
@@ -1266,8 +576,9 @@ function connect() {
       case "turn_complete":
         // Internal signal for benchmarks (end of an agent tech-turn). UI
         // doesn't render it — turn boundaries are already conveyed by the
-        // turn_cost foot and the next user message.
-        setPanelMascot("idle");
+        // turn_cost foot and the next user message. Don't cut a just-started
+        // typing flash short; its own timer settles to idle.
+        if (!_typingHoldT) setPanelMascot("idle");
         break;
       default:
         // Unknown WS event type — typically means the backend grew a new
@@ -1278,7 +589,28 @@ function connect() {
         // for debug instead so the chat stream stays readable.
         console.warn("[llm] unhandled WS event:", payload?.type, payload);
     }
-  });
+}
+
+// ── Demo replay (offline) ────────────────────────────────────────────────
+// When the onboarding plays a recorded session, there is NO live socket and no
+// real repair: frames are fed straight to handleDiagnosticFrame. This flag tells
+// the dispatcher to skip live-only side-effects (conversation-list refresh).
+let _demoOffline = false;
+export function setDemoOffline(on) { _demoOffline = !!on; }
+
+// Open the chat panel chrome for a replay — WITHOUT dialing a WebSocket. Clears
+// the log + cost scope so the recorded turns render into a clean panel.
+export function openPanelForReplay() {
+  resetCost();
+  closeTurn();
+  currentConvId = null;
+  const log = el("llmLog");
+  if (log) { log.innerHTML = ""; log.classList.remove("replay"); }
+  updateCostTotal();
+  el("llmPanel").classList.add("open");
+  el("llmPanel").setAttribute("aria-hidden", "false");
+  document.body.classList.add("llm-open");
+  el("llmToggle").classList.add("on");
 }
 
 // `targetConv` (optional): "new" or an existing conv id. When set, the panel
@@ -1292,6 +624,15 @@ export function openPanel(targetConv) {
     if (ws && ws.readyState <= 1) {
       try { ws.close(); } catch (_) { /* ignore */ }
     }
+    ws = null;
+  }
+  // Stale-route guard: SPA navigation never tears the socket down, so a live
+  // socket may still be bound to the PREVIOUS repair/device. Reusing it would
+  // show — and send into — the other repair's conversation. Close + redial.
+  if (ws && ws.readyState <= 1 && wsScope
+      && (wsScope.slug !== currentDeviceSlug()
+          || wsScope.repairId !== (currentRepairId() || null))) {
+    try { ws.close(); } catch (_) { /* ignore */ }
     ws = null;
   }
   el("llmPanel").classList.add("open");
@@ -1314,6 +655,7 @@ function closePanel() {
 // from sitting on a dead conv_id and trying to send to a now-404 session.
 export function closePanelIfConv(convId) {
   if (!convId || convId !== currentConvId) return;
+  _clearReconnect();
   if (ws && ws.readyState <= 1) {
     try { ws.close(); } catch (_) { /* ignore */ }
   }
@@ -1356,7 +698,7 @@ function switchTier(newTier) {
 // directly in the conversation — no extra click needed.
 export function openLLMPanelIfRepairParam() {
   const rid = currentRepairId();
-  const slug = new URLSearchParams(window.location.search).get("device");
+  const slug = getDeviceSlug();
   if (rid && slug) {
     // Defer one frame so the DOM is definitely wired (openPanel touches
     // llmInput, llmToggle, etc.) and the status bar has mounted.
@@ -1532,6 +874,29 @@ function toggleConvPopover() {
   if (!pop) return;
   if (pop.hidden) openConvPopover(); else closeConvPopover();
 }
+
+// ── Demo replay: the conversation switcher, offline ───────────────────────
+// The onboarding shows the REAL conversation UI being used — the chip, the
+// popover, the "+ New conversation" button — so the tech sees the actual
+// gesture, not a description of it. But offline there is no backend to list or
+// create conversations (and `openConvPopover` would fire a 404-flooding fetch),
+// so these helpers drive the very same DOM the live code does, from a
+// caller-supplied COSMETIC list. Deterministic, free, no network.
+export function replaySeedConversations(list) {
+  conversationsCache = Array.isArray(list) ? list.slice() : [];
+  // currentConvId drives the active-row marker + the "CONV n/total" chip label.
+  const active = conversationsCache.find((c) => c.active);
+  currentConvId = (active || conversationsCache[0] || {}).id || null;
+  renderConvItems();
+}
+export function replayOpenConvPopover() {
+  const chip = el("llmConvChip"), pop = el("llmConvPopover");
+  if (!chip || !pop) return;
+  renderConvItems();          // render the seeded cache — NO network fetch
+  pop.hidden = false;
+  chip.setAttribute("aria-expanded", "true");
+}
+export function replayCloseConvPopover() { closeConvPopover(); }
 
 // Fetch the chat panel fragment from web/llm_panel.html and inject it
 // into #llmRoot. Isolating the markup in its own file keeps parallel

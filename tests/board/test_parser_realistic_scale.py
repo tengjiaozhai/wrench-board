@@ -14,7 +14,7 @@ marker swap, and asserts that every parser yields a Board whose:
 - HTTP `/api/board/parse` path emits the same Board as direct parse()
 
 This gives high confidence that a technician's 10 MB `.bv` or `.cst`
-won't fall over on real data, even without shipping proprietary
+won't fall over on real data, even without shipping third-party
 fixtures in the repo.
 """
 
@@ -310,7 +310,7 @@ def test_realistic_cst(realistic):
         1
     ]  # drop prelude, keep from "Format:" onward (minus the marker)
     dialect = (
-        "; Castw v3.32 synthetic realistic\n"
+        "; synthetic realistic .cst\n"
         "[Format]\n"
         + body.split("Parts:", 1)[0]
         + "[Components]\n"

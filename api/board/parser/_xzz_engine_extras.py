@@ -269,7 +269,7 @@ def extract_post_v6_diagnostics(raw: bytes) -> dict[str, dict]:
 # actually carries such overlays.
 # ---------------------------------------------------------------------------
 
-import struct as _struct
+import struct as _struct  # noqa: E402 — section-local import for this late-added overlay parser
 
 _TYPE_03_HEADER = b"\x03\x24\x00\x00\x00"  # u8=0x03, u32=36 LE
 _MU_TO_MM = 1_000_000.0
@@ -403,7 +403,7 @@ def extract_type_09_test_pads(raw: bytes) -> list[dict]:
             x = _struct.unpack_from("<I", decrypted, payload_start + 4)[0]
             y = _struct.unpack_from("<I", decrypted, payload_start + 8)[0]
             inner_d = _struct.unpack_from("<I", decrypted, payload_start + 12)[0]
-            unk1 = _struct.unpack_from("<I", decrypted, payload_start + 16)[0]
+            unk1 = _struct.unpack_from("<I", decrypted, payload_start + 16)[0]  # noqa: F841 — documents byte layout
             name_len = _struct.unpack_from("<I", decrypted, payload_start + 20)[0]
             cursor = payload_start + 24
             if cursor + name_len > len(decrypted):
@@ -423,8 +423,8 @@ def extract_type_09_test_pads(raw: bytes) -> list[dict]:
             # u32 unknown2 + u8 flag4 + u32 net_index
             if cursor + 9 > len(decrypted):
                 continue
-            unk2 = _struct.unpack_from("<I", decrypted, cursor)[0]
-            flag4 = decrypted[cursor + 4]
+            unk2 = _struct.unpack_from("<I", decrypted, cursor)[0]  # noqa: F841 — documents byte layout
+            flag4 = decrypted[cursor + 4]  # noqa: F841 — documents byte layout
             net_index = _struct.unpack_from("<I", decrypted, cursor + 5)[0]
             cursor += 9
             # Optional reading text — only present if there's room left.

@@ -6,8 +6,9 @@ See docs/superpowers/specs/2026-05-08-stock-inventory-design.md §10.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
 from api.config import get_settings
@@ -26,6 +27,12 @@ from api.stock.store import (
 )
 
 router = APIRouter(prefix="/api/stock", tags=["stock"])
+
+# The multi-tenant cloud front-door injects X-Owner-Ref (the tenant id) on every
+# proxied /api/stock request, so each tenant's donor inventory is isolated. Absent
+# in standalone/self-host (single global inventory). Opaque to the engine — the
+# cloud is the gatekeeper. Typed alias reused by every endpoint below.
+OwnerRef = Annotated[str | None, Header(alias="X-Owner-Ref")]
 
 
 class _MarkDonorBody(BaseModel):
@@ -52,8 +59,8 @@ def _load_parts_index_or_none(slug: str) -> PartsIndex | None:
 
 
 @router.get("/donors")
-def list_donors():
-    inv = load_inventory()
+def list_donors(owner_ref: OwnerRef = None):
+    inv = load_inventory(owner_ref)
     out = []
     for donor in inv.donors.values():
         idx = _load_parts_index_or_none(donor.device_slug)
@@ -74,12 +81,13 @@ def list_donors():
 
 
 @router.post("/donors")
-def create_donor(body: _MarkDonorBody):
+def create_donor(body: _MarkDonorBody, owner_ref: OwnerRef = None):
     try:
         donor_id = mark_donor(
             device_slug=body.device_slug,
             label=body.label,
             condition=body.condition,
+            owner_ref=owner_ref,
         )
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
@@ -88,35 +96,35 @@ def create_donor(body: _MarkDonorBody):
 
 
 @router.delete("/donors/{donor_id}")
-def delete_donor(donor_id: str):
-    if not unmark_donor(donor_id):
+def delete_donor(donor_id: str, owner_ref: OwnerRef = None):
+    if not unmark_donor(donor_id, owner_ref=owner_ref):
         raise HTTPException(status_code=404, detail="donor_id not found")
     return {"ok": True}
 
 
 @router.post("/donors/{donor_id}/consume")
-def consume_endpoint(donor_id: str, body: _ConsumeBody):
+def consume_endpoint(donor_id: str, body: _ConsumeBody, owner_ref: OwnerRef = None):
     if not consume_part(donor_id=donor_id, refdes=body.refdes,
-                        repair_id=body.repair_id, notes=body.notes):
+                        repair_id=body.repair_id, notes=body.notes, owner_ref=owner_ref):
         raise HTTPException(status_code=404, detail="donor_id not found")
     return {"ok": True}
 
 
 @router.delete("/donors/{donor_id}/consume/{refdes}")
-def unconsume_endpoint(donor_id: str, refdes: str):
-    if not unconsume_part(donor_id=donor_id, refdes=refdes):
+def unconsume_endpoint(donor_id: str, refdes: str, owner_ref: OwnerRef = None):
+    if not unconsume_part(donor_id=donor_id, refdes=refdes, owner_ref=owner_ref):
         raise HTTPException(status_code=404, detail="not found")
     return {"ok": True}
 
 
 @router.post("/search", response_model=StockSearchResult)
-def search_endpoint(query: StockSearchQuery) -> StockSearchResult:
-    return stock_search(query)
+def search_endpoint(query: StockSearchQuery, owner_ref: OwnerRef = None) -> StockSearchResult:
+    return stock_search(query, owner_ref)
 
 
 @router.get("/donors/{donor_id}/parts")
-def list_donor_parts(donor_id: str):
-    inv = load_inventory()
+def list_donor_parts(donor_id: str, owner_ref: OwnerRef = None):
+    inv = load_inventory(owner_ref)
     if donor_id not in inv.donors:
         raise HTTPException(status_code=404, detail="donor_id not found")
     donor = inv.donors[donor_id]

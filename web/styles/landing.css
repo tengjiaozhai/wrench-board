@@ -73,12 +73,40 @@ body.pending-landing .statusbar { display: none !important; }
    participates in .landing's centering grid as a direct child. */
 .landing-shell { display: contents; }
 
-/* Below 1000px, the sidebar disappears and the landing collapses back to
-   a single-column hero centered on the full viewport. */
+/* Below 1000px there's no room for a persistent left column, so the hero
+   centers on the full viewport and the sidebar becomes a slide-in DRAWER
+   opened from the nav trigger (#landingRepairsToggle). It keeps `hidden`
+   (no repairs → nothing to show), but when present it parks off-screen and
+   slides in when `.landing` gains `.sidebar-open`. */
 @media (max-width: 999px) {
   .landing { padding-left: 0; }
-  .landing-sidebar { display: none !important; }
+  .landing-sidebar:not([hidden]) {
+    position: fixed;
+    top: 0; left: 0; bottom: 0;
+    width: min(300px, 84vw);
+    transform: translateX(-100%);
+    transition: transform .22s ease;
+    animation: none;          /* the drawer slides; skip the desktop rise-in */
+    z-index: 1200;
+    box-shadow: 0 0 40px rgba(0, 0, 0, .5);
+  }
+  .landing.sidebar-open .landing-sidebar:not([hidden]) { transform: translateX(0); }
+  .landing-sidebar-backdrop:not([hidden]) {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, .5);
+    z-index: 1150;
+  }
 }
+
+/* The recent-repairs drawer trigger is mobile-only (desktop shows the sidebar
+   as a persistent column). landing.js toggles its `hidden` in lockstep with
+   the sidebar, so it only appears when there's at least one repair. */
+.landing-repairs-toggle { display: none; }
+@media (max-width: 999px) {
+  .landing-repairs-toggle:not([hidden]) { display: inline-flex; }
+}
+.landing-sidebar-backdrop[hidden] { display: none; }
 
 .landing-bg {
   position: absolute;
@@ -107,15 +135,59 @@ body.pending-landing .statusbar { display: none !important; }
 
 .landing-mark {
   display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-2);
-  font-size: 13px;
-  letter-spacing: 0.5px;
-  margin-bottom: 32px;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 28px;
 }
 
-.landing-mark svg { color: var(--cyan); }
+/* Wordmark logotype — weight contrast carries the brand: "Wrench" recedes,
+   "Board" leads. Inter, not mono (this is the mark, not a workshop label). */
+.landing-mark__name {
+  font-family: 'Inter', sans-serif;
+  font-size: 19px;
+  line-height: 1;
+  letter-spacing: -0.2px;
+}
+.landing-mark__w { color: var(--text-2); font-weight: 500; }
+.landing-mark__b { color: var(--text);   font-weight: 700; }
+
+/* "Cloud" edition suffix — hosted product only (body.wb-hosted). The mark
+   becomes "WrenchBoardCloud" with "Cloud" in cyan; self-host shows just
+   "WrenchBoard". A small tilted cloud perches on the "d" like a crown. */
+.landing-mark__cloud {
+  display: none;
+  color: var(--cyan);
+  font-weight: 600;
+  margin-left: 2px;
+}
+body.wb-hosted .landing-mark__cloud { display: inline; }
+
+/* The "d" of Cloud anchors the perched cloud above it. */
+.landing-mark__d { position: relative; }
+.landing-mark__perch {
+  position: absolute;
+  left: 50%;
+  top: -0.56em;
+  width: 0.82em;
+  height: 0.82em;
+  color: var(--cyan);
+  transform: translateX(-42%) rotate(-18deg);
+  transform-origin: center bottom;
+  /* soft cyan halo, single-use decorative glow */
+  filter: drop-shadow(0 0 4px color-mix(in oklab, var(--cyan) 55%, transparent));
+  animation: mark-perch-bob 3.6s ease-in-out infinite;
+}
+.landing-mark__perch svg { display: block; width: 100%; height: 100%; }
+
+@keyframes mark-perch-bob {
+  0%, 100% { transform: translateX(-42%) rotate(-18deg) translateY(0); }
+  50%      { transform: translateX(-42%) rotate(-18deg) translateY(-2px); }
+}
+
+/* Respect reduced-motion: keep the perched cloud, drop the float. */
+@media (prefers-reduced-motion: reduce) {
+  .landing-mark__perch { animation: none; }
+}
 
 .landing-title {
   font-family: 'Inter', sans-serif;
@@ -175,6 +247,40 @@ body.pending-landing .statusbar { display: none !important; }
 
 .landing-input::placeholder { color: var(--text-3); }
 
+/* The device input reserves room on the right for the docked "Browse"
+   affordance so typed text and the placeholder clear the pill. */
+.landing-input-wrap .landing-input { padding-right: 118px; }
+
+/* Trailing catalogue affordance — a subtle pill tucked into the right edge
+   of the device input, for a tech who doesn't know the model name to type.
+   Cyan (component family) on hover, matching the rest of the workbench. */
+.landing-browse-btn {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 11px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  color: var(--text-3);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  cursor: pointer;
+  transition: color .15s, border-color .15s, background .15s;
+}
+.landing-browse-btn svg { flex-shrink: 0; }
+.landing-browse-btn:hover {
+  color: var(--cyan);
+  border-color: var(--border-hover);
+  background: var(--panel-2);
+}
+
 /* ============ Device autocomplete ============
  * Lazy-loaded list of packs already on disk, surfaced under the device
  * input as the tech types. Glass panel style matching the rest of the
@@ -183,6 +289,7 @@ body.pending-landing .statusbar { display: none !important; }
 .landing-input-wrap {
   position: relative;
   width: 100%;
+  display: flex;
 }
 
 .landing-suggest {
@@ -211,9 +318,10 @@ body.pending-landing .statusbar { display: none !important; }
 
 .landing-suggest-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
-  padding: 9px 12px;
+  padding: 5px 12px;
+  line-height: 1.25;
   cursor: pointer;
   font-size: 13px;
   color: var(--text);
@@ -239,21 +347,55 @@ body.pending-landing .statusbar { display: none !important; }
 }
 .landing-suggest-icon.is-complete { color: var(--cyan); }
 .landing-suggest-icon.is-partial  { color: var(--amber); }
+.landing-suggest-icon { margin-top: 2px; }
+
+/* Two-line body: title row (model + brand + readiness) over an identifiers row. */
+.landing-suggest-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  text-align: left;
+}
+.landing-suggest-line1 {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+}
 
 .landing-suggest-label {
-  flex: 1;
+  flex: 0 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+
+.landing-suggest-brand {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+/* Distinguishing identifiers — A-number(s) / board# / form-factor. */
+.landing-suggest-ids {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px;
+  color: var(--text-2);
+  letter-spacing: 0.2px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .landing-suggest-meta {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 10.5px;
-  color: var(--text-3);
-  letter-spacing: 0.2px;
-  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 5px;
   flex: 0 0 auto;
+  margin-left: 2px;
 }
 
 /* Landing CTA uses --cyan (component) instead of --violet (action) to match
@@ -281,31 +423,142 @@ body.pending-landing .statusbar { display: none !important; }
 .landing-submit:active { transform: translateY(1px); }
 .landing-submit:disabled { opacity: 0.5; cursor: progress; }
 
-.landing-chips {
+/* ============ Actions row — "+ knowledge" trigger + primary CTA ============
+ * The board-type select + schematic picker moved into a modal (see
+ * #landingKnowledgeBackdrop) so the hero stays a clean device+symptom form.
+ * The submit keeps its prominent full-width-ish CTA look; the knowledge
+ * trigger is a compact secondary button to its left. */
+.landing-actions {
   display: flex;
-  flex-wrap: wrap;
   gap: 8px;
+  align-items: stretch;
+  margin-top: 4px;
+}
+.landing-actions .landing-submit {
+  flex: 1;
+  margin-top: 0;
   justify-content: center;
-  margin-bottom: 24px;
 }
 
-.landing-chip {
-  background: transparent;
-  border: 1px solid var(--border-soft);
+.landing-knowledge-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
   color: var(--text-2);
-  font-size: 12px;
-  padding: 6px 12px;
-  border-radius: 999px;
-  cursor: pointer;
   font-family: inherit;
+  font-size: 13px;
+  padding: 0 14px;
+  border-radius: 10px;
+  cursor: pointer;
+  white-space: nowrap;
   transition: border-color .15s, background .15s, color .15s;
 }
+.landing-knowledge-btn:hover {
+  border-color: var(--border-hover);
+  background: var(--panel-2);
+  color: var(--text);
+}
+/* Added-knowledge state: tint the edge with the hero's cyan CTA accent. */
+.landing-knowledge-btn.has-knowledge {
+  border-color: color-mix(in oklch, var(--cyan) 50%, var(--border));
+  color: var(--text);
+}
+.landing-knowledge-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--cyan);
+  color: var(--bg-deep);
+  font-size: 10px;
+  font-weight: 600;
+}
+.landing-knowledge-badge[hidden] { display: none; }
 
-.landing-chip:hover {
+/* Summary chips: one per added item (board type, schematic file). The whole
+ * chip is the remove control — click clears that piece of state. */
+.landing-knowledge-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+  margin-top: 10px;
+}
+.landing-knowledge-chips[hidden] { display: none; }
+.landing-knowledge-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 240px;
+  background: var(--panel);
+  border: 1px solid var(--border-soft);
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: 11px;
+  padding: 4px 8px 4px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: border-color .15s, background .15s, color .15s;
+}
+.landing-knowledge-chip > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.landing-knowledge-chip svg { flex-shrink: 0; opacity: .6; }
+.landing-knowledge-chip:hover {
   border-color: var(--border-hover);
   color: var(--text);
-  background: var(--panel);
 }
+.landing-knowledge-chip:hover svg { opacity: 1; }
+
+/* The knowledge modal opens over the landing hero — a fixed overlay at
+ * z-index 1000 (.landing) with its tools nav at 1001. The shared
+ * .modal-backdrop z-index (100) is meant for the chrome-level home view, so
+ * lift this one above the hero or it opens invisibly behind it. */
+#landingKnowledgeBackdrop { z-index: 1100; }
+/* Same reason for the pre-flight launch-confirmation modal — it opens over the
+ * landing hero at submit, so it needs the same lift above the hero. */
+#landingPreflightBackdrop { z-index: 1100; }
+
+/* Pre-flight modal: the credit/time points list + the email opt-in row. */
+.landing-preflight-points {
+  list-style: none;
+  margin: 0 0 14px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.landing-preflight-points li {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.landing-preflight-points .icon-sm {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  color: var(--text-3);
+}
+.landing-preflight-notify {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 14px;
+  font-size: 13px;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.landing-preflight-notify input { margin-top: 2px; cursor: pointer; }
 
 .landing-status {
   font-size: 12px;
@@ -395,54 +648,107 @@ body.pending-landing .statusbar { display: none !important; }
   transition: border-color .2s, background .2s, box-shadow .2s;
 }
 
+/* Single-row head: label, then the always-visible live sub-step line, then
+   the "détail" toggle pushed to the right. Keeps each phase to one line so a
+   long build doesn't grow the timeline vertically. */
+.landing-phase-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
 .landing-phase-label {
   font-weight: 500;
+  flex: 0 0 auto;
 }
 
-.landing-phase-narration {
-  margin-top: 6px;
+/* The compact live line — latest sub-step only. Truncates with an ellipsis so
+   it never wraps and never pushes the toggle off-row. */
+.landing-phase-live {
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: 12px;
   color: var(--text-2);
-  line-height: 1.55;
-  min-height: 0;
-  max-height: 0;
+  white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
   opacity: 0;
-  transition: max-height .35s cubic-bezier(.2,.8,.2,1), opacity .25s ease-out, margin-top .2s;
+  transition: opacity .2s ease-out;
 }
+.landing-phase.has-steps .landing-phase-live { opacity: 1; }
 
-.landing-phase.has-narration .landing-phase-narration {
-  max-height: 200px;
-  opacity: 1;
-  margin-top: 6px;
+/* "détail" toggle — quiet text button, only shown once a phase has sub-steps. */
+.landing-phase-detail {
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 11px;
+  color: var(--cyan);
+  cursor: pointer;
+  opacity: .8;
+  transition: opacity .15s;
 }
+.landing-phase-detail:hover { opacity: 1; text-decoration: underline; }
+.landing-phase-detail[hidden] { display: none; }
 
-/* In-progress: dot pulses cyan */
+/* Collapsible chronological sub-step log, revealed by the toggle. */
+.landing-phase-log {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 4px 0 2px 10px;
+  border-left: 1px solid var(--border-soft);
+  font-size: 12px;
+  color: var(--text-2);
+  line-height: 1.7;
+}
+.landing-phase-log[hidden] { display: none; }
+.landing-phase-log li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* In-progress: the dot becomes a spinner — a faint cyan ring with one bright
+   cyan arc rotating. Reads as live work without the heavier pulse. */
 .landing-phase.is-running { color: var(--text-2); }
 .landing-phase.is-running .landing-phase-dot {
-  border-color: var(--cyan);
-  background: var(--cyan);
-  box-shadow: 0 0 0 4px rgba(125, 211, 252, 0.10);
-  animation: landing-pulse 1.4s ease-in-out infinite;
+  background: transparent;
+  border: 2px solid color-mix(in oklch, var(--cyan) 22%, transparent);
+  border-top-color: var(--cyan);
+  box-shadow: none;
+  animation: landing-spin 0.7s linear infinite;
 }
 
-/* Done: dot solid cyan, no pulse */
+/* Done: the spinner resolves into a green completion badge — a filled --ok
+   circle with a crisp checkmark (the ::after L rotated 45deg). */
 .landing-phase.is-done { color: var(--text); }
 .landing-phase.is-done .landing-phase-dot {
-  border-color: var(--cyan);
-  background: var(--cyan);
+  background: var(--ok);
+  border-color: var(--ok);
+  box-shadow: none;
+  animation: none;
+}
+.landing-phase.is-done .landing-phase-dot::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  width: 2.5px;
+  height: 5px;
+  border: solid var(--bg-deep);
+  border-width: 0 1.6px 1.6px 0;
+  transform: translate(-50%, -55%) rotate(45deg);
 }
 
 /* Failed: amber per project warning grammar (cf. pipeline_progress.css). */
 .landing-phase.is-failed .landing-phase-dot {
   border-color: var(--amber);
   background: var(--amber);
+  box-shadow: none;
+  animation: none;
 }
 .landing-phase.is-failed { color: var(--amber); }
 
-@keyframes landing-pulse {
-  0%, 100% { box-shadow: 0 0 0 4px rgba(125, 211, 252, 0.10); }
-  50%      { box-shadow: 0 0 0 8px rgba(125, 211, 252, 0.04); }
+@keyframes landing-spin {
+  to { transform: rotate(360deg); }
 }
 
 /* ============ Sidebar — recent repairs library ============
@@ -572,13 +878,51 @@ body.pending-landing .statusbar { display: none !important; }
 }
 
 .landing-sidebar-device {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 12.5px;
   font-weight: 500;
   color: var(--text);
+}
+/* The device name truncates; the state badge (when present) never shrinks. */
+.landing-sidebar-device-name {
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* Build-state badge on a repair tile — only shown for non-ready packs. The
+ * three states map to the existing semantic accents (building=cyan/in-progress,
+ * paused=amber/needs-input, failed=amber-error). Building pulses to read as live. */
+.landing-sidebar-state {
+  flex: 0 0 auto;
+  font-size: 9px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  color: var(--text-3);
+}
+.landing-sidebar-state.is-building {
+  color: var(--cyan);
+  border-color: color-mix(in oklch, var(--cyan) 40%, transparent);
+  background: color-mix(in oklch, var(--cyan) 12%, transparent);
+  animation: landing-state-pulse 2.4s ease-in-out infinite;
+}
+.landing-sidebar-state.is-paused {
+  color: var(--amber);
+  border-color: color-mix(in oklch, var(--amber) 40%, transparent);
+}
+.landing-sidebar-state.is-failed {
+  color: var(--amber);
+  border-color: color-mix(in oklch, var(--amber) 50%, transparent);
+  background: color-mix(in oklch, var(--amber) 12%, transparent);
+}
+@keyframes landing-state-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }
 .landing-sidebar-symptom {
   display: block;
@@ -603,6 +947,48 @@ body.pending-landing .statusbar { display: none !important; }
 .landing-sidebar-item:hover .landing-sidebar-symptom { color: var(--text); }
 .landing-sidebar-item:hover .landing-sidebar-meta { color: var(--text-2); }
 
+/* Per-repair build-state badge (history list). Neutral/muted on purpose —
+   "building" is a process state, not one of the four locked semantic colors.
+   The badge + a `cursor: progress` link signal "not ready to open"; the click
+   gate (landing/index.js) opens the live build timeline instead. */
+.landing-sidebar-badge {
+  display: inline-block;
+  margin-top: 3px;
+  padding: 1px 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-3);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.landing-sidebar-badge.is-building { animation: landing-badge-pulse 2.4s ease-in-out infinite; }
+.landing-sidebar-badge.is-failed { color: var(--text-2); }
+.landing-sidebar-item.is-building .landing-sidebar-link,
+.landing-sidebar-item.is-paused .landing-sidebar-link,
+.landing-sidebar-item.is-failed .landing-sidebar-link { cursor: progress; }
+@keyframes landing-badge-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+/* Consent + contribution note under the schematic picker (Add-knowledge modal).
+   Reuses .modal-hint's muted style; just needs breathing room from the picker. */
+.landing-schematic-share {
+  margin-top: 8px;
+  line-height: 1.45;
+}
+
+/* Reassurance line under the build-timeline title (analyse unique + async). */
+.landing-timeline-note {
+  margin: 4px 0 0;
+  font-size: 11.5px;
+  color: var(--text-3);
+  line-height: 1.45;
+}
+
 /* ============ Hero mascot ============
  * Mounted by web/js/landing.js. State follows the pipeline: idle by
  * default, working during the build, success on completion, error on
@@ -614,3 +1000,316 @@ body.pending-landing .statusbar { display: none !important; }
 }
 .landing-mascot .mascot { width: 150px; }
 
+/* ============ Device-kind pause panel ============
+ * Injected into #landingTimeline by renderLandingKindConfirm() when the
+ * orchestrator pauses on a device-kind disagreement. Neutral "needs action"
+ * treatment — a plain panel surface + border, NOT --amber (symptom) or
+ * --cyan (component), per the locked semantic palette. */
+
+.landing-kind-panel {
+  margin-top: 14px;
+  padding: 14px 16px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  animation: landing-rise .3s cubic-bezier(.2, .8, .2, 1);
+}
+
+.landing-kind-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--text-3);
+}
+
+.landing-kind-row b.mono {
+  font-family: var(--mono, "JetBrains Mono", monospace);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: .4px;
+}
+
+.landing-kind-evidence {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-2);
+  padding: 6px 8px;
+  background: var(--panel);
+  border-left: 2px solid var(--border-soft);
+  border-radius: 4px;
+}
+
+.landing-kind-opts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 4px 0 6px;
+}
+
+.landing-kind-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.landing-kind-opt input { accent-color: var(--cyan); }
+
+.landing-kind-opt em {
+  font-style: normal;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  color: var(--text-3);
+}
+
+/* Confirm button mirrors .landing-submit (cyan CTA, see note above). */
+.landing-kind-confirm {
+  align-self: flex-start;
+  background: var(--cyan);
+  color: var(--bg-deep);
+  border: none;
+  font-weight: 600;
+  font-size: 13px;
+  padding: 8px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: filter .15s, transform .05s;
+}
+
+.landing-kind-confirm:hover { filter: brightness(1.1); }
+.landing-kind-confirm:active { transform: translateY(1px); }
+
+/* Paused/attention treatment on the device_kind phase row — a STATIC neutral
+ * dot (no spinner): it's awaiting the tech's input, not making progress. */
+.landing-phase[data-phase="device_kind"].is-running .landing-phase-dot {
+  border: 2px solid var(--text-3);
+  background: var(--panel-2);
+  animation: none;
+}
+
+/* ============ Device-kind readiness badges (suggest meta) ============
+ * Inline chips trailing a suggestion's mono meta. Two flavours, emitted by
+ * landing.js _renderSuggest():
+ *   - graph badge — dim by default, lit (.is-on) in --emerald when the
+ *     device already has a compiled electrical graph (the "ready" signal);
+ *   - .mono kind chip — short device-kind code (GPU / PORTABLE / …) as a
+ *     neutral classification chip, monospace uppercase.
+ * Tints use color-mix(in oklch, …) to match the OKLCH semantic tokens
+ * (cf. profile.css / protocol.css) — rgba literals can't tint OKLCH. */
+.landing-suggest-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 9px;
+  font-size: 9.5px;
+  letter-spacing: .3px;
+  color: var(--text-3);
+  opacity: .6;
+  vertical-align: middle;
+}
+.landing-suggest-badge.is-on {
+  opacity: 1;
+  color: var(--emerald);
+  border-color: color-mix(in oklch, var(--emerald) 35%, transparent);
+  background: color-mix(in oklch, var(--emerald) 10%, transparent);
+}
+.landing-suggest-badge.mono {
+  font-family: var(--mono);
+  text-transform: uppercase;
+  opacity: 1;
+  color: var(--text-2);
+}
+.landing-suggest-badge.is-draft {
+  opacity: 1;
+  color: var(--amber);
+  border-color: color-mix(in oklch, var(--amber) 35%, transparent);
+  text-transform: uppercase;
+}
+
+/* ============ Schematic upload field (optional PDF) ============
+ * #landingSchematicField wraps a pick button (.landing-schematic-pick,
+ * which reuses .landing-input for its base look) + a mono filename span.
+ * The pick button reads as a left-aligned field, not a centered submit —
+ * .landing-input doesn't set text-align so the button default (center)
+ * needs overriding. In the is-ingested state the field collapses: the
+ * picker hides and the filename greens to mark the attachment as taken. */
+.landing-schematic {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.landing-schematic-pick {
+  text-align: left;
+  cursor: pointer;
+}
+.landing-schematic-pick:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+.landing-schematic-name {
+  font-size: 11px;
+  color: var(--text-3);
+  font-family: var(--mono);
+}
+#landingSchematicField.is-ingested .landing-schematic-pick { display: none; }
+#landingSchematicField.is-ingested .landing-schematic-name { color: var(--emerald); }
+
+
+/* Lock free (mode managé, cloud_hints.packedOnly) — texte d'aide + CTA upgrade
+   sous le formulaire quand le start-diagnostic est verrouillé. */
+.landing-free-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--text-3);
+  line-height: 1.5;
+}
+.landing-free-hint a {
+  color: var(--teal, #64d2de);
+  text-decoration: underline;
+}
+
+/* Device catalogue modal — glass overlay, grouped device grid, fiche. */
+.landing-catalogue-backdrop {
+  /* z-index 1100: the modal block is a sibling of .landing (z-index 1000), not
+     a child, so it must sit above the landing overlay — matches the knowledge
+     and preflight modals (#landingKnowledgeBackdrop / #landingPreflightBackdrop). */
+  position: fixed; inset: 0; z-index: 1100;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, .5); backdrop-filter: blur(2px); padding: 4vh 4vw;
+}
+.landing-catalogue-backdrop[hidden] { display: none; }
+.landing-catalogue {
+  display: flex; flex-direction: column;
+  width: min(960px, 100%); max-height: 92vh;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .5); overflow: hidden;
+}
+.landing-catalogue-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px; border-bottom: 1px solid var(--border-soft);
+}
+.landing-catalogue-title { font-size: 14px; margin: 0; color: var(--text); }
+.landing-catalogue-close {
+  background: none; border: none; color: var(--text-3); cursor: pointer; padding: 4px;
+}
+.landing-catalogue-close:hover { color: var(--text); }
+.landing-catalogue-controls {
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  padding: 12px 18px; border-bottom: 1px solid var(--border-soft);
+}
+.landing-catalogue-search {
+  flex: 1 1 220px; min-width: 180px;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text); padding: 7px 10px; font-size: 13px;
+}
+.landing-catalogue-kinds { display: flex; gap: 6px; flex-wrap: wrap; }
+.landing-catalogue-kind-chip {
+  font: 10.5px/1 "JetBrains Mono", monospace; text-transform: uppercase; letter-spacing: .4px;
+  padding: 5px 9px; border-radius: 5px; cursor: pointer;
+  background: var(--bg-2); border: 1px solid var(--border); color: var(--text-2);
+}
+.landing-catalogue-kind-chip.is-active { background: var(--panel-2); color: var(--text); border-color: var(--border-hover); }
+.landing-catalogue-list { overflow-y: auto; padding: 12px 18px 18px; }
+
+/* Stepped chooser — breadcrumb + type/brand vignettes. */
+.landing-catalogue-breadcrumb {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin-bottom: 14px;
+  font-family: 'JetBrains Mono', monospace; font-size: 10.5px;
+  text-transform: uppercase; letter-spacing: .4px;
+}
+.landing-catalogue-crumb {
+  background: none; border: none; padding: 2px 0; cursor: pointer;
+  font: inherit; text-transform: inherit; letter-spacing: inherit;
+  color: var(--text-3); transition: color .15s;
+}
+.landing-catalogue-crumb:hover { color: var(--cyan); }
+.landing-catalogue-crumb.is-current { color: var(--text); cursor: default; }
+.landing-catalogue-crumb-sep { color: var(--text-3); opacity: .6; }
+.landing-catalogue-tiles {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px;
+}
+.landing-catalogue-tile {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 10px;
+  text-align: left; background: var(--bg-2); border: 1px solid var(--border);
+  border-radius: 9px; padding: 16px; cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+.landing-catalogue-tile:hover { background: var(--panel-2); border-color: var(--border-hover); }
+.landing-catalogue-tile-icon { color: var(--cyan); display: inline-flex; }
+.landing-catalogue-tile-label { font-size: 13px; color: var(--text); }
+.landing-catalogue-tile-count {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  color: var(--text-3); text-transform: uppercase; letter-spacing: .4px;
+}
+.landing-catalogue-group { margin-top: 14px; }
+.landing-catalogue-group:first-child { margin-top: 0; }
+.landing-catalogue-group-head {
+  font: 10.5px/1 "JetBrains Mono", monospace; text-transform: uppercase; letter-spacing: .5px;
+  color: var(--text-3); margin: 0 0 8px; padding-bottom: 4px; border-bottom: 1px solid var(--border-soft);
+}
+.landing-catalogue-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.landing-catalogue-card {
+  text-align: left; background: var(--bg-2); border: 1px solid var(--border); border-radius: 7px;
+  padding: 10px 12px; cursor: pointer; transition: background .15s, border-color .15s;
+}
+.landing-catalogue-card:hover { background: var(--panel-2); border-color: var(--border-hover); }
+.landing-catalogue-card.is-draft { opacity: .72; }
+.landing-catalogue-card-label { font-size: 13px; color: var(--text); }
+.landing-catalogue-card-brand { font-size: 11px; color: var(--text-3); margin-top: 2px; }
+/* Board identifier (model / board number from `version`) — mono, the line that
+   distinguishes two revisions sharing a model name. */
+.landing-catalogue-card-id {
+  font-family: 'JetBrains Mono', monospace; font-size: 10.5px;
+  color: var(--text-2); margin-top: 4px; letter-spacing: .2px;
+}
+.landing-catalogue-badges { display: flex; gap: 5px; margin-top: 7px; flex-wrap: wrap; }
+.landing-catalogue-badge {
+  font: 9.5px/1 "JetBrains Mono", monospace; text-transform: uppercase; letter-spacing: .4px;
+  padding: 3px 6px; border-radius: 4px; background: var(--bg); border: 1px solid var(--border); color: var(--text-2);
+}
+.landing-catalogue-badge.is-on { color: var(--emerald); border-color: var(--emerald); }
+.landing-catalogue-badge.is-draft { color: var(--amber); border-color: var(--amber); }
+/* Fiche */
+.landing-catalogue-fiche { overflow-y: auto; padding: 14px 18px 18px; }
+.landing-catalogue-fiche[hidden] { display: none; }
+.landing-catalogue-fiche-back {
+  background: none; border: none; color: var(--text-3); cursor: pointer; font-size: 12px; padding: 0 0 10px;
+}
+.landing-catalogue-fiche-back:hover { color: var(--text); }
+.landing-catalogue-pastilles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; margin: 10px 0 16px; }
+.landing-catalogue-pastille {
+  display: flex; justify-content: space-between; gap: 8px; font-size: 12px;
+  padding: 6px 9px; border-radius: 5px; background: var(--bg-2); border: 1px solid var(--border); color: var(--text-3);
+}
+.landing-catalogue-pastille.is-on { color: var(--text); }
+.landing-catalogue-pastille-state { font: 10px/1 "JetBrains Mono", monospace; text-transform: uppercase; }
+.landing-catalogue-pastille.is-on .landing-catalogue-pastille-state { color: var(--emerald); }
+.landing-catalogue-fiche-launch { display: flex; flex-direction: column; gap: 8px; }
+.landing-catalogue-fiche-launch input {
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 8px 10px; font-size: 13px;
+}
+/* Mirrors the hero's primary CTA (.landing-submit): cyan fill + dark text.
+   White-on-cyan/violet washes out — the accent palette is light OKLCH, built
+   for dark text. Same "Start diagnostic" action, same look across surfaces. */
+.landing-catalogue-fiche-launch button {
+  align-self: flex-start; background: var(--cyan); color: var(--bg-deep); border: none;
+  border-radius: 6px; padding: 9px 18px; font-size: 13px; font-weight: 600;
+  cursor: pointer; transition: filter .15s;
+}
+.landing-catalogue-fiche-launch button:hover { filter: brightness(1.1); }
+.landing-catalogue-fiche-launch button[disabled] { opacity: .45; cursor: not-allowed; }
+.landing-catalogue-fiche-locked { font-size: 12px; color: var(--amber); }
+.landing-catalogue-empty { color: var(--text-3); font-size: 12px; padding: 14px 18px; }

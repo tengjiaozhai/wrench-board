@@ -164,9 +164,9 @@ async def test_analyze_boot_sequence_stamps_model_used():
                       new=AsyncMock(return_value=fake)) as mocked:
         result = await analyze_boot_sequence(
             _sample_graph(), client=None,  # type: ignore[arg-type]
-            model="claude-opus-4-7",
+            model="claude-opus-4-8",
         )
-    assert result.model_used == "claude-opus-4-7"
+    assert result.model_used == "claude-opus-4-8"
     assert result.sequencer_refdes == "LPC"
     assert len(result.phases) == 2
     # The tool call was made once with the expected schema
@@ -174,7 +174,7 @@ async def test_analyze_boot_sequence_stamps_model_used():
     kwargs = mocked.await_args.kwargs
     assert kwargs["forced_tool_name"] == "submit_analyzed_boot_sequence"
     assert kwargs["output_schema"] is AnalyzedBootSequence
-    assert kwargs["model"] == "claude-opus-4-7"
+    assert kwargs["model"] == "claude-opus-4-8"
 
 
 @pytest.mark.asyncio
@@ -208,3 +208,23 @@ def test_analyzed_boot_phase_confidence_bounded():
             index=0, name="bad", kind="always-on",
             confidence=1.5,  # out of bounds
         )
+
+
+def test_context_surfaces_untraced_refdes():
+    graph = _sample_graph()
+    graph.components["U9000"] = ComponentNode(
+        refdes="U9000", type="ic", pages=[79], evidence="untraced"
+    )
+    graph.power_rails["+9V"] = PowerRail(
+        label="+9V", source_refdes="U9000", consumers=["U12"]
+    )
+    ctx = build_context(graph)
+    assert "UNTRACED REFDES" in ctx
+    assert "U9000" in ctx
+    assert "source=U9000 [UNTRACED]" in ctx
+
+
+def test_context_untraced_block_empty_when_all_traced():
+    ctx = build_context(_sample_graph())
+    assert "UNTRACED REFDES" in ctx
+    assert "(none)" in ctx

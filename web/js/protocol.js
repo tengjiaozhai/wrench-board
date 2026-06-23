@@ -4,6 +4,8 @@
 // memory, dispatches to the three render modules (wizard / floating /
 // inline) which read state via getProtocol() and re-render on change.
 
+import { escapeHtml as escapeHtmlLocal } from "./shared/dom.js";
+
 const state = {
   proto: null,           // {protocol_id, title, steps:[…], current_step_id, …} or null
   send: null,            // (payload) => void  — set by main.js
@@ -227,7 +229,7 @@ export function showConfirmation(ev) {
 
   const t = window.t || ((k) => k);
   if (titleEl) titleEl.textContent = decodeEscapes(ev.title || t("protocol.confirm.badge"));
-  if (rationaleEl) rationaleEl.textContent = decodeEscapes(ev.rationale || "—");
+  if (rationaleEl) rationaleEl.textContent = decodeEscapes(ev.rationale || "…");
   if (countEl) {
     const n = Number(ev.step_count || (ev.steps || []).length || 0);
     countEl.textContent = t("protocol.confirm.step_count", { n });
@@ -567,11 +569,6 @@ function pushBadgesToBoard(proto) {
   }
 }
 subscribe(pushBadgesToBoard);
-
-function escapeHtmlLocal(s) {
-  return String(s ?? "").replace(/[&<>"']/g, (c) =>
-    ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
-}
 
 // Floating refdes pin — read-only chip anchored above the active step's
 // target component. Just a badge number + refdes label + arrow pointing

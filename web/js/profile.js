@@ -5,19 +5,18 @@
 // Tool toggles → PUT /profile/tools ; preference changes → PUT /profile/preferences
 // ; skill click opens the evidence drawer. Identity modal handler lands in Task 12.
 
+import { escapeHtml as escHtml } from "./shared/dom.js";
+
 let _state = null;    // {profile, derived, catalog}
 let _partialLoaded = false;
 
-function escHtml(s) {
-  if (s === null || s === undefined) return "";
-  return String(s).replace(/[&<>"']/g, c => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-  }[c]));
-}
-
 const STATUS_KEYS = ["mastered", "practiced", "learning", "unlearned"];
 const VERBOSITIES = ["auto", "concise", "normal", "teaching"];
-const LANGUAGES = ["en", "fr", "zh"];
+const LANGUAGES = ["en", "fr", "zh", "hi"];
+// Native display label per locale (the stored value stays the ISO code).
+const LANGUAGE_LABELS = { en: "English", fr: "Français", zh: "中文", hi: "हिन्दी" };
+// BCP-47 tag per locale for Intl date/number formatting.
+const DATE_LOCALES = { en: "en-US", fr: "fr-FR", zh: "zh-CN", hi: "hi-IN" };
 
 async function ensurePartial() {
   if (_partialLoaded) return;
@@ -48,10 +47,10 @@ function fmtYears(n) {
 }
 
 function fmtUpdated(iso) {
-  if (!iso) return "—";
+  if (!iso) return "…";
   const d = new Date(iso);
-  if (isNaN(d)) return "—";
-  const locale = (window.i18n && window.i18n.toBcp47) ? window.i18n.toBcp47(currentLocale()) : "en-US";
+  if (isNaN(d)) return "…";
+  const locale = DATE_LOCALES[currentLocale()] || "en-US";
   const date = d.toLocaleDateString(locale, { day: "numeric", month: "short" });
   return window.t("profile.head.updated", { date });
 }
@@ -62,7 +61,7 @@ function renderHead() {
   const id = _state.profile.identity;
   const level = _state.derived.level;
   document.getElementById("profAvatar").textContent =
-    id.avatar || (id.name?.slice(0, 2)?.toUpperCase() || "—");
+    id.avatar || (id.name?.slice(0, 2)?.toUpperCase() || "?");
   document.getElementById("profName").textContent = id.name || window.t("profile.head.no_name");
   const levelEl = document.getElementById("profLevel");
   levelEl.textContent = level.toUpperCase();
@@ -211,7 +210,7 @@ function renderPrefs() {
   host.innerHTML = "";
   const prefs = _state.profile.preferences;
 
-  const makeGroup = (label, key, options) => {
+  const makeGroup = (label, key, options, labels) => {
     const g = document.createElement("div");
     g.className = "profile-prefs-group";
     g.innerHTML = `<label>${label}</label><div class="opts"></div>`;
@@ -219,7 +218,7 @@ function renderPrefs() {
     for (const v of options) {
       const btn = document.createElement("button");
       btn.className = "profile-prefs-opt" + (prefs[key] === v ? " on" : "");
-      btn.textContent = v;
+      btn.textContent = labels ? (labels[v] || v) : v;
       btn.addEventListener("click", () => changePref(key, v));
       opts.appendChild(btn);
     }
@@ -227,7 +226,7 @@ function renderPrefs() {
   };
 
   host.appendChild(makeGroup(window.t("profile.prefs.verbosity"), "verbosity", VERBOSITIES));
-  host.appendChild(makeGroup(window.t("profile.prefs.language"), "language", LANGUAGES));
+  host.appendChild(makeGroup(window.t("profile.prefs.language"), "language", LANGUAGES, LANGUAGE_LABELS));
 }
 
 async function changePref(key, value) {

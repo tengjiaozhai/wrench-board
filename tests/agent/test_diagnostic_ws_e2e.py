@@ -124,7 +124,7 @@ def _patch_runtime(
     import api.agent.runtime_direct as rt
     monkeypatch.setenv("DIAGNOSTIC_MODE", "direct")
 
-    def _from_device(_slug: str) -> SessionState:
+    def _from_device(_slug: str, owner_ref: str | None = None) -> SessionState:
         s = SessionState()
         if board is not None:
             s.set_board(board)
@@ -137,8 +137,9 @@ def _patch_runtime(
     monkeypatch.setattr(rt, "get_settings", lambda: MagicMock(
         anthropic_api_key=api_key,
         memory_root=memory_root,
-        anthropic_model_main="claude-opus-4-7",
+        anthropic_model_main="claude-opus-4-8",
         anthropic_max_retries=5,
+        ma_stream_event_timeout_seconds=600.0,
     ))
     fake_client = _mock_anthropic(scripted or [_stream_text("hello")])
     monkeypatch.setattr(rt, "AsyncAnthropic", lambda **_kw: fake_client)
@@ -354,7 +355,7 @@ def _patch_managed_runtime(
         return None
     monkeypatch.setattr(rm, "maybe_auto_seed", _fake_auto_seed)
 
-    def _from_device(_slug: str) -> SessionState:
+    def _from_device(_slug: str, owner_ref: str | None = None) -> SessionState:
         s = SessionState()
         if board is not None:
             s.set_board(board)

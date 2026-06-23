@@ -35,7 +35,7 @@ if [ "$MODE" != "direct" ] && [ ! -f "$IDS_FILE" ]; then
 
     - 1 environment
     - 4 agents: fast (Haiku 4.5), normal (Sonnet 4.6),
-      deep (Opus 4.7), curator (Sonnet 4.6)
+      deep (Opus 4.8), curator (Sonnet 4.6)
 
   Idle resources (no cost until used). The IDs are persisted
   locally in managed_ids.json (gitignored).

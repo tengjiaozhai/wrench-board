@@ -38,11 +38,11 @@ def test_system_prompt_has_grep_example():
 
 def test_tiers_models_pinned():
     """Tier → model mapping must stay in sync with the docstring + the
-    runtime tier dispatch. fast=Haiku 4.5, normal=Sonnet 4.6, deep=Opus 4.7."""
+    runtime tier dispatch. fast=Haiku 4.5, normal=Sonnet 4.6, deep=Opus 4.8."""
     mod = _load_bootstrap_module()
     assert mod.TIERS["fast"]["model"] == "claude-haiku-4-5"
     assert mod.TIERS["normal"]["model"] == "claude-sonnet-4-6"
-    assert mod.TIERS["deep"]["model"] == "claude-opus-4-7"
+    assert mod.TIERS["deep"]["model"] == "claude-opus-4-8"
 
 
 def test_agent_create_payload_omits_messages_api_only_fields():

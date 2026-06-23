@@ -458,7 +458,7 @@ async def test_two_ws_different_tiers_isolated_state(monkeypatch, tmp_path):
             ws=ws_deep, client=client_deep, session_id="sesn_deep",
             device_slug="demo", memory_root=tmp_path,
             events_by_id={}, session_state=session_state_deep,
-            agent_model="claude-opus-4-7", tier="deep",
+            agent_model="claude-opus-4-8", tier="deep",
             environment_id="env_test", repair_id=None, conv_id=None,
         ),
     )

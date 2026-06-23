@@ -53,6 +53,24 @@
 
 .pp-error-detail{margin-top:6px;padding:8px 10px;background:rgba(245,158,11,.08);border-left:2px solid var(--amber);border-radius:0 4px 4px 0;font-size:11.5px;color:var(--text-2);white-space:pre-wrap;max-height:80px;overflow:auto}
 
+/* Paused step + inline device-kind confirmation panel.
+   Neutral "attention" treatment — no semantic accent (amber/cyan/emerald/
+   violet keep their meanings). Reuses the pp-pulse keyframe on the mark. */
+.pp-step.paused .pp-step-mark{animation:pp-pulse 2.4s infinite}
+.pp-kind-panel{margin-top:8px;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--panel-2);display:flex;flex-direction:column;gap:6px}
+.pp-kind-row{display:flex;justify-content:space-between;font-size:11px;color:var(--text-2)}
+.pp-kind-row b.mono{font-family:var(--mono);color:var(--text)}
+.pp-kind-evidence{font-size:11px;color:var(--text-3);font-style:italic}
+.pp-kind-opts{display:flex;flex-direction:column;gap:4px}
+.pp-kind-opt{display:flex;gap:6px;align-items:center;font-size:12px;cursor:pointer}
+.pp-kind-opt em{color:var(--text-3);font-style:normal}
+/* Panel-scoped CTA — mirrors .pp-foot .pp-cta (which is scoped under the
+   footer); the confirm button lives in .pp-body, not the footer. */
+.pp-kind-panel .pp-cta{align-self:flex-start;background:var(--panel);border:1px solid var(--border);color:var(--text);font-family:inherit;font-size:12px;padding:6px 10px;border-radius:6px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:all .15s}
+.pp-kind-panel .pp-cta:hover{background:var(--panel-2);border-color:rgba(56,189,248,.45)}
+.pp-kind-panel .pp-cta.primary{background:rgba(52,211,153,.1);border-color:rgba(52,211,153,.4);color:var(--emerald)}
+.pp-kind-panel .pp-cta.primary:hover{background:rgba(52,211,153,.18)}
+
 /* Scrollbar for the drawer body */
 .pp-body::-webkit-scrollbar{width:5px}
 .pp-body::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}

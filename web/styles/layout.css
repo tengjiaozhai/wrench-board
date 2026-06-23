@@ -1,6 +1,20 @@
 /* ============ TOP BAR ============ */
 .topbar{position:fixed;top:0;left:0;right:0;height:48px;background:linear-gradient(180deg,var(--bg-2),var(--bg));border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 16px;gap:18px;z-index:20}
 .brand{display:flex;align-items:center;gap:10px;font-weight:600}
+/* Centered DEMO badge — only shown while exploring the example device
+   (body.wb-demo-mode, set by the dashboard header render). Absolute-centered so
+   it stays mid-topbar regardless of the flex children around it. */
+.topbar-demo-badge{
+  display:none;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  padding:2px 12px;border-radius:999px;
+  background:rgba(192,132,252,.16);border:1px solid rgba(192,132,252,.55);
+  color:var(--violet);font-family:var(--mono);font-size:11px;font-weight:700;
+  letter-spacing:1.5px;text-transform:uppercase;
+  box-shadow:0 0 0 0 rgba(192,132,252,.45);animation:wbDemoBadgePulse 2.2s ease-in-out infinite;
+  pointer-events:none;z-index:1;
+}
+body.wb-demo-mode .topbar-demo-badge{display:inline-flex}
+@keyframes wbDemoBadgePulse{0%,100%{box-shadow:0 0 0 0 rgba(192,132,252,0)}50%{box-shadow:0 0 10px 1px rgba(192,132,252,.35)}}
 .brand-mascot{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px}
 .brand .sub{color:var(--text-3);font-weight:400;margin-left:6px}
 .crumbs{display:flex;align-items:center;gap:8px;color:var(--text-3);font-size:12px}

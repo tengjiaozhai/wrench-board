@@ -102,7 +102,7 @@ async def test_rescue_filters_eligible_motives(toy_graph, sample_draft):
     client.messages.stream = MagicMock(return_value=_StubStream(_StubResponse({"scenarios": []})))
     rescued, still_rejected = await rescue_with_opus(
         client=client,
-        model="claude-opus-4-7",
+        model="claude-opus-4-8",
         rejections=[eligible, ineligible],
         graph=toy_graph,
     )
@@ -131,7 +131,7 @@ async def test_rescue_returns_corrected_draft(toy_graph, sample_draft):
     )
     rescued, still_rejected = await rescue_with_opus(
         client=client,
-        model="claude-opus-4-7",
+        model="claude-opus-4-8",
         rejections=[eligible],
         graph=toy_graph,
     )

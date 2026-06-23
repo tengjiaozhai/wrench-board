@@ -1,4 +1,4 @@
-"""Tebo IctView `.tvw` parser.
+"""`.tvw` boardview parser.
 
 **Two TVW layouts coexist in circulation, both supported here.**
 
@@ -8,15 +8,23 @@
    separators pass through untouched. This parser decodes the cipher
    then hands off to the shared Test_Link ASCII shape walker.
 
-2. The *production* `.tvw` format emitted by Tebo IctView 3.0 / 4.0 is
+2. The *production* `.tvw` format emitted by production tools (3.0 / 4.0) is
    a **binary** container with little-endian integers, Pascal-prefixed
    strings, per-layer aperture (D-code) tables, and per-layer placement
    records. We dispatch this flavour to `_tvw_engine` which produces a
-   dimensionally-accurate `Board` with synthetic refdes (`PAD_NNN`) —
-   Tebo IctView does not store netlist info at file level so connectivity
-   must be inferred later.
+   dimensionally-accurate `Board` with real refdes / footprints / net
+   names (decoded from the trailing component + network-name sections).
 
-Dispatch: a 3-Pascal-string magic at the head of the file (see
+   This binary container ships from **multiple CAD vendors** that all
+   emit the *same* grammar — only the (cipher-encoded) header vendor /
+   build strings differ. Two vendor families are decoded so far:
+   vendor A (`G5u9k8s` → "vendor A") and vendor B (`G34vS4z` → "vendor B",
+   the dominant `\\x13 4f 39 35` family, ~10.7% of the corpus). The magic
+   check keys only on the shared, vendor-independent format
+   signature + version, so any vendor's production binary routes
+   here (see `_tvw_engine/magic.py`).
+
+Dispatch: the production-binary magic at the head of the file (see
 `_tvw_engine/magic.py`) routes the production-binary path; otherwise
 we apply the rotation cipher and try the Test_Link walker.
 """
@@ -111,7 +119,7 @@ class TVWParser(BoardParser):
         if _looks_binary_tvw(raw):
             raise ObfuscatedFileError(
                 "tvw: looks like a binary-layout TVW container but does not "
-                "match the Tebo IctView production-binary magic. Unknown TVW "
+                "match the production-binary magic. Unknown TVW "
                 "variant; the rotation-cipher ASCII parser cannot decode "
                 "binary containers. See docs/superpowers/specs/"
                 "2026-04-25-boardview-formats-v1.md."

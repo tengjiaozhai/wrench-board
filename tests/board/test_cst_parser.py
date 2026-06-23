@@ -1,4 +1,4 @@
-"""IBM Castw .cst parser — bracketed section headers + no var_data."""
+"""`.cst` parser — bracketed section headers + no var_data."""
 
 from __future__ import annotations
 

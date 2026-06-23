@@ -191,7 +191,7 @@ def _dialect_transform(text: str, source_format: str) -> bytes:
             pins_chunk[1].split("Nails:", 1) if len(pins_chunk) == 2 else ("", "")
         )
         return (
-            "; Castw real-hardware replay\n"
+            "; .cst real-hardware replay\n"
             "[Format]\n" + parts_chunk[0]
             + ("[Components]\n" + pins_chunk[0] if pins_chunk[0] else "")
             + ("[Pins]\n" + nails_chunk[0] if nails_chunk[0] else "")
