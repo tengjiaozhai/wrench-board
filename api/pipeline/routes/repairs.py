@@ -1,10 +1,55 @@
-"""Repair-session CRUD + the `POST /repairs` orchestration entry point.
+"""Repair-session CRUD + `POST /repairs` 编排入口。
 
-Hosts the background helpers (`_run_pipeline_with_events`,
-`_maybe_check_coverage`) and the `_persist_repair` dedup writer that
-backs the home library. Pack enrichment is no longer auto-fired here:
-an uncovered symptom opens the repair and the diagnostic agent triggers
-`mb_expand_knowledge` on demand (plan-gated) only when it needs it.
+【HTTP 与 progress WS 的分工 — 时序图】
+
+  ┌──────────────┐                              ┌──────────────┐
+  │   浏览器      │                              │   后端        │
+  └──────┬───────┘                              └──────┬───────┘
+         │  ① POST /pipeline/repairs  (短连接 HTTP)      │
+         │ ─────────────────────────────────────────► │
+         │     create_repair() 写 repair、create_task    │
+         │ ◄───────────────────────────────────────── │
+         │  { repair_id, device_slug, pipeline_started }│
+         │                                             │
+         │  ② WS /pipeline/progress/{slug}  (长连接)   │
+         │ ─────────────────────────────────────────► │
+         │     progress_ws: accept → subscribe(slug)   │
+         │ ◄── {type:"subscribed"} ─────────────────  │
+         │ ◄── {type:"pipeline_started"} ───────────  │
+         │ ◄── {type:"phase_started", ...} ─────────  │
+         │     ...                                   │
+         │  （并行）① 里 create_task 已在跑：          │
+         │     emit → events.publish(slug, ev) ──────┘
+
+【哪一行「建立 / 结束」HTTP？】
+  - 前端发起（Landing「开始诊断」）：
+      web/js/features/global/landing/index.js:471
+        const res = await fetch("/pipeline/repairs", { method: "POST", ... });
+      fetch 返回且 res.json() 读完（约 :477）后 HTTP 连接即关闭 — **不是长连接**。
+  - 后端处理入口：
+      api/pipeline/routes/repairs.py:737  @router.post("/repairs")
+      api/pipeline/routes/repairs.py:738  async def create_repair(...)
+  - 后端 HTTP 响应发出（Branch 1 典型路径）：
+      api/pipeline/routes/repairs.py:988  return RepairResponse(...)
+
+【哪一行「建立 / 保持」WS 长会话？】
+  - 前端发起：
+      web/js/features/global/landing/index.js:661  connectProgress(slug, …)
+        ↑ 由 subscribeToProgress 调用；slug 来自 HTTP 响应的 device_slug
+      web/js/services/pipelineSocket.js:27
+        const ws = new WebSocket(url);   ← 浏览器 WS 握手，连接建立
+  - 后端接受并保持：
+      api/pipeline/routes/progress.py:58   await websocket.accept()
+      api/pipeline/routes/progress.py:64-66
+        while True:
+            event = await queue.get()
+            await websocket.send_text(...)   ← 循环阻塞，保持长连接直到客户端断开
+  - 前端主动关闭示例：pipelineSocket.js:50-54 conn.close()；或 pipeline_finished 后跳转
+
+【HTTP 与 WS 如何「关联」】
+  无 session_id / ws_url；仅约定：
+    HTTP 响应里的 device_slug  ==  WS 路径里的 {slug}
+    HTTP 响应里的 pipeline_started == true  → 前端才去 connectProgress
 
 Also re-exports `_run_pipeline_with_events` via the package
 `__init__.py` — `tests/pipeline/test_pipeline_events_narration.py`
@@ -137,11 +182,13 @@ async def _autogenerate_delta_task(
         )
 
 
-# Registry of in-flight pipeline tasks, keyed by device slug. The engine holds
-# the only handle on a running pipeline, so cooperative cancellation lives here:
-# POST /repairs/{slug}/cancel cancels the task and publishes a terminal event.
-# Process-local (mirrors the events bus) — fine for the single-worker deploy; a
-# multi-worker setup would need a shared signal.
+# ---------------------------------------------------------------------------
+# 后台 pipeline 任务注册 + 并发 build 队列
+# ---------------------------------------------------------------------------
+# _RUNNING：slug → 正在执行的 asyncio.Task。用于：
+#   - 同 slug 重复 POST 时复用进行中的 build（不重复烧 token）
+#   - POST /repairs/{slug}/cancel 协作式取消
+# 进程内状态；多 worker 需共享信号（与 events 总线同理）。
 _RUNNING: dict[str, asyncio.Task] = {}
 
 
@@ -158,28 +205,22 @@ def _register_running(slug: str, task: asyncio.Task) -> None:
 
 
 def _slug_is_building(slug: str) -> bool:
-    """True when a pipeline/expand for this slug is already in flight. The pack is
-    SHARED device knowledge keyed by slug, so a second request for the same slug
-    must NOT launch a duplicate build — that doubles the token spend AND overwrites
-    the _RUNNING entry, orphaning the first task (breaking its cooperative cancel).
-    The new (per-tenant) repair instead rides the in-flight build's
-    /pipeline/progress/{slug} stream. Cross-tenant safe: slugs carry no tenant data.
+    """该 slug 是否已有 pipeline 在跑。
+
+    pack 按 slug 共享，第二个 repair 若再 launch 会重复消耗 LLM 且覆盖 _RUNNING。
+    此时直接返回 pipeline_started=true，让新 repair「搭车」已有 build 的
+    /pipeline/progress/{slug} 事件流（无需再 create_task）。
     """
     task = _RUNNING.get(slug)
     return task is not None and not task.done()
 
 
-# Count of in-flight RAM/cost-heavy schematic→graph builds (the full pipeline).
-# Distinct from _RUNNING (which also tracks expand/analyze tasks): this bounds
-# ONLY the heavy builds so concurrent distinct-device uploads can't OOM the host.
-# Process-local (single-worker deploy, like _RUNNING).
+# 当前占用「重 build 槽位」的数量（仅 full pipeline，不含 expand 等轻任务）。
 _active_builds = 0
 
-# FIFO d'attente des builds en surplus du cap. Chaque entrée :
-# {"slug": str, "launch": callable() -> coroutine}. Au lieu de rejeter (503) le
-# build de trop, on l'empile ici et l'utilisateur voit sa POSITION ; quand un slot
-# se libère (done-callback d'un build), on dépile la tête et on la lance. La file
-# est globale (le cap l'est) ; un slug déjà en file/build REJOINT (pas de doublon).
+# FIFO 等待队列：并发 build 超过 pipeline_max_concurrent_builds 时，
+# 新请求入队而非 503。队列中的 launch 闭包与立即启动的 _launch() 相同，
+# 出队时同样走 _register_build → _run_pipeline_with_events → events.publish。
 _build_queue: list[dict] = []
 
 
@@ -214,15 +255,21 @@ def _enqueue_build(slug: str, launch) -> int:
 
 
 async def _publish_queue_positions() -> None:
-    """(Re)publish every queued build's current position on its slug's progress
-    stream so the browser can show 'En attente — position N' and watch it shrink."""
+    """向仍在排队的每个 slug 的 progress 流推送最新 queue 位置。
+
+    前端 landing timeline 据此显示「排队中 · 第 N 位」；位置随前面 build 完成而递减。
+    """
     for i, item in enumerate(_build_queue, start=1):
         await events.publish(item["slug"], {"type": "queued", "position": i, "ahead": i - 1})
 
 
 def _drain_queue() -> None:
-    """Launch queued builds while a slot is free. Called when a build settles
-    (done-callback) — that's when capacity opens up."""
+    """某 build 结束后释放槽位，从队头依次启动等待中的 launch()。
+
+    启动方式与 create_repair Branch 1 相同：
+      _register_build(slug, asyncio.create_task(item["launch"]()))
+    launch 闭包内部仍调用 _run_pipeline_with_events → events.publish。
+    """
     launched = False
     while not _builds_at_capacity() and _build_queue:
         item = _build_queue.pop(0)
@@ -234,8 +281,13 @@ def _drain_queue() -> None:
 
 
 def _register_build(slug: str, task: asyncio.Task) -> None:
-    """Register a heavy build: track it in _RUNNING AND count it against the
-    concurrency cap. When it settles, free the slot and drain the queue."""
+    """登记一次「重 build」：计入并发 cap、写入 _RUNNING，结束时出队下一个。
+
+    create_repair 在 Branch 1 的典型调用：
+      _register_build(slug, asyncio.create_task(_launch()))
+    注意：HTTP return RepairResponse 发生在本函数**之后**；task 已在后台运行，
+    与 progress WS 的连接完全靠 slug + pipeline_started 前端约定。
+    """
     global _active_builds
     _active_builds += 1
 
@@ -594,54 +646,47 @@ async def _run_pipeline_with_events(
     owner_ref: str | None = None,
     engine_repair_id: str | None = None,
 ) -> None:
-    """Background task: run the pipeline, relaying its events on the bus.
+    """后台协程：跑完整 knowledge pipeline，并把进度事件写入 events 总线。
 
-    Every orchestrator event is forwarded onto the per-slug bus verbatim,
-    including the live `phase_step` sub-steps (Scout rounds, schematic pages,
-    each writer completing, audit rounds) the landing timeline renders as the
-    phase's live line. (The old Haiku `phase_narration` hook was removed — an
-    extra LLM call per phase for an after-the-fact sentence; the live
-    sub-steps replaced it.)
+    【与 progress WS 的连接点 — 本函数是 publish 侧的唯一入口】
+      orchestrator 在每个阶段边界调用 emit({type, phase, …})：
+        emit → _on_event(ev) → events.publish(slug, ev)
+      progress_ws 在 subscribe(slug) 后从同一 slug 的 queue 读出并转发。
 
-    `focus_symptom`, when supplied, is threaded to Scout so the technician's
-    reason-for-opening-the-repair is prioritised in the web_search rounds.
+    【事件类型（orchestrator 发出，前端 handleEvent 消费）】
+      pipeline_started     — 构建开始（含 device_label、models）
+      phase_started/finished — 大阶段：scout / registry / writers / audit 等
+      phase_step           — 阶段内子步骤（Scout 搜索轮、schematic 页、writer 完成…）
+      pipeline_paused      — 设备类型需人工确认（needs_kind_confirmation）
+      pipeline_finished    — 成功（含 audit verdict、consistency_score）
+      pipeline_failed      — 异常或 REJECTED（本函数 except 也会 publish 此类型）
 
-    `confirmed_device_kind`, when supplied (POST /packs/{slug}/confirm-kind),
-    is threaded so the orchestrator trusts the technician's resolved device
-    kind instead of re-detecting from the partial graph. Defaulted to None so
-    the create_repair caller is unaffected.
-
-    `user_device_kind`, when supplied (create_repair threads
-    `request.device_kind`), is the technician's declared device class — a
-    prior the graph classifier validates/overrides during reconcile. Keyword-
-    only with a None default so the confirm-kind caller (which passes
-    `confirmed_device_kind` instead) is unaffected; both params coexist.
+    本函数由 create_repair 的 _launch() 闭包经 asyncio.create_task 启动；
+    HTTP 响应不等待本函数结束。
     """
     t0 = time.monotonic()
 
+    # 桥接 orchestrator 与 events 总线：slug 必须与 progress WS 路径参数一致。
     async def _on_event(ev: dict) -> None:
         await events.publish(slug, ev)
 
     try:
         await _pkg.generate_knowledge_pack(
             device_label,
-            # Pin the pack directory to the repair's slug — without this the
-            # orchestrator re-slugifies the rich label and builds a FRESH pack
-            # next to the one holding the uploaded documents (graph=no).
+            # 固定 pack 目录为 repair 的 slug；否则 orchestrator 会重新 slugify label，
+            # 在 uploads 已存在的 pack 旁另建目录（graph 丢失）。
             device_slug=slug,
-            on_event=_on_event,
+            on_event=_on_event,  # ← orchestrator.emit 的最终落点
             focus_symptom=focus_symptom,
             confirmed_device_kind=confirmed_device_kind,
             user_device_kind=user_device_kind,
             expect_schematic=expect_schematic,
-            # T13 build metering: the build's per-phase token spend is reported
-            # to the cloud ledger as kind='build' under this tenant + repair
-            # (no-op self-host — see api/pipeline/build_metering.py).
             owner_ref=owner_ref,
             engine_repair_id=engine_repair_id,
         )
-    except Exception as exc:  # noqa: BLE001 — fire-and-forget bg task; report failure on event bus
+    except Exception as exc:  # noqa: BLE001 — fire-and-forget；失败也通知前端
         logger.exception("[API] background pipeline failed for slug=%r", slug)
+        # 确保 progress WS 收到终端事件，前端 timeline 可显示失败态。
         await events.publish(
             slug,
             {
@@ -738,15 +783,25 @@ async def create_repair(
     board_number: str | None = Form(default=None),
     file: UploadFile | None = File(default=None),  # noqa: B008 — FastAPI DI idiom
 ) -> RepairResponse:
-    """Register a repair and kick off the pipeline in the background.
+    """注册 repair 会话；按需**后台**启动 knowledge pipeline。
 
-    Multipart so the technician can attach a schematic at creation time: when
-    `file` is present it is stashed into `memory/{slug}/uploads/` BEFORE the
-    fire-and-forget generation, so the orchestrator's inline-ingest builds the
-    electrical graph before Phase 1.5 (device-kind classification) runs.
+    【pack 与分支 — 详见下方 pack_dir 处大段注释，此处为决策树摘要】
 
-    The response returns immediately with the generated repair_id and device_slug.
-    Real-time pipeline progress is streamed via WS /pipeline/progress/{slug}.
+      pack = memory/{slug}/ 下的设备级知识包（registry / graph / rules / dictionary …）
+      pack_complete = _pack_is_complete(pack_dir)  # 四核心 JSON + build_state=complete
+
+      persist repair 之后：
+        not is_new + pack_complete     → Branch 0  复用工单，pipeline_started=false
+        not pack_complete | force_rebuild → Branch 1  后台构建 pack，pipeline_started=true + progress WS
+        pack_complete + 症状已覆盖 rule  → Branch 2  直接诊断，pipeline_started=false + matched_rule_id
+        pack_complete + 症状未覆盖       → Branch 3  直接诊断，pipeline_started=false，expand 由 agent 按需
+
+    【HTTP 响应 vs progress 流】
+      pipeline_started=true  → 前端连 WS /pipeline/progress/{device_slug}
+      pipeline_started=false → 直接 goToWorkspace，不订阅 progress WS
+
+    Multipart 支持创建时附带 schematic；file 会先写入 memory/{slug}/uploads/，
+    再 fire-and-forget 生成，以便 orchestrator 内联 ingest 电气图。
     """
     try:
         request = RepairRequest(
@@ -802,6 +857,36 @@ async def create_repair(
         )
     pack_dir = memory_root / slug
 
+    # =========================================================================
+    # 【pack 是什么】
+    #
+    #   pack（knowledge pack / 知识包）= 某设备（slug）在磁盘上的共享诊断知识，
+    #   目录为 memory/{slug}/，典型文件：
+    #     registry.json · knowledge_graph.json · rules.json · dictionary.json
+    #     （可选）electrical_graph.json · schematic_graph.json · audit_verdict.json …
+    #
+    #   pack 由 pipeline 离线构建（Scout→Registry→Writers→Audit），**按设备共享**：
+    #   同一 slug 的所有 repair 会话复用同一份 pack；repair 只是「一次工单/对话」。
+    #
+    #   pack_complete（下方）= _pack_is_complete(pack_dir)：四份核心 JSON 齐全且
+    #   build_state 非 failed/building/paused。不完整 = 从未构建、构建中断、或 force 重建。
+    #
+    # 【分支总览 — create_repair 在 persist repair 之后的决策树】
+    #
+    #   Branch 0  重复提交同一 open repair + pack 已完整
+    #             → pipeline_started=false，直接复用工单，不跑 LLM
+    #
+    #   Branch 1  pack 不完整（无 pack / 构建失败）或 force_rebuild=true
+    #             → 后台跑完整 pipeline，pipeline_started=true，前端订阅 progress WS
+    #
+    #   Branch 2  pack 已完整 + 症状已被现有 rule 覆盖（coverage ≥ 0.7）
+    #             → pipeline_started=false，直接进诊断，返回 matched_rule_id
+    #
+    #   Branch 3  pack 已完整 + 症状未被 rule 覆盖
+    #             → pipeline_started=false，直接进诊断；expand 由 agent 按需提议
+    #               （mb_expand_knowledge），不在 create_repair 时自动烧 token
+    # =========================================================================
+
     # Every "new repair" IS a repair session — persist the record
     # whether the pack is fresh or already on disk. Two repairs on the same
     # iPhone X are two separate sessions with two separate contexts; both
@@ -845,20 +930,20 @@ async def create_repair(
             )
         )
 
-    # Lot 2 : owner-aware. Un build web-only mis en staging pour CE tenant compte
-    # comme complet POUR LUI (il rouvre son repair sans relancer un build), mais
-    # reste incomplet pour le commons → un autre tenant rebuild proprement.
+    # 判断该 slug 的知识包是否「可用」— 后续 if/else 全靠此布尔值分叉。
     pack_complete = _pack_is_complete(pack_dir, owner_ref=request.owner_ref)
 
-    # Branch 0 — the tech resubmitted the form for an already-open ticket
-    # on the same (device, symptom). On a COMPLETE pack, reuse the existing
-    # repair without burning a coverage check or an expand-pack round-trip
-    # (without this short-circuit a stuck-on-low-confidence coverage classifier
-    # loops and chews $0.40 of LLM tokens every retry). On an INCOMPLETE pack
-    # (failed/interrupted build — see build_state), fall through to Branch 1
-    # instead: the resubmit IS the 'relancer' flow, and the rebuild re-fires on
-    # this same repair, riding the hash caches. force_rebuild also falls
-    # through, so an explicit rebuild request on an open ticket is honored.
+    # -------------------------------------------------------------------------
+    # Branch 0 — 同一 (slug, symptom) 的 open repair 被重复提交
+    #
+    #   条件：not is_new（_persist_repair 复用了已有工单）
+    #
+    #   pack 已完整 → 直接 return，不 coverage 检查、不 expand、不 rebuild
+    #     前端：pipeline_started=false → 不进 progress WS，直接 goToWorkspace
+    #
+    #   pack 不完整 → 不 return，落到 Branch 1 重新触发构建（「重试/relancer」）
+    #   force_rebuild=true → 同样落到 Branch 1
+    # -------------------------------------------------------------------------
     if not is_new:
         if pack_complete and not request.force_rebuild:
             logger.info(
@@ -870,7 +955,7 @@ async def create_repair(
                 repair_id=repair_id,
                 device_slug=slug,
                 device_label=request.device_label,
-                pipeline_started=False,
+                pipeline_started=False,  # Branch 0：不构建，不进 progress WS
                 pipeline_kind="none",
                 coverage_reason="reusing existing open ticket on the same symptom",
             )
@@ -888,11 +973,26 @@ async def create_repair(
     if file is not None and file.filename:
         await persist_upload(pack_dir / "uploads", "schematic_pdf", file)
 
-    # Branch 1 — pack missing (or force_rebuild): fire the full pipeline
-    # with the symptom threaded to Scout as a priority target.
+    # -------------------------------------------------------------------------
+    # Branch 1 — **无可用 pack** 或 **强制重建**
+    #
+    #   条件：not pack_complete  OR  request.force_rebuild
+    #
+    #   含义：
+    #     - 无 pack：memory/{slug}/ 缺少四份核心 JSON，或 build_state=building/failed
+    #     - force_rebuild：pack 虽完整，用户明确要求全量重跑 pipeline
+    #
+    #   行为：
+    #     - asyncio.create_task(_launch()) 后台跑 Scout→Registry→Writers→Audit
+    #     - 进度经 events.publish → WS /pipeline/progress/{slug}
+    #     - 前端：pipeline_started=true → subscribeToProgress(slug)
+    #
+    #   子情况（仍属 Branch 1，但不重复 create_task）：
+    #     - 同 slug 已有 build 在跑 → 搭车已有 progress 流
+    #     - 并发 build 超 cap → 入队，先发 type:queued 事件
+    # -------------------------------------------------------------------------
     if not pack_complete or request.force_rebuild:
-        # Stampede guard: a build for this shared-by-slug pack is already running →
-        # the new (per-tenant) repair rides it instead of launching a duplicate.
+        # 已有同 slug build 在跑 → 不 create_task，新 repair 复用同一 progress 流。
         if _slug_is_building(slug):
             logger.info(
                 "[API] /pipeline/repairs · slug=%r already building — repair=%s joins the in-flight pipeline",
@@ -903,11 +1003,10 @@ async def create_repair(
                 repair_id=repair_id,
                 device_slug=slug,
                 device_label=request.device_label,
-                pipeline_started=True,
+                pipeline_started=True,  # 前端：订阅 /pipeline/progress/{slug}
                 pipeline_kind="full",
             )
-        # Already QUEUED for this slug → join it (no duplicate build), return its
-        # current position so the UI shows the same waiting state.
+        # 已在排队 → 同样 pipeline_started=true，UI 显示 queue_position。
         if _slug_queued(slug):
             pos = _queue_position(slug)
             return RepairResponse(
@@ -926,18 +1025,14 @@ async def create_repair(
                 slug,
             )
 
-        # Launcher capturing the exact build args — run now if a slot is free,
-        # else ENQUEUE it (the user sees a position; it starts when a slot frees).
+        # 捕获 build 参数的闭包；立即启动或入队后由 _drain_queue 启动。
+        # 闭包内的 slug 与 HTTP 响应里的 device_slug 相同 — progress WS 的 join key。
         def _launch():
             return _run_pipeline_with_events(
                 request.device_label,
                 slug,
                 focus_symptom=request.symptom,
                 user_device_kind=request.device_kind,
-                # A schematic uploaded via /documents (not the create body) lands
-                # out-of-band — tell the pipeline to wait for its electrical graph
-                # before device-kind classification. Skip when the file rode the
-                # create body (inline-ingest handles it).
                 expect_schematic=schematic_pending and file is None,
                 owner_ref=request.owner_ref,
                 engine_repair_id=repair_id,
@@ -945,6 +1040,7 @@ async def create_repair(
 
         if _builds_at_capacity():
             pos = _enqueue_build(slug, _launch)
+            # 排队事件也走 events 总线，progress WS 连上后即可收到 type: queued。
             await events.publish(slug, {"type": "queued", "position": pos, "ahead": pos - 1})
             logger.info(
                 "[API] /pipeline/repairs · build queued at position %d (cap=%d) for slug=%r",
@@ -966,22 +1062,29 @@ async def create_repair(
             "[API] /pipeline/repairs · firing full pipeline for slug=%r · focus_symptom=yes",
             slug,
         )
+        # 【关键连接点】先 fire-and-forget 后台 task，再 return HTTP。
+        # task 内 emit → publish(slug)；前端拿到 slug 后连 progress WS → subscribe(slug)。
         _register_build(slug, asyncio.create_task(_launch()))
         return RepairResponse(
             repair_id=repair_id,
-            device_slug=slug,
+            device_slug=slug,       # 前端用此 slug 连接 WS /pipeline/progress/{slug}
             device_label=request.device_label,
-            pipeline_started=True,
+            pipeline_started=True,  # 前端开关：true → subscribeToProgress / connectProgress
             pipeline_kind="full",
         )
 
-    # Pack complete — compare the symptom against existing rules before
-    # spending tokens on an expand round-trip.
+    # -----------------------------------------------------------------------
+    # 以下仅当 pack_complete=True 且未走 Branch 1 时到达。
+    # 有 pack：不再构建，用 Haiku 检查「当前症状是否已被 rules.json 覆盖」。
+    # -----------------------------------------------------------------------
     coverage = await _pkg._maybe_check_coverage(slug, request.symptom, memory_root)
 
-    # Branch 2 — symptom already covered by an existing rule: skip LLM
-    # work entirely and return the matched_rule_id so the UI can surface
-    # the known diagnostic flow immediately.
+    # -----------------------------------------------------------------------
+    # Branch 2 — 有 pack，且症状已被现有 rule 覆盖（confidence ≥ 0.7）
+    # -----------------------------------------------------------------------
+    # 干什么：什么都不构建，直接打开 repair；agent 可走已知诊断流程。
+    # 前端：pipeline_started=false → 不连 progress WS，立刻 goToWorkspace。
+    # 响应：matched_rule_id 供 UI 展示「命中规则 XXX」。
     if (
         coverage.covered
         and coverage.confidence >= 0.7
@@ -996,27 +1099,20 @@ async def create_repair(
             repair_id=repair_id,
             device_slug=slug,
             device_label=request.device_label,
-            pipeline_started=False,
+            pipeline_started=False,  # Branch 2：pack 已有，症状命中 rule，直接诊断
             pipeline_kind="none",
             matched_rule_id=coverage.matched_rule_id,
             coverage_reason=coverage.reason,
         )
 
-    # Branch 3 — pack complete but symptom uncovered.
-    #
-    # We DO NOT auto-fire expand_pack here anymore. Enrichment (the paid
-    # Scout + Clinicien pass, ~$0.40) is a *recourse*, not a step: the repair
-    # opens normally and the diagnostic agent works the existing electrical
-    # graph + rules first. Only if it comes up empty-handed does it PROPOSE
-    # `mb_expand_knowledge` (with the tech's go-ahead), and that tool is itself
-    # plan-gated (free tenants don't get it — see session_caps / manifest).
-    #
-    # This collapses the old double-trigger (auto-expand at create_repair AND
-    # the agent tool) onto the single agent-driven path, kills the "spend on a
-    # web search before the agent even looked" waste, and removes the need to
-    # drop the ticket: it stays alive so the agent session can attach to it.
-    # `allow_expand` (front-door flag) is now inert here — kept on the request
-    # for skew-tolerance with an older cloud, but no longer changes behaviour.
+    # -----------------------------------------------------------------------
+    # Branch 3 — 有 pack，但症状未被任何 rule 覆盖
+    # -----------------------------------------------------------------------
+    # 干什么：同样不自动跑 pipeline / expand；直接打开 repair 会话。
+    # agent 先用现有 pack（图谱 + 电气图 + 已有 rules）做诊断；
+    # 若知识不够，由 agent 在对话中提议 mb_expand_knowledge（需技师确认，且受套餐限制）。
+    # 前端：pipeline_started=false → 不连 progress WS，立刻 goToWorkspace。
+    # 注意：不再在 create_repair 时自动触发 expand（避免 agent 还没看就烧 $0.40）。
     logger.info(
         "[API] /pipeline/repairs · pack complete for slug=%r; symptom uncovered — "
         "opening repair, agent works the graph (expand is on-demand, plan-gated)",
@@ -1026,7 +1122,7 @@ async def create_repair(
         repair_id=repair_id,
         device_slug=slug,
         device_label=request.device_label,
-        pipeline_started=False,
+        pipeline_started=False,  # Branch 3：pack 已有但症状新，直接诊断，不自动 expand
         pipeline_kind="none",
         coverage_reason=coverage.reason,
     )

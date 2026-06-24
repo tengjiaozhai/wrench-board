@@ -271,6 +271,11 @@ async def generate_knowledge_pack(
       - pipeline_finished     → {status, revise_rounds_used, consistency_score}
       - pipeline_failed       → {status, error} (REJECTED or unexpected exception)
 
+    【progress 链路中的角色】
+      create_repair 传入的 on_event 经 _wrap_on_event 包装为 emit()；
+      各阶段 await emit({...}) → repairs._on_event → events.publish(slug, ev)
+      → progress_ws 转发给浏览器。emit 内 listener 抛错会被吞掉，避免 UI 拖垮 pipeline。
+
     The callback is awaited between phases but errors inside it are swallowed
     with a warning — UI delivery must never crash the pipeline.
     """
@@ -280,6 +285,7 @@ async def generate_knowledge_pack(
     max_revise_rounds = (
         max_revise_rounds if max_revise_rounds is not None else settings.pipeline_max_revise_rounds
     )
+    # emit = 安全的 on_event 包装；repairs 侧 _on_event 最终写入 events 总线。
     emit = _wrap_on_event(on_event)
 
     # Per-phase model distribution. Opus handles synthesis + judgment (graph,
@@ -447,6 +453,8 @@ async def generate_knowledge_pack(
     )
     logger.info("=" * 72)
 
+    # 第一条 progress 事件：前端 timeline/drawer 收到后切换为「构建中」态。
+    # 若 WS 尚未连上，events._history 会缓冲，subscribe 时回放。
     await emit({
         "type": "pipeline_started",
         "device_slug": slug,
@@ -1163,7 +1171,12 @@ async def generate_knowledge_pack(
 
 
 def _wrap_on_event(on_event: OnEvent | None) -> OnEvent:
-    """Return a safe emitter: None → noop; exceptions → log-and-swallow."""
+    """将外部 on_event 包装为 emit：None → 空操作；异常 → 记录日志并吞掉。
+
+    保证 progress 投递失败不会中断 knowledge pipeline 主流程。
+    repairs._run_pipeline_with_events 传入的 _on_event 经此包装后，
+    在 generate_knowledge_pack 内以 emit({type: ...}) 形式在各阶段调用。
+    """
     if on_event is None:
         return _noop_on_event
 

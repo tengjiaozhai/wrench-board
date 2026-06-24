@@ -468,6 +468,9 @@ async function _launchDiagnostic() {
     // Signal the out-of-band schematic so the pipeline waits for its electrical
     // graph before device-kind classification (the upload fires below, post-create).
     if (_schematicFile) body.append("schematic_pending", "true");
+    // 【HTTP 短连接 — 建立并在此请求内结束】POST /pipeline/repairs；
+    // 后端入口 repairs.py:737 create_repair，响应 repairs.py:988 return RepairResponse。
+    // res.json() 读完后本 HTTP 连接关闭；构建进度不走此连接。
     const res = await fetch("/pipeline/repairs", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -658,6 +661,8 @@ function subscribeToProgress(slug, repairId, { autoNav = true } = {}) {
   _activeRid = repairId;
   _autoNavOnFinish = autoNav;
 
+  // 【WS 长连接 — 建立】slug 来自上一步 HTTP 响应的 device_slug；
+  // 实际握手在 pipelineSocket.js:27 new WebSocket(url)。
   progressConn = connectProgress(slug, {
     onEvent: (data) => handleProgressEvent(data, slug, repairId),
     onError: (ev) => {

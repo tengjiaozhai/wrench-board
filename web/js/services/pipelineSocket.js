@@ -1,9 +1,15 @@
 // web/js/services/pipelineSocket.js
-// Single transport for the pipeline-progress WebSocket (/pipeline/progress/{slug}).
-// Replaces the two parallel WS implementations in landing.js (timeline) and
-// pipeline_progress.js (drawer). Each surface keeps its own UI/event handling;
-// only the socket plumbing (ws/wss URL, stale-socket guard, JSON.parse, idempotent
-// close) lives here.
+// Pipeline 构建进度的 WebSocket 传输层（/pipeline/progress/{slug}）。
+//
+// 【与 HTTP 的关系 — 时序图见 api/pipeline/routes/repairs.py 模块 docstring】
+//
+//   ① HTTP 短连接（已结束）          ② WS 长连接（本文件）
+//   landing/index.js:471 fetch(...)  landing/index.js:661 connectProgress(slug)
+//        ↓ 拿到 device_slug               ↓
+//   repairs.py:988 return JSON       pipelineSocket.js:27 new WebSocket(url)  ← 建立 WS
+//                                         progress.py:64 while True ...        ← 服务端保持
+//
+// slug 来自 HTTP 响应；HTTP 与 WS 无服务端 session 绑定。
 //
 // Cloud-safe: the WS is relayed byte-for-byte by wrench-board-cloud, so the URL
 // is unchanged — only the client wiring is consolidated.
@@ -24,6 +30,8 @@
 export function connectProgress(slug, { onEvent, onError, onClose } = {}) {
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
   const url = `${proto}//${window.location.host}/pipeline/progress/${encodeURIComponent(slug)}`;
+  // 【WS 长会话建立】浏览器向 progress.py:progress_ws 发起握手；连接成功后由
+  // 服务端 while True (progress.py:64) 持续推送，直到 conn.close() 或页面关闭。
   const ws = new WebSocket(url);
   let stale = false;
 
