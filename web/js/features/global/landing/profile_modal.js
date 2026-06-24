@@ -1,30 +1,30 @@
-// Profile config — the guided first-run wizard AND the always-available config
-// modal, sharing one set of form sections.
+// 配置文件配置 - 引导的首次运行 wizard 和始终可用的配置
+// modal，共享一组表单部分。
 //
-// Three sections (user feedback: the first config must guide the technician
-// through everything, including options they can't guess like the agent's
-// "teaching" verbosity):
-//   1. Identity   — name, avatar, experience level (each level explained),
-//                   specialties
-//   2. Workshop   — the 12 catalog tools, grouped
-//   3. Posture    — verbosity (auto / concise / normal / teaching, each
-//                   explained) + UI language
+// 第ree部分（用户反馈：第一个配置必须指导技术人员
+// 通过 everything，包括他们无法像 agent 那样猜出的选项
+// “teaching”动词osity）：
+//   1. Identity — 姓名、头像、经验ence等级（每个等级都有解释），
+//                   特产
+//   2. Workshop — 12 个目录工具，分组
+//   3. Posture — 动词osity（自动/简洁/normal/teaching，每个
+//                   解释）+ UI 语言
 //
-// openProfileWizard(): paginated, one section per step (Back / Next / Skip,
-// progress) — used by the onboarding sequence.
-// openProfileModal(): the same sections in one scrollable modal — opened from
-// the cockpit's avatar pill for quick edits, never navigates away. A "full
-// profile" link still reaches the rich #profile page.
+// openProfileWizard()：分页，每步一节（后退/下一页/跳过，
+// progress) — 由onboarding sequence 使用。
+// openProfileModal()：一个可滚动的相同部分 modal — opened from
+// cockpit 的头像丸用于快速编辑，永远不会离开。一个“满
+// profile”链接仍然re让丰富的#profile页面感到痛苦。
 //
-// Persists via PUT /profile/identity|tools|preferences and broadcasts
-// `wb:profile-updated` so the avatar pill re-paints.
+// 通过 PUT /profile/identity|tools|preferences 和广播持续存在
+// `wb:profile-updated` 所以头像药丸re-绘制。
 
 import i18n, { t } from "../../../i18n.js";
 import { apiGet, apiSend } from "../../../shared/api.js";
 import { escapeHtml } from "../../../shared/dom.js";
 
-// Mirror of api/profile/catalog.py TOOLS_CATALOG (id + group), kept in display
-// order. Labels come from i18n (onboarding.profile.tool_*).
+// api/profile/catalog.py TOOLS_CATALOG（id + group）的镜像，保留在显示中
+// 命令。标签来自 from i18n (onboarding.profile.tool_*)。
 const TOOLS = [
   { id: "soldering_iron", group: "soldering" },
   { id: "hot_air", group: "rework" },
@@ -41,8 +41,8 @@ const TOOLS = [
 ];
 const GROUP_ORDER = ["soldering", "rework", "inspection", "measurement", "power", "supplies"];
 
-// Home-made Lucide-style line icons (24×24, currentColor stroke) — one per tool,
-// plus a generic wrench (_custom) for tech-declared custom tools.
+// 自制 Lucide 风格线条图标（24×24，currentColor 笔画）——每个工具一个，
+// 加上用于技术声明red 自定义工具的 generic wrench (_custom)。
 const _svg = (inner) =>
   `<svg class="ob-tool-svg" viewBox="0 0 24 24" width="20" height="20" fill="none" ` +
   `stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
@@ -62,12 +62,12 @@ const TOOL_ICONS = {
   _custom: _svg('<path d="M14.6 6.4a4 4 0 0 0-5.4 5.2L3 18l3 3 6.4-6.2a4 4 0 0 0 5.2-5.4l-2.6 2.6-2-2 2.6-2.6Z"/>'),
 };
 const VERBOSITY = ["auto", "concise", "normal", "teaching"];
-const LEVELS = ["", "beginner", "intermediate", "confirmed", "expert"]; // "" = auto-derived
+const LEVELS = ["", "beginner", "intermediate", "confirmed", "expert"]; // "" = 自动派生
 
-// ── Section builders (shared by wizard + modal) ───────────────────────────
+// ── 区段构建器（shared by wizard + modal） ────────────────────────────
 
-// The four-language picker (live-switching buttons), shared by the welcome-era
-// markup, the identity step (wizard) and the posture step (quick modal).
+// 四语言选择器（live-switching按钮），由欢迎时代shared
+// 标记，identity 步骤 (wizard) 和 posture 步骤（快速 modal）。
 function langPickerHTML() {
   const lang = i18n.locale;
   return `
@@ -79,8 +79,8 @@ function langPickerHTML() {
         </div>`;
 }
 
-// showLanguage: the wizard puts the picker FIRST in the identity step (language
-// is chosen before anything else); the quick modal keeps it in the posture step.
+// showLanguage：wizard 将选择器首先放在 identity 步骤中（语言
+// 是 chosen 之前re 任何hing 其他）；快速 modal 将其保持在 posture 步骤中。
 function identityStepHTML(env, showLanguage = false) {
   const id = env?.profile?.identity || {};
   const level = id.level_override || "";
@@ -179,8 +179,8 @@ function workshopStepHTML(env) {
     </section>`;
 }
 
-// Wire the custom-tools add/remove UI. Idempotent per root; both the wizard and
-// the quick modal call it after injecting their form.
+// Wire自定义工具添加/re移动UI。每根 Idempotent； wizard 和
+// 快速 modal 在注入其表单后调用它。
 function wireCustomTools(root) {
   const chips = root.querySelector("#obCustomChips");
   const input = root.querySelector("#obCustomInput");
@@ -203,9 +203,9 @@ function wireCustomTools(root) {
   });
 }
 
-// `showLanguage`: the wizard hides the picker here (language is chosen first, in
-// the identity step) and only carries the chosen locale via a hidden input; the
-// standalone config modal shows a live picker for later edits.
+// `showLanguage`: wizard hides 选择器 here（语言首先是 chosen，在
+// identity 步骤）并且仅通过 hidden input 携带 chosen locale；这
+// 独立配置modal显示一个实时选择器以供以后编辑。
 function postureStepHTML(env, showLanguage = true) {
   const prefs = env?.profile?.preferences || {};
   const verbosity = prefs.verbosity || "auto";
@@ -239,13 +239,13 @@ function postureStepHTML(env, showLanguage = true) {
     </section>`;
 }
 
-// lang placement — "identity": the wizard shows the picker first (language is
-// chosen before everything); "posture": the quick modal keeps it in posture.
+// lang placement —“identity”：wizard 首先显示选择器（语言为
+// chosen之前re每个hing）； “posture”：快速modal将其保留在posture中。
 function sectionsHTML(env, { lang = "posture" } = {}) {
   return identityStepHTML(env, lang === "identity") + workshopStepHTML(env) + postureStepHTML(env, lang === "posture");
 }
 
-// ── Read + persist ────────────────────────────────────────────────────────
+// ── 阅读+坚持────────────────────────────────────────────────────────
 export function readProfileForm(form, env) {
   const identity = {
     name: form.name.value.trim(),
@@ -284,11 +284,11 @@ export async function saveProfileForm(form, env) {
   return newEnv;
 }
 
-// ── First-run wizard (paginated) ──────────────────────────────────────────
-// mandatory: first-connection gate — the Skip button is removed and the wizard
-// cannot be left until a name is entered (the identity step blocks advancing).
-// Language lives FIRST in the identity step (live-switching re-opens the wizard
-// in the new locale, preserving in-progress edits).
+// ── 第一轮wizard（分页）──────────────────────────────────────────
+// 强制：第一个连接门 - 跳过按钮re已移动，wizard
+// 在名称为 entered 之前不能保留（identity 步骤会阻止前进）。
+// 语言在 identity 步骤中首先存在（live-switching re-opens wizard
+// 在新的 locale 中，pre服务于 in-progress 编辑）。
 export function openProfileWizard(env, { onComplete, onSkip, mandatory = false } = {}) {
   if (document.getElementById("obProfileConfig")) return;
   const host = document.createElement("div");
@@ -325,9 +325,9 @@ export function openProfileWizard(env, { onComplete, onSkip, mandatory = false }
   const close = () => host.remove();
   let step = 0;
 
-  // Live language switch (identity step). Snapshot the in-progress form, persist
-  // the locale, then re-open the wizard rendered in the new language — same as
-  // the quick modal, so the tech never loses what they typed.
+  // 实时语言切换（identity 步骤）。对in-progress表单进行快照，持久化
+  // 新语言中的 locale、then re-open wizard rendered — 与
+  // 快速的modal，所以技术人员永远不会oses他们输入的内容。
   host.querySelectorAll('.ob-step[data-step="0"] .ob-lang-opts .landing-lang-opt').forEach((btn) => {
     btn.addEventListener("click", async () => {
       if (btn.dataset.lang === i18n.locale) return;
@@ -361,8 +361,8 @@ export function openProfileWizard(env, { onComplete, onSkip, mandatory = false }
     setTimeout(() => focusable?.focus(), 40);
   };
 
-  // Mandatory gate: a name is required before leaving the identity step (and
-  // therefore before finishing). Surfaces an inline error rather than a block.
+  // 强制门：名称为 required beforere 离开 identity 步骤（并且
+  // refore之前re结束hing）。显示内联错误而不是块。
   const nameMissing = () => mandatory && step === 0 && !nameInput.value.trim();
   const flagNameMissing = () => {
     if (nameError) nameError.hidden = false;
@@ -394,7 +394,7 @@ export function openProfileWizard(env, { onComplete, onSkip, mandatory = false }
   render();
 }
 
-// ── Quick config modal (single scroll) ────────────────────────────────────
+// ── 快速设定modal（单卷）────────────────────────────────────
 function _renderModal(env) {
   const host = document.createElement("div");
   host.className = "ob-host";
@@ -422,14 +422,14 @@ function _renderModal(env) {
   document.body.appendChild(host);
   wireCustomTools(host);
 
-  // Single-scroll: every section visible (the wizard hides non-active ones).
+  // 单滚动：每个部分都可见（wizardhides非活动部分）。
   host.querySelectorAll(".ob-step").forEach((s) => { s.hidden = false; });
 
   const form = host.querySelector("#obProfileForm");
   const close = () => host.remove();
 
-  // Live language switch: snapshot edits → switch locale → persist → re-render
-  // the modal in the new locale (keeps the user's in-progress changes).
+  // 实时语言切换：快照编辑 → 切换 locale → 持久 → re-render
+  // 新 locale 中的 modal（保留用户的 in-progress changes）。
   host.querySelectorAll(".ob-lang-opts .landing-lang-opt").forEach((btn) => {
     btn.addEventListener("click", async () => {
       if (btn.dataset.lang === i18n.locale) return;
@@ -458,7 +458,7 @@ function _renderModal(env) {
   });
   host.querySelector("#obCfgClose").addEventListener("click", close);
   host.querySelector("#obCfgCancel").addEventListener("click", close);
-  host.querySelector("#obCfgFull").addEventListener("click", close); // href navigates to #profile
+  host.querySelector("#obCfgFull").addEventListener("click", close); // href 导航至#profile
   host.querySelector(".ob-backdrop").addEventListener("click", (e) => {
     if (e.target.classList.contains("ob-backdrop")) close();
   });

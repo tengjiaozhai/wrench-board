@@ -1,20 +1,16 @@
-// Device catalogue read service — single cached source for the flattened
-// device list, fed by GET /pipeline/taxonomy. Consumed by the landing
-// autocomplete (features/global/landing/index.js) and the catalogue modal
-// (features/global/landing/catalogue.js). Data-only: no DOM, no rendering.
+// 设备目录只读服务 — 扁平化设备列表的单一缓存源，由 GET /pipeline/taxonomy 提供。
+// 供 landing 自动补全（features/global/landing/index.js）与目录弹窗
+//（features/global/landing/catalogue.js）使用。纯数据：无 DOM、无渲染。
 
 import { apiGet } from "../shared/api.js";
 import { prettifySlug } from "../shared/dom.js";
 
 let _cache = null;
 
-// Flatten a TaxonomyTree into one entry PER pack — every board revision /
-// variant a model has surfaces as its own suggestion (e.g. the two iPhone X
-// boards, Qualcomm vs Intel), disambiguated by `version`. Same set as
-// flattenBoards (the catalogue), only re-sorted for the autocomplete: complete
-// first, then alphabetical by label. Collapsing to one-per-(brand,model) used
-// to hide the non-canonical variant — unreachable from search even though the
-// catalogue showed it.
+// 将 TaxonomyTree 扁平化为每个 pack 一条 — 型号的每个板卡修订/变体各自作为
+// 建议项（如两款 iPhone X 板：Qualcomm vs Intel），由 `version` 区分。与
+// flattenBoards（目录）同一集合，仅为自动补全重排：complete 优先，再按 label
+// 字母序。曾折叠为每 (brand,model) 一条会隐藏非规范变体 — 目录可见但搜索不到。
 export function flattenTaxonomy(tree) {
   const out = flattenBoards(tree);
   out.sort((a, b) => {
@@ -24,7 +20,7 @@ export function flattenTaxonomy(tree) {
   return out;
 }
 
-// Cached for the session. `force: true` re-fetches (e.g. after a new build).
+// 会话内缓存。`force: true` 重新拉取（如新构建完成后）。
 export async function loadDevices({ force = false } = {}) {
   if (_cache && !force) return _cache;
   const tree = await apiGet("/pipeline/taxonomy");
@@ -32,10 +28,9 @@ export async function loadDevices({ force = false } = {}) {
   return _cache;
 }
 
-// One entry PER pack (board revision) — every variant of a model (e.g. both
-// MacBook Pro 13" boards: the A1706/A1708 and the M1 A2338) disambiguated by
-// `version`. The base of flattenTaxonomy too (which only re-sorts the result);
-// kept separate so the catalogue's board step gets the packs in API order.
+// 每个 pack（板卡修订）一条 — 型号的每个变体（如两款 MacBook Pro 13" 板：
+// A1706/A1708 与 M1 A2338）由 `version` 区分。也是 flattenTaxonomy 的基础
+//（后者仅重排结果）；单独保留以便目录的板卡步骤按 API 顺序展示 pack。
 export function flattenBoards(tree) {
   const out = [];
   const push = (brand, model, p) => out.push({

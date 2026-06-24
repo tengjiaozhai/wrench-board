@@ -18,7 +18,7 @@ class _FakeResp:
     status_code = 202
     text = ""
 
-    def json(self):  # pragma: no cover - trivial
+    def json(self):  # pragma: 没有掩饰 - 琐碎
         return {"recorded": True, "cost_cents": 7, "period": "2026-05"}
 
 
@@ -83,7 +83,7 @@ async def test_report_turn_usage_noop_when_unconfigured(monkeypatch):
         event_id="sesn:evt-1",
     )
 
-    assert captured == {}  # no HTTP call attempted
+    assert captured == {}  # 未尝试进行 HTTP 呼叫
 
 
 @pytest.mark.asyncio
@@ -105,7 +105,7 @@ async def test_report_turn_usage_posts_contract_with_bearer(monkeypatch):
         event_id="sesn:evt-1",
     )
 
-    # trailing slash on the configured base must not double up
+    # 配置red 基础上的 trailing 斜杠不得加倍
     assert captured["url"] == "https://cloud.example/internal/metering/diagnostic"
     assert captured["headers"]["Authorization"] == "Bearer tok_test"
     assert captured["json"] == {
@@ -161,7 +161,7 @@ async def test_report_turn_usage_swallows_errors(monkeypatch):
         cm.httpx, "AsyncClient", _fake_client_factory(captured, raise_on_post=True)
     )
 
-    # Must NOT raise — fire-and-forget best-effort.
+    # 不得加注 — fire-and-forget best-effort。
     await cm.report_turn_usage(
         owner_ref="tenant-1",
         model="claude-opus-4-8",
@@ -211,7 +211,7 @@ async def test_fire_and_forget_schedules_report_when_enabled(monkeypatch):
         input_tokens=1000, output_tokens=200,
         engine_repair_id="rep-1", event_id="sesn:evt-1",
     )
-    # Let the scheduled task run.
+    # 让计划任务运行。
     await asyncio.sleep(0)
     await asyncio.sleep(0)
 

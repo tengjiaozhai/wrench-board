@@ -36,7 +36,7 @@ def test_capabilities_non_bool_camera_field_coerces_safely():
     _handle_client_capabilities(
         session, {"type": "client.capabilities", "camera_available": "yes"}
     )
-    # Truthy non-bool → True (we coerce via bool())
+    # 真实的非 bool → True （我们通过 bool() 强制）
     assert session.has_camera is True
     _handle_client_capabilities(
         session, {"type": "client.capabilities", "camera_available": None}

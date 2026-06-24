@@ -1,11 +1,10 @@
-"""Custom-tool dispatch shim.
+"""自定义工具调度垫片。
 
-Bundles the ten-positional-arg legacy signature into a ``ToolContext``
+将十个位置参数旧签名捆绑到``ToolContext``
 and forwards to :func:`api.agent.tool_dispatch.dispatch_tool`. Kept as a
 runtime-level helper so existing callers (and the in-flight
-``mb_expand_knowledge`` interceptor at ``_forward_session_to_ws``) need
-no rewiring.
-"""
+``⟦PRESERVE0⟧`` interceptor at ``_forward_session_to_ws``）需要
+无需重新接线。"""
 
 from __future__ import annotations
 
@@ -30,15 +29,14 @@ async def _dispatch_tool(
     session_mirrors: _SessionMirrors | None = None,
     conv_id: str | None = None,
 ) -> dict:
-    """Thin shim around :func:`api.agent.tool_dispatch.dispatch_tool`.
+    """围绕 :func:`api.agent.tool_dispatch.dispatch_tool` 薄垫片。
 
-    Bundles the legacy ten-positional-arg signature into a ``ToolContext``
+    将旧版十位置参数签名捆绑到``ToolContext``
     and forwards to the dispatch table. Kept as a module-level symbol so
-    existing callers (and the in-flight ``mb_expand_knowledge`` interceptor
+    existing callers (and the in-flight ``⟦PRESERVE0⟧`` interceptor
     at ``_forward_session_to_ws``) need no rewiring. Behaviour is byte-for-
     byte equivalent to the pre-refactor waterfall — see ``tool_dispatch.py``
-    for the per-tool handlers.
-    """
+    对于每个工具处理程序。"""
     ctx = ToolContext(
         device_slug=device_slug,
         memory_root=memory_root,

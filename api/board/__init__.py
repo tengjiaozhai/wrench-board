@@ -1,1 +1,1 @@
-"""Boardview parsing and component lookup (refdes → footprint, net, attrs)."""
+"""板视图解析和组件查找（refdes→封装、网络、属性）。"""

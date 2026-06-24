@@ -1,10 +1,9 @@
-"""Helper shared by runtime_direct and runtime_managed.
+"""由runtime_direct 和runtime_management 共享的助手。
 
-Reads memory/{slug}/simulator_reliability.json and formats a one-liner
-suitable for injection into the system prompt. Returns None when the
-file is missing (normal for devices whose pack hasn't been benched yet)
-or corrupt (logged).
-"""
+读取 memory/{slug}/simulator_reliability.json 并格式化单行
+适合注入系统提示符。当
+文件丢失（对于尚未测试包的设备来说是正常的）
+或损坏（已记录）。"""
 
 from __future__ import annotations
 
@@ -16,13 +15,13 @@ logger = logging.getLogger("wrench_board.agent.reliability")
 
 
 def _memory_root() -> Path:
-    """Isolated so tests can patch it."""
+    """隔离以便测试可以修补它。"""
     return Path("memory")
 
 
 def load_reliability_line(device_slug: str) -> str | None:
-    """Return a single-line summary of the simulator reliability for this
-    device, or None when unknown."""
+    """返回模拟器可靠性的单行摘要
+    设备，或者未知时无。"""
     path = _memory_root() / device_slug / "simulator_reliability.json"
     if not path.exists():
         return None

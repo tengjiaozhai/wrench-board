@@ -1,6 +1,6 @@
 // web/js/services/repairs.js
-// Read-side data service for repairs. The CREATE repair POST stays in the
-// feature modules for now (cloud contract: urlencoded body — see plan invariants).
+// repair 的只读数据服务。CREATE repair 的 POST 暂留 feature 模块
+//（cloud 契约：urlencoded body — 见 plan invariants）。
 import { apiGet } from "../shared/api.js";
 
 export const listRepairs = () => apiGet("/pipeline/repairs");

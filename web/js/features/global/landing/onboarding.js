@@ -1,18 +1,18 @@
-// First-run guided onboarding — plays once on the landing cockpit, escapable
-// at every step. A blocking welcome modal hands off to the mascot, which walks
-// the technician through: profile capture → product concept → first diagnostic,
-// revealing the hero zones one at a time. "Skip" anywhere reveals everything
-// and ends the run.
+// 首轮引导 onboarding — 在 landing cockpit 上玩一次，可逃脱
+// 步步。阻塞的欢迎modal将其交给mascot，which步行
+// 技术人员通过：profile capture→产品概念→第一个diagnostic，
+// re将hero区域划分为time。 “跳过”任何rere小牛肉hing
+// ends 运行。
 //
-// State model (see spec 2026-06-01-onboarding-and-home-ux-design):
-//   - The scripted run is gated by the `wb_onboarding_seen` localStorage flag,
-//     and only triggers when the profile is incomplete OR there are 0 repairs.
-//   - Persistent derived nudges (pill pulse, empty sidebar) live elsewhere and
-//     are not this module's concern.
+// 状态模型（参见规范 2026-06-01-onboarding-and-home-ux-design）：
+//   - 脚本运行由 `wb_onboarding_seen` localStorage 标志控制，
+//     并且仅触发 when profile 不完整或re are 0 repair。
+//   - 坚持ent派生的推动（药丸脉冲，空sidebar）生活在其他re和
+//     are 不是 this 模块的关注点。
 //
-// Reveal mechanism: `.ob-running` on #landing-overlay dims every [data-ob-reveal]
-// target; the orchestrator adds `.is-revealed` per step. finish() drops
-// `.ob-running` so the cockpit returns to its normal (fully visible) state.
+// 揭示机制：#landing-overlay 上的 `.ob-running` 会使每个 [data-ob-reveal] 变暗
+// 目标; orchestrator 每一步添加 `.is-revealed`。 finish() 滴
+// `.ob-running` 因此 cockpit re 转换为 normal （完全可见）状态。
 
 import { mountMascot } from "../../../mascot.js";
 import { showBubble, hideBubble } from "../../../mascot_bubble.js";
@@ -26,9 +26,9 @@ import { hideUploads } from "../../../cloud_hints.js";
 const FLAG = "wb_onboarding_seen";
 const EXAMPLE_REPAIR_ID = "example-mnt-reform";
 
-let _ctl = {};      // { setMascotState }
-let _env = null;    // cached profile envelope
-let _host = null;   // injected modal/panel host
+let _ctl = {};      // { 设置吉祥物状态 }
+let _env = null;    // 缓存 profile en信封
+let _host = null;   // 注入modal/面板host
 
 function _overlay() { return document.getElementById("landing-overlay"); }
 function _mascotState(s) { if (typeof _ctl.setMascotState === "function") _ctl.setMascotState(s); }
@@ -49,10 +49,10 @@ function _clearHost() {
   if (_host) { _host.remove(); _host = null; }
 }
 
-// Synchronous pre-gate: dim the hero from the first paint of the landing so a
-// first-run never flashes the full cockpit before the staged reveal. Cheap
-// localStorage check only; the async maybeStartOnboarding() decides for real
-// and un-gates if it turns out not to run.
+// 同步pre门：使landing的第一个油漆变暗herofr，所以
+// 第一次运行永远不会在re上演的re小牛肉之前闪烁完整的cockpit。便宜的
+// localStorage 仅检查； async MaybeStartOnboarding() 决定real
+// 如果结果不运行则取消大门。
 export function preGateOnboarding() {
   if (localStorage.getItem(FLAG)) return;
   _overlay()?.classList.add("ob-running");
@@ -60,9 +60,9 @@ export function preGateOnboarding() {
 
 export async function maybeStartOnboarding(ctl) {
   _ctl = ctl || {};
-  // Always load profile + repairs first: the profile gate is INDEPENDENT of the
-  // tour flag (a missing name must prompt even on a returning device / after the
-  // tour was skipped), so we can't early-return on `onboarding_seen` here.
+  // 始终先 load profile + repair：profile 门独立于
+  // 游览标志（缺少名称必须在 re 旋转装置上提示 even / 在
+  // 游览被跳过），所以我们不能提前-re打开`onboarding_seen`他re。
   let repairsCount = 0;
   try {
     const res = await fetch("/pipeline/repairs");
@@ -82,9 +82,9 @@ export async function maybeStartOnboarding(ctl) {
 
   const incomplete = !_env?.profile?.identity?.name;
 
-  // ── Gate 1: mandatory profile (language first, name required) ────────────
-  // Server-persisted + tenant-scoped (PUT /profile/*), so once the name is set
-  // it never re-prompts on reconnection. Can't be escaped by refusing the tour.
+  // ── 一号门：必填profile（语言优先，名字required）────────────
+  // 服务器持久化 + tenant-scoped (PUT /profile/*)，因此一旦设置了名称
+  // 它永远不会在 re 连接时提示 re。无法通过re融合游览来逃脱。
   if (incomplete) {
     _overlay()?.classList.add("ob-running");
     _mascotState("scanning");
@@ -100,14 +100,14 @@ export async function maybeStartOnboarding(ctl) {
     return;
   }
 
-  // Profile already complete → consider the optional tour.
+  // 简介已完成re→ 考虑可选的游览。
   _maybeOfferTour(repairsCount);
 }
 
-// ── Gate 2: optional guided tour (one-shot, server-backed onboarding_seen) ──
+// ── 门2：可选导览（一次性，服务器支持onboarding_seen）──
 function _maybeOfferTour(repairsCount) {
   if (hasSeenOnboarding("onboarding_seen") || repairsCount > 0) {
-    // Nothing to tour — undo the pre-gate and leave the cockpit alone.
+    // 不可hing 游览 — 撤消 pre 门并保留 cockpit。
     _overlay()?.classList.remove("ob-running");
     return;
   }
@@ -116,9 +116,9 @@ function _maybeOfferTour(repairsCount) {
   _stepWelcome();
 }
 
-// ── Tour step 1: offer modal (blocking) — refusable ───────────────────────
-// Language and profile are already handled by Gate 1, so this is purely the
-// "want a quick tour?" prompt; refusing ends the run (and marks it seen).
+// ── 游览第1步：提供modal（阻塞）—re可熔────────────────────────
+// 语言和 profile are already 由 Gate 1 处理，因此 this 通常是re
+// “想要快速浏览一下吗？”迅速的; re熔断ends 运行（并将其标记为en）。
 function _stepWelcome() {
   const host = _ensureHost();
   host.innerHTML = `
@@ -142,9 +142,9 @@ function _stepWelcome() {
   });
 }
 
-// ── Step 3: product concept ───────────────────────────────────────────────
-// A centred card (not a pointer bubble): the concept is a general statement, so
-// a bubble anchored to the hero title ended up covering the subtitle/form.
+// ── 第三步：产品概念────────────────────────────────────────────────
+// 一张centred卡（不是指针bubble）：这个概念是一个general statement，所以
+// bubble锚定red到hero标题en覆盖副标题/表格。
 function _stepConcept() {
   hideBubble();
   _mascotState("idle");
@@ -168,9 +168,9 @@ function _stepConcept() {
   });
 }
 
-// ── Step 3.5: offer a real example before the user's own first diag ────────
-// Opens the shipped MNT Reform device; the workspace coaching tour plays there
-// (full tabs), then hands back here via onDone → the "now your turn" pointers.
+// ── 步骤3.5：在re用户自己的第一个诊断之前提供一个real示例────────
+// Openshipped MNT 改革装置； workspacecoaching巡演演奏re
+// （完整选项卡），then 通过 onDone → “现在轮到你了”指针返回 here。
 function _stepExampleIntro() {
   hideBubble();
   _mascotState("idle");
@@ -192,23 +192,23 @@ function _stepExampleIntro() {
 }
 
 function _openExample() {
-  // Ensure the workspace tour will play even for a tech who already saw it:
-  // arm a one-shot bypass of the persisted `first_diag_seen` flag (server truth
-  // now, so we can't just clear a localStorage key to force the replay).
+  // Ensure workspace 巡演将为一位ready 看过的技术人员播放 even：
+  // 一次性绕过持久的“first_diag_seen”标志（服务器真相
+  // 现在，我们不能只清除 localStorage 键来强制 replay）。
   forceNextDiagCoaching();
-  // When the workspace tour finishes (dashboard.js forwards this as onDone),
+  // 当en workspace 巡演结束时（dashboard.js 将 this 作为 onDone 转发），
   // return to the landing and resume the user's own first-diag pointers.
   window.__wbExampleTourOnDone = () => { window.__wbExampleTourOnDone = null; _returnFromExample(); };
-  // Navigate into the example workspace; dashboard.js fires the tour on render.
+  // 导航到示例 workspace； dashboard.jsfire是 render 上的旅行。
   window.location.hash = `#repair/${EXAMPLE_REPAIR_ID}/diagnostic`;
 }
 
 function _returnFromExample() {
-  // Back to the landing cockpit, then resume with the user's own first diag.
-  // The hashchange → showLanding render is async, so poll for the device input
-  // (the anchor the resumed pointers need) rather than guessing a fixed delay.
+  // 回到landingcockpit、enre与用户自己的第一个诊断相一致。
+  // hashchange→showLanding render是async，因此轮询设备input
+  // （resumed 指针需要的锚点）而不是猜测固定延迟。
   window.location.hash = "#landing";
-  let tries = 30; // ~3 s ceiling at 100 ms
+  let tries = 30; // 100 毫秒时 ~3 秒上限
   const resume = () => {
     if (document.getElementById("landingDevice") || tries-- <= 0) {
       _overlay()?.classList.add("ob-running");
@@ -225,7 +225,7 @@ function _afterExample() {
   _stepDevice();
 }
 
-// ── Step 4: first diagnostic (device → symptom → launch) ──────────────────
+// ── 第四步：首先diagnostic（设备→symptom→发射）──────────────────
 function _stepDevice() {
   _reveal('.landing-input-wrap[data-ob-reveal]');
   showBubble({
@@ -259,12 +259,12 @@ function _stepLaunch() {
   });
 }
 
-// ── Step 5: feature mentions (Add knowledge + Stock) ──────────────────────
-// Short pointers only; the detailed explanation lives in the on-click info
-// modal (info_modal.js), reachable anytime via the "?" affordance.
+// ── 步骤5：feature mentions（添加知识+库存）──────────────────────
+// 仅短指针；详细解释位于 on-click 信息中
+// modal (info_modal.js), re可通过“?”连接任意time可供性。
 function _stepKnowledge() {
-  // Plan free (mode managé, cloud_hints) : « Add knowledge » est masqué —
-  // ne pas ancrer une bulle sur un élément invisible, enchaîner sur le stock.
+  // 计划free（托管模式，cloud_hints）：“添加知识”隐藏 —
+  // 不要将气泡锚定在不可见元素上，将en链锚定在stock上。
   if (hideUploads()) return _stepStock();
   showBubble({
     anchor: document.getElementById("landingKnowledgeBtn"),
@@ -286,20 +286,20 @@ function _stepStock() {
   });
 }
 
-// ── End: drop the gate, mark seen ─────────────────────────────────────────
+// ── 结束：落下大门，标记seen ────────────────────────────────────────
 export function finish() {
   hideBubble();
   _clearHost();
   document.getElementById("landingProfile")?.classList.remove("ob-spotlight");
   _overlay()?.classList.remove("ob-running");
-  markOnboardingSeen("onboarding_seen"); // server (cross-device) + localStorage cache
+  markOnboardingSeen("onboarding_seen"); // 服务器（cross-设备）+localStorage缓存
   _mascotState("idle");
 }
 
-// ── Manual replay: sidebar "Take the tour" button ───────────────────────
-// Bypasses the profile gate and repairs-count gate — the button is only
-// visible on the landing cockpit, so the profile is already set. Jumps
-// straight to the welcome modal.
+// ── 手册replay：sidebar「游览」按钮────────────────────────
+// 绕过 profile 门和 repairs 计数门 — 该按钮仅
+// 在landingcockpit上可见，因此profile是already集。跳跃
+// 直接迎接欢迎modal。
 export function replayOnboarding(ctl) {
   _ctl = ctl || {};
   _overlay()?.classList.add("ob-running");

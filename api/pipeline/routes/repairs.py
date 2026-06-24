@@ -21,35 +21,32 @@
          │  （并行）① 里 create_task 已在跑：          │
          │     emit → events.publish(slug, ev) ──────┘
 
-【哪一行「建立 / 结束」HTTP？】
-  - 前端发起（Landing「开始诊断」）：
-      web/js/features/global/landing/index.js:471
-        const res = await fetch("/pipeline/repairs", { method: "POST", ... });
-      fetch 返回且 res.json() 读完（约 :477）后 HTTP 连接即关闭 — **不是长连接**。
-  - 后端处理入口：
-      api/pipeline/routes/repairs.py:737  @router.post("/repairs")
-      api/pipeline/routes/repairs.py:738  async def create_repair(...)
-  - 后端 HTTP 响应发出（Branch 1 典型路径）：
-      api/pipeline/routes/repairs.py:988  return RepairResponse(...)
+【完整流程 — 前后端 Step 对照】
 
-【哪一行「建立 / 保持」WS 长会话？】
-  - 前端发起：
-      web/js/features/global/landing/index.js:661  connectProgress(slug, …)
-        ↑ 由 subscribeToProgress 调用；slug 来自 HTTP 响应的 device_slug
-      web/js/services/pipelineSocket.js:27
-        const ws = new WebSocket(url);   ← 浏览器 WS 握手，连接建立
-  - 后端接受并保持：
-      api/pipeline/routes/progress.py:58   await websocket.accept()
-      api/pipeline/routes/progress.py:64-66
-        while True:
-            event = await queue.get()
-            await websocket.send_text(...)   ← 循环阻塞，保持长连接直到客户端断开
-  - 前端主动关闭示例：pipelineSocket.js:50-54 conn.close()；或 pipeline_finished 后跳转
+  前端 landing/index.js          后端 repairs.py + progress.py
+  ─────────────────────          ──────────────────────────────
+  Step 1  submitDiagnostic       —
+  Step 2  fetch POST /repairs    Step A  create_repair 入口 ~780
+  Step 3  res.json() RepairResponse
+                                 Step B  persist repair, pack_complete 分支
+                                 Step C  Branch1: create_task(_launch)
+                                 Step D  _run_pipeline_with_events → publish
+  Step 3  (HTTP 结束)            Step E  return RepairResponse
+  Step 5  subscribeToProgress
+  Step 6  new WebSocket          Step F  progress_ws accept + while True
+  Step 7  handleProgressEvent    ←── events.subscribe 转发 publish 的事件
+  Step 8  pipeline_finished → goToWorkspace
+
+【哪一行「建立 / 结束」HTTP？】
+  - 前端：landing/index.js fetch POST ~490 行；res.json() ~498 行后 HTTP 关闭
+  - 后端：@router.post("/repairs") ~780 行；return RepairResponse ~1118 行（Branch1）
+
+【哪一行「建立 / 保持」progress WS？】
+  - 前端：subscribeToProgress ~680 行 → pipelineSocket.js new WebSocket ~32 行
+  - 后端：progress.py websocket.accept ~71 行；while True ~77 行
 
 【HTTP 与 WS 如何「关联」】
-  无 session_id / ws_url；仅约定：
-    HTTP 响应里的 device_slug  ==  WS 路径里的 {slug}
-    HTTP 响应里的 pipeline_started == true  → 前端才去 connectProgress
+  slug（device_slug）是唯一 join key；RepairResponse 字段见 models.py。
 
 Also re-exports `_run_pipeline_with_events` via the package
 `__init__.py` — `tests/pipeline/test_pipeline_events_narration.py`
@@ -231,11 +228,18 @@ def _build_cap() -> int:
 
 
 def _builds_at_capacity() -> bool:
+    """全局重 build 槽位是否已满（子路径 ③ 的判定条件）。
+
+    True → 新 slug 的 build 不能立刻 create_task，须 _enqueue_build 入队。
+    与 _slug_is_building（子路径 ①，按 slug）正交：① 是同 slug 已在跑，
+    ③ 是不同 slug 但全局并发数达 pipeline_max_concurrent_builds 上限。
+    """
     cap = _build_cap()
     return cap > 0 and _active_builds >= cap
 
 
 def _slug_queued(slug: str) -> bool:
+    """该 slug 是否已在 _build_queue 中等待（子路径 ② 的判定条件）。"""
     return any(item["slug"] == slug for item in _build_queue)
 
 
@@ -785,7 +789,18 @@ async def create_repair(
 ) -> RepairResponse:
     """注册 repair 会话；按需**后台**启动 knowledge pipeline。
 
-    【pack 与分支 — 详见下方 pack_dir 处大段注释，此处为决策树摘要】
+    【完整流程 — 后端 Step A→E（与 landing/index.js Step 2–8 对照）】
+
+      Step A  本函数入口 — uvicorn 将 POST /pipeline/repairs 路由到此
+      Step B  slug 解析 → _persist_repair → pack_complete → Branch 0/1/2/3
+      Step C  Branch 1: _register_build(slug, asyncio.create_task(_launch()))
+              _launch → _run_pipeline_with_events → generate_knowledge_pack
+      Step D  orchestrator emit → _on_event → events.publish(slug, ev)
+              （与 HTTP 并行；progress_ws Step F 转发给浏览器）
+      Step E  return RepairResponse(...) — HTTP 响应发出，连接关闭
+              前端读 pipeline_started / device_slug 决定是否开 progress WS
+
+    【pack 与分支 — 详见下方 pack_dir 处大段注释】
 
       pack = memory/{slug}/ 下的设备级知识包（registry / graph / rules / dictionary …）
       pack_complete = _pack_is_complete(pack_dir)  # 四核心 JSON + build_state=complete
@@ -800,9 +815,12 @@ async def create_repair(
       pipeline_started=true  → 前端连 WS /pipeline/progress/{device_slug}
       pipeline_started=false → 直接 goToWorkspace，不订阅 progress WS
 
+    【响应体字段详解】见 api/pipeline/models.py :: RepairResponse（各字段中文注释 + Branch 组合表）
+
     Multipart 支持创建时附带 schematic；file 会先写入 memory/{slug}/uploads/，
     再 fire-and-forget 生成，以便 orchestrator 内联 ingest 电气图。
     """
+    # ═══ Step A：HTTP POST /pipeline/repairs 进入点（Step 2 前端 fetch 的对端）═══
     try:
         request = RepairRequest(
             device_label=device_label,
@@ -823,6 +841,9 @@ async def create_repair(
     # (board# / Apple model / EMC / marketing) land on ONE pack instead of N.
     # Best-effort: any registry hiccup degrades to the naive slugify (today's
     # behavior), so resolution can never block a repair.
+    # 【slug 赋值】见函数顶部；此处展开说明 slug 的含义与用途。
+    # slug = 设备 canonical ID，例如 smt-v551、macbook-pro-13-m1。
+    # 与 repair_id（单次工单 UUID）不同：同一 slug 可有多份 repair，但共享一份 pack。
     slug = request.device_slug or _slugify(request.device_label)
     resolution = None
     if not request.device_slug:
@@ -836,8 +857,8 @@ async def create_repair(
             logger.warning("[API] device resolution failed for %r — using slug=%r",
                            request.device_label, slug, exc_info=True)
 
-    # T9a confirm-on-uncertainty: a broad term that fans out to several siblings —
-    # don't guess. Return the candidate menu; no repair created, no build started.
+    # T9a 设备歧义：未 persist repair，RepairResponse 见 models.RepairResponse
+    # needs_disambiguation / candidates / repair_id="" / pipeline_started=false
     if resolution is not None and resolution.get("ambiguous"):
         return RepairResponse(
             repair_id="",
@@ -974,25 +995,58 @@ async def create_repair(
         await persist_upload(pack_dir / "uploads", "schematic_pdf", file)
 
     # -------------------------------------------------------------------------
+    # 【slug 是什么】
+    #
+    #   slug = 设备在系统里的 canonical 标识符（小写、URL/文件名安全），例如 smt-v551。
+    #   来源（上方 ~826 行）：
+    #     request.device_slug（前端 autocomplete 选中）
+    #     或 resolve_device(label) → canonical_slug
+    #     或 _slugify(device_label)
+    #
+    #   slug 贯穿全链路（同一字符串把 HTTP 与 WS 关联起来）：
+    #     memory/{slug}/              pack 知识包目录
+    #     memory/{slug}/repairs/…     repair 工单（repair_id 是工单级，slug 是设备级）
+    #     events.publish(slug, …)     构建进度事件总线
+    #     WS /pipeline/progress/{slug} 前端订阅构建进度
+    #     WS /ws/diagnostic/{slug}     诊断 agent
+    #
+    #   pack 按 slug 共享：同一 slug 同时只应有一个 build 在跑（见 Branch 1 四子路径）。
+    #
+    # -------------------------------------------------------------------------
     # Branch 1 — **无可用 pack** 或 **强制重建**
     #
-    #   条件：not pack_complete  OR  request.force_rebuild
+    #   入口条件：not pack_complete  OR  request.force_rebuild
     #
-    #   含义：
-    #     - 无 pack：memory/{slug}/ 缺少四份核心 JSON，或 build_state=building/failed
-    #     - force_rebuild：pack 虽完整，用户明确要求全量重跑 pipeline
+    #   四子路径（按 if 顺序，命中即 return，不再往下）：
     #
-    #   行为：
-    #     - asyncio.create_task(_launch()) 后台跑 Scout→Registry→Writers→Audit
-    #     - 进度经 events.publish → WS /pipeline/progress/{slug}
-    #     - 前端：pipeline_started=true → subscribeToProgress(slug)
+    #   ① _slug_is_building(slug)
+    #      同 slug 已有 pipeline task 在 _RUNNING 里跑。
+    #      → 不 create_task；新 repair 搭车已有 progress 流。
+    #      → 类比：班车已发，后来的乘客看同一块进度屏。
     #
-    #   子情况（仍属 Branch 1，但不重复 create_task）：
-    #     - 同 slug 已有 build 在跑 → 搭车已有 progress 流
-    #     - 并发 build 超 cap → 入队，先发 type:queued 事件
+    #   ② _slug_queued(slug)
+    #      同 slug 的 _launch 已在 _build_queue 里等槽位。
+    #      → 不重复入队；返回 queue_position。
+    #      → 类比：已在候车区排队，后来的人看同一队列号。
+    #
+    #   ③ _builds_at_capacity()（①② 都不满足时）
+    #      全局并发 build 数达 pipeline_max_concurrent_builds 上限。
+    #      → _enqueue_build(slug, _launch)；events.publish(type:queued)。
+    #      → 前面 build 结束 → _drain_queue 自动 create_task 出队启动。
+    #      → 类比：发车名额满，取号排队，叫号自动发车。
+    #
+    #   ④ 默认（①②③ 都不满足）
+    #      全新 slug 首次构建，或不同 slug 且有空槽。
+    #      → _register_build(slug, asyncio.create_task(_launch())) 立即后台启动。
+    #      → 类比：有空位，立刻发车。
+    #
+    #   四子路径共同点：pipeline_started=true + pipeline_kind=full
+    #     → 前端 subscribeToProgress(slug) 连 WS /pipeline/progress/{slug}
     # -------------------------------------------------------------------------
     if not pack_complete or request.force_rebuild:
-        # 已有同 slug build 在跑 → 不 create_task，新 repair 复用同一 progress 流。
+        # ── 子路径 ①：同 slug 已有 build 在跑 ──────────────────────────────
+        # _RUNNING[slug] 非空且 task 未 done。pack 按 slug 共享，不能再 launch
+        # 第二个 task（会重复烧 LLM token 且覆盖 _RUNNING，破坏 cancel）。
         if _slug_is_building(slug):
             logger.info(
                 "[API] /pipeline/repairs · slug=%r already building — repair=%s joins the in-flight pipeline",
@@ -1001,22 +1055,23 @@ async def create_repair(
             )
             return RepairResponse(
                 repair_id=repair_id,
-                device_slug=slug,
+                device_slug=slug,       # progress WS join key（与已在跑的 build 相同 slug）
                 device_label=request.device_label,
-                pipeline_started=True,  # 前端：订阅 /pipeline/progress/{slug}
+                pipeline_started=True,  # 子路径 ①：搭车，订阅已有 /pipeline/progress/{slug}
                 pipeline_kind="full",
             )
-        # 已在排队 → 同样 pipeline_started=true，UI 显示 queue_position。
+        # ── 子路径 ②：同 slug 已在 FIFO 排队 ───────────────────────────────
+        # _build_queue 里已有 {"slug": slug, "launch": _launch}，不重复 append。
         if _slug_queued(slug):
             pos = _queue_position(slug)
             return RepairResponse(
                 repair_id=repair_id,
                 device_slug=slug,
                 device_label=request.device_label,
-                pipeline_started=True,
+                pipeline_started=True,  # 子路径 ②：等同一 slug 的 queued build 启动
                 pipeline_kind="full",
                 queued=True,
-                queue_position=pos,
+                queue_position=pos,     # 1-based，前端显示「排队 · 第 N 位」
             )
         if request.force_rebuild and pack_complete:
             logger.info(
@@ -1025,8 +1080,8 @@ async def create_repair(
                 slug,
             )
 
-        # 捕获 build 参数的闭包；立即启动或入队后由 _drain_queue 启动。
-        # 闭包内的 slug 与 HTTP 响应里的 device_slug 相同 — progress WS 的 join key。
+        # _launch 闭包：供子路径 ③ 入队 或 子路径 ④ 立即 create_task 共用。
+        # 闭包捕获的 slug 必须与 RepairResponse.device_slug 一致（progress WS join key）。
         def _launch():
             return _run_pipeline_with_events(
                 request.device_label,
@@ -1038,6 +1093,9 @@ async def create_repair(
                 engine_repair_id=repair_id,
             )
 
+        # ── 子路径 ③：全局并发 build 已满，本次新入队 ─────────────────────
+        # _active_builds >= pipeline_max_concurrent_builds；不立刻 create_task。
+        # 某 build 的 done-callback → _drain_queue → 出队并 _register_build(create_task)。
         if _builds_at_capacity():
             pos = _enqueue_build(slug, _launch)
             # 排队事件也走 events 总线，progress WS 连上后即可收到 type: queued。
@@ -1052,24 +1110,25 @@ async def create_repair(
                 repair_id=repair_id,
                 device_slug=slug,
                 device_label=request.device_label,
-                pipeline_started=True,
+                pipeline_started=True,  # 子路径 ③：排队中，仍订阅 progress WS 收 queued 事件
                 pipeline_kind="full",
                 queued=True,
                 queue_position=pos,
             )
 
+        # ── 子路径 ④：有空槽，立即启动（新设备首次诊断的典型路径）──────────
         logger.info(
             "[API] /pipeline/repairs · firing full pipeline for slug=%r · focus_symptom=yes",
             slug,
         )
-        # 【关键连接点】先 fire-and-forget 后台 task，再 return HTTP。
-        # task 内 emit → publish(slug)；前端拿到 slug 后连 progress WS → subscribe(slug)。
+        # 子路径 ④：fire-and-forget 后台 task，HTTP 立即 return（不等 pipeline 跑完）。
+        # task 内 emit → events.publish(slug) → progress_ws → 浏览器 timeline。
         _register_build(slug, asyncio.create_task(_launch()))
         return RepairResponse(
             repair_id=repair_id,
-            device_slug=slug,       # 前端用此 slug 连接 WS /pipeline/progress/{slug}
+            device_slug=slug,       # 子路径 ④：前端连 WS /pipeline/progress/{slug}
             device_label=request.device_label,
-            pipeline_started=True,  # 前端开关：true → subscribeToProgress / connectProgress
+            pipeline_started=True,  # 子路径 ④：subscribeToProgress(slug)
             pipeline_kind="full",
         )
 

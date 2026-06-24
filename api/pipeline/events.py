@@ -25,8 +25,7 @@
   - 终端事件（pipeline_finished / pipeline_failed）后 10s 清空 history，避免下次
     同 slug 重建时回放旧事件。
 
-Used by the orchestrator to broadcast phase transitions, and by the
-`/pipeline/progress/{slug}` WebSocket to relay them to the browser.
+orchestrator 用于广播阶段转换，`/pipeline/progress/{slug}` WebSocket 用于中继到浏览器。
 """
 
 from __future__ import annotations
@@ -63,12 +62,12 @@ def subscribe(slug: str) -> asyncio.Queue[dict[str, Any]]:
 
 
 def unsubscribe(slug: str, queue: asyncio.Queue[dict[str, Any]]) -> None:
-    """Drop a listener. Safe to call twice — missing queues are ignored."""
+    """移除一个监听者。可安全重复调用 — 不存在的 queue 会被忽略。"""
     try:
         _subscribers[slug].remove(queue)
     except ValueError:
         pass
-    # Drop the slug entry entirely when empty to avoid leaking keys.
+    # 无订阅者时删除 slug 条目，避免泄漏 key。
     if not _subscribers[slug]:
         _subscribers.pop(slug, None)
 
@@ -77,15 +76,11 @@ _TERMINAL_TYPES = frozenset({"pipeline_finished", "pipeline_failed"})
 
 
 async def publish(slug: str, event: dict[str, Any]) -> None:
-    """向 slug 的所有订阅者广播一条事件，并写入 history。
+    """Step D：向 slug 的所有 progress WS 订阅者广播一条 pipeline 事件。
 
-    调用方：
-      - repairs._run_pipeline_with_events 里的 _on_event（orchestrator 各阶段 emit）
-      - repairs.create_repair 排队分支（type: queued）
-      - packs/documents 等需要 relay schematic 进度的路径
-
-    常见 event.type：pipeline_started · phase_started · phase_finished ·
-    phase_step · pipeline_paused · pipeline_finished · pipeline_failed · queued
+    调用链：create_repair → create_task(_launch) → _run_pipeline_with_events
+            → orchestrator emit → _on_event → 本函数
+    消费链：本函数 → queue.put → progress_ws Step F → 浏览器 handleProgressEvent
     """
     _history[slug].append(event)
 
@@ -93,7 +88,7 @@ async def publish(slug: str, event: dict[str, Any]) -> None:
     for q in listeners:
         try:
             await q.put(event)
-        except Exception:  # pragma: no cover — asyncio.Queue.put shouldn't fail
+        except Exception:  # pragma: no cover — asyncio.Queue.put 不应失败
             logger.warning("events.publish: queue.put failed for slug=%r", slug)
 
     # 终端事件：保留 10s 供「刚连上 WS 的客户端」读到 verdict，之后清空 history。
@@ -102,7 +97,7 @@ async def publish(slug: str, event: dict[str, Any]) -> None:
 
 
 async def _clear_history_after(slug: str, *, delay_s: float) -> None:
-    """Drop a slug's history after a grace period — runs as a fire-and-forget task."""
+    """宽限期后丢弃 slug 的历史 — 作为 fire-and-forget 任务运行。"""
     try:
         await asyncio.sleep(delay_s)
     except asyncio.CancelledError:  # pragma: no cover
@@ -115,11 +110,11 @@ def subscribers_count(slug: str) -> int:
 
 
 def history_count(slug: str) -> int:
-    """Test/debug helper — number of events buffered for this slug."""
+    """测试/调试辅助 — 该 slug 缓冲的事件数量。"""
     return len(_history.get(slug, ()))
 
 
 def reset() -> None:
-    """Clear all subscribers and history — test-only helper."""
+    """清空所有订阅者与历史 — 仅测试用辅助函数。"""
     _subscribers.clear()
     _history.clear()

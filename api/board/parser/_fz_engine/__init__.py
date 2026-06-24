@@ -1,7 +1,6 @@
-"""FZ container cipher engine.
+"""FZ容器密码引擎。
 
-The XOR-flavoured `.fz` boardview wraps an FZ-zlib payload (4-byte LE
-size + zlib stream) in a 16-byte sliding-window byte cipher seeded by
-a fixed 44 × uint32 key. Once decrypted the payload is identical to
-the plain FZ-zlib variant already handled by `_fz_zlib.py`.
-"""
+XOR 风格的 `.fz` boardview 包装 FZ-zlib 有效负载（4 字节 LE
+大小 + zlib 流）在 16 字节滑动窗口字节密码中
+固定的 44 × uint32 密钥。解密后，有效负载与
+普通的 FZ-zlib 变体已经由 `_fz_zlib.py` 处理。"""

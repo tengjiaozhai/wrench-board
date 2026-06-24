@@ -1,6 +1,11 @@
-// Pipeline progress drawer — bottom-right glass UI that streams live
-// pipeline events via WS /pipeline/progress/{slug} and transitions the
-// 4-step stepper (Scout → Registry → Writers → Audit) as events flow.
+// web/js/pipeline_progress.js
+// Pipeline progress drawer — 首页「新建 repair」弹窗的另一条 WS 消费路径。
+//
+// 【完整流程中的位置】
+//   与 landing/index.js 共用 pipelineSocket.js connectProgress（Step 6）
+//   openPipelineProgress(repairResponse) — home.js 新建 repair 后调用
+//   pipeline_started=false → 跳过 drawer，直接跳转 graph
+//   pipeline_started=true  → subscribeProgress() → handleEvent 更新 stepper
 //
 // Entry point: openPipelineProgress({repair_id, device_slug, device_label,
 // pipeline_started}). When pipeline_started=false the pack is already
@@ -250,6 +255,7 @@ function showErrorDetail(msg) {
 }
 
 function handleEvent(ev) {
+  // Step 7（drawer 路径）：消费 progress WS 事件，驱动右下角 4 步 stepper
   switch (ev.type) {
     case "subscribed":
       // Ack — the pipeline may already have started. Wait for pipeline_started
@@ -349,6 +355,7 @@ function redirectToMemoryBank() {
 }
 
 function subscribeProgress() {
+  // Step 6：与 landing subscribeToProgress 相同 — connectProgress(STATE.slug)
   STATE.conn = connectProgress(STATE.slug, {
     onEvent: handleEvent,
     onError: () => setStatusKey("pipeline.status.lost_connection", null, "err"),

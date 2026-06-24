@@ -28,8 +28,7 @@
   repairs._run_pipeline_with_events → orchestrator.generate_knowledge_pack(on_event=…)
   详见 api/pipeline/routes/repairs.py 中 _on_event 与 create_repair 的 Branch 1。
 
-Subscribes the client to the per-slug event bus and forwards every
-event verbatim until disconnect.
+将客户端订阅到 per-slug 事件总线，原样转发每条事件直至断开连接。
 """
 
 from __future__ import annotations
@@ -50,7 +49,13 @@ router = APIRouter()
 
 @router.websocket("/progress/{device_slug}")
 async def progress_ws(websocket: WebSocket, device_slug: str) -> None:
-    """将 slug 对应 pipeline 的构建事件流式推送给浏览器，直到客户端断开。
+    """Step F：progress WebSocket 服务端 — 订阅 events 总线并转发给浏览器。
+
+    【在完整流程中的位置】
+      Step E  create_repair 已 return RepairResponse（HTTP 已结束）
+      Step 6  前端 new WebSocket(/pipeline/progress/{slug}) 连到本 handler
+      Step F  本函数 accept → subscribe(slug) → while True 逐条 send_text
+      Step D  并行的后台 task 持续 events.publish(slug, ev) → 本 queue 收到
 
     时序（典型新设备首次构建）：
       T0  POST /pipeline/repairs 返回 {device_slug, pipeline_started: true}

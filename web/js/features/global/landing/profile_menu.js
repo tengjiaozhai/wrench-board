@@ -1,18 +1,15 @@
-// Landing profile pill — the always-present avatar button in the cockpit's
-// top-right tools nav. Clicking it opens the profile config modal in place
-// (profile_modal.js); it never navigates away. Renders identity from
-// GET /profile and pulses when the profile is still incomplete.
+// Landing 资料 pill — 驾驶舱右上角工具栏中始终存在的头像按钮。
+// 点击后在原位打开资料配置 modal（profile_modal.js）；从不离开当前页。
+// 从 GET /profile 渲染身份信息；资料未完成时脉冲提示。
 //
-// Kept named initProfileMenu/refreshProfileMenu for the existing call sites in
-// landing/index.js.
+// 保留 initProfileMenu/refreshProfileMenu 命名，供 landing/index.js 等既有调用方使用。
 
 import { apiGet } from "../../../shared/api.js";
 import { openProfileModal } from "./profile_modal.js";
 
 function _pill() { return document.getElementById("landingProfilePill"); }
 
-// Fetch the profile and paint the pill. Returns the envelope so callers can
-// reuse it without a second request.
+// fetch profile 并绘制 pill。返回 envelope，供调用方复用而无需二次请求。
 export async function refreshProfileMenu() {
   const root = document.getElementById("landingProfile");
   const avatar = document.getElementById("landingProfileAvatar");
@@ -43,6 +40,6 @@ export function initProfileMenu() {
     ev.stopPropagation();
     openProfileModal();
   });
-  // The modal (or the onboarding step) saves and broadcasts; re-paint the pill.
+  // modal（或 onboarding 步骤）保存并广播后，重绘 pill。
   document.addEventListener("wb:profile-updated", () => refreshProfileMenu());
 }

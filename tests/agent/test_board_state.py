@@ -111,13 +111,13 @@ async def test_replay_emits_events_in_correct_order() -> None:
     sent = await replay_board_state_to_ws(ws, snapshot)
     types = [e["type"] for e in ws.events]
     assert sent == 5
-    # Order matters: layout/filter/highlights → annotations → dim last.
+    # 顺序很重要：布局/过滤器/highlights→注释→最后变暗。
     assert types[0] == "boardview.flip"
     assert types[1] == "boardview.filter"
     assert types[2] == "boardview.highlight"
     assert types[3] == "boardview.annotate"
     assert types[-1] == "boardview.dim_unrelated"
-    # Highlight payload preserves the saved color, not a hard-coded accent.
+    # 突出显示 payload pre 提供保存的颜色，而不是硬编码的 accent。
     h = next(e for e in ws.events if e["type"] == "boardview.highlight")
     assert sorted(h["refdes"]) == ["J1", "U7"]
     assert h["color"] == "warn"
@@ -146,7 +146,7 @@ async def test_replay_emits_focus_event_when_set() -> None:
     assert focus["refdes"] == "U7"
     assert focus["bbox"] == [[10, 20], [30, 40]]
     assert focus["zoom"] == 2.5
-    # Focus must come AFTER the broad highlight so it isn't clobbered.
+    # 焦点必须位于广泛的 highlight 之后，这样它就不会被破坏red。
     types = [e["type"] for e in ws.events]
     assert types.index("boardview.focus") > types.index("boardview.highlight")
 

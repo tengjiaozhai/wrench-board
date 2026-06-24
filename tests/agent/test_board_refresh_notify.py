@@ -34,7 +34,7 @@ FAKE_BOARD = SimpleNamespace(
 
 
 # --------------------------------------------------------------------------- #
-# The note itself
+# 注释本身
 # --------------------------------------------------------------------------- #
 
 def test_note_is_ctx_prefixed_and_carries_board_identity():
@@ -64,7 +64,7 @@ def test_strip_ctx_tag_drops_ctx_tag_and_note_as_one_block():
 
 
 # --------------------------------------------------------------------------- #
-# Managed forwarder — note injected on the turn after the board appears
+# Managed转发器——在board出现后在转牌圈注入注释
 # --------------------------------------------------------------------------- #
 
 def _ws_with_one_message(text: str) -> MagicMock:
@@ -89,14 +89,14 @@ def _capturing_client() -> tuple[MagicMock, list]:
 
 @pytest.mark.asyncio
 async def test_managed_forwarder_injects_note_when_board_appears(tmp_path):
-    # Import via the shim — importing the sub-module directly triggers the
-    # runtime_managed <-> forwarders import cycle in a cold process.
+    # 通过 shim 导入 — 导入子模块directly 会触发
+    # runtime_managed <-> 货运代理在冷流程中导入循环。
     from api.agent.runtime_managed import _forward_ws_to_session
 
     session_state = SessionState()
-    session_state.board = FAKE_BOARD  # type: ignore[assignment]
+    session_state.board = FAKE_BOARD  # 类型：ignore[分配ment]
     session_state.board_source = tmp_path / "iphone13.brd"
-    session_state.refresh_board_if_changed = lambda: True  # type: ignore[method-assign]
+    session_state.refresh_board_if_changed = lambda: True  # 类型：ignore[方法分配]
 
     ws = _ws_with_one_message("le board est importé")
     client, sent = _capturing_client()
@@ -112,18 +112,18 @@ async def test_managed_forwarder_injects_note_when_board_appears(tmp_path):
     text = sent[0][0]["content"][0]["text"]
     assert "board_status" in text
     assert "iphone13.brd" in text
-    # Replay paths must reconstruct the bare user message.
+    # 重播路径必须re构造bare用户消息。
     assert strip_ctx_tag(text) == "le board est importé"
 
 
 @pytest.mark.asyncio
 async def test_managed_forwarder_no_note_when_board_unchanged():
-    # Import via the shim — importing the sub-module directly triggers the
-    # runtime_managed <-> forwarders import cycle in a cold process.
+    # 通过 shim 导入 — 导入子模块directly 会触发
+    # runtime_managed <-> 货运代理在冷流程中导入循环。
     from api.agent.runtime_managed import _forward_ws_to_session
 
     session_state = SessionState()
-    session_state.refresh_board_if_changed = lambda: False  # type: ignore[method-assign]
+    session_state.refresh_board_if_changed = lambda: False  # 类型：ignore[方法分配]
 
     ws = _ws_with_one_message("salut")
     client, sent = _capturing_client()
@@ -141,8 +141,8 @@ async def test_managed_forwarder_no_note_when_board_unchanged():
 
 
 # --------------------------------------------------------------------------- #
-# Direct runtime — source-level locks (the loop is too big to harness here;
-# same discipline as test_runtime_conv_id_dispatch.py)
+# Direct runtime — 源代码级锁（循环太大，无法利用 here；
+# 与 test_runtime_conv_id_dispatch.py​​ 相同的规则）
 # --------------------------------------------------------------------------- #
 
 def test_direct_loop_refreshes_board_and_recomputes_snapshot():

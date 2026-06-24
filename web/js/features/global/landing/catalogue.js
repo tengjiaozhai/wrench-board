@@ -1,23 +1,23 @@
-// Device catalogue modal — a stepped chooser: Type → Brand → Boards → fiche.
-// A tech who doesn't know the device name drills down by device type, then
-// brand, then picks the board. A search box shortcuts straight to matching
-// boards. Launch delegates to launchFromCatalogue (index.js) so all existing
-// gating applies. DOM shell lives in index.html (#landingCatalogueBackdrop).
+// 设备目录 modal — 阶梯式选择oser：类型 → 品牌 → Boards → 文件。
+// 不知道设备名称的技术人员可以按设备类型进行深入分析，then
+// 品牌，第en选择board。搜索框快捷方式直接指向 matching
+// boards。将委托启动到 launchFromCatalogue (index.js)，以便所有现有的
+// 门控适用。 DOM shell 位于 index.html (#landingCatalogueBackdrop)。
 
 import { loadBoards } from "../../../services/deviceCatalog.js";
 import { launchFromCatalogue, DEVICE_KIND_SHORT } from "./index.js";
 import { apiGet } from "../../../shared/api.js";
 import { escapeHtml } from "../../../shared/dom.js";
 
-// Device-kind display order (type tiles render in this order). "other" sinks
-// to the bottom.
+// 设备类型的显示顺序（按 this 顺序输入图块 render）。 “其他”下沉
+// 到底部。
 const KIND_ORDER = [
   "gpu_card", "laptop_logic_board", "phone_logic_board",
   "desktop_motherboard", "sbc_board", "power_charging_board", "other",
 ];
 
-// One inline SVG glyph per device kind (16×16 viewBox, stroke=currentColor,
-// matching the workbench icon convention). Shown on the type-step tiles.
+// 每种设备类型一个内联 SVG 字形（16×16 viewBox，笔划=currentColor，
+// 匹配hing工作bench图标转换ention）。显示在类型步骤图块上。
 const KIND_ICON = {
   gpu_card: '<rect x="2" y="6" width="20" height="12" rx="1"/><circle cx="9" cy="12" r="3"/><path d="M16 9v6"/>',
   laptop_logic_board: '<rect x="4" y="5" width="16" height="11" rx="1"/><path d="M2 19h20"/>',
@@ -28,12 +28,12 @@ const KIND_ICON = {
   other: '<rect x="6" y="6" width="12" height="12" rx="1"/><path d="M9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3"/>',
 };
 
-// Sentinel for boards with no brand (taxonomy "uncategorized"). Kept out of
-// the displayed label, which falls back to a dash.
+// Sentinel 适用于没有品牌的 board（taxonomy“未分类”）。被排除在外
+// 显示的标签 which 退回到破折号。
 const NO_BRAND = "nobrand";
 
 let _devices = [];
-let _step = "type"; // type | brand | board
+let _step = "type"; // 类型 |品牌 | board
 let _kind = null;
 let _brand = null;
 let _search = "";
@@ -66,11 +66,11 @@ export function closeCatalogue() {
   if (backdrop) backdrop.hidden = true;
 }
 
-// --- data slices -----------------------------------------------------------
+// --- 数据切片 ----------------------------------------------------------
 
-// null AND the "unknown" sentinel both bucket under "other" (AUTRE). Without
-// this, an "unknown"-kind pack matches no type tile and vanishes from the
-// drill-down (it stays findable via search, but never appears under a type).
+// null 和“未知”sentinel 都位于“其他”(AUTRE) 下。没有
+// this，一个“未知”类型的包与任何类型的图块都不匹配，并从fr消失
+// 向下钻取（它仍然可以通过搜索找到，但永远不会出现在类型下）。
 const _kindOf = (d) => {
   const k = d.device_kind;
   return !k || k === "unknown" ? "other" : k;
@@ -107,17 +107,17 @@ function _searchMatches() {
     });
 }
 
-// --- rendering -------------------------------------------------------------
+// --- rendering ------------------------------------------------------------------------
 
 function _render() {
-  // Reset panel visibility — a fiche may have been open.
+  // 重置面板可见性——胶片可能是en open。
   const fiche = $("landingCatalogueFiche");
   const list = $("landingCatalogueList");
   if (fiche) { fiche.hidden = true; fiche.innerHTML = ""; }
   if (!list) return;
   list.hidden = false;
-  // #landingCatalogueKinds was the old filter row; the breadcrumb now lives
-  // at the top of the list, so keep that container empty.
+  // #landingCatalogueKinds 是旧的过滤器行； breadcrumb 现已上线
+  // 在列表顶部，因此请将该容器保留为空。
   const kinds = $("landingCatalogueKinds");
   if (kinds) kinds.innerHTML = "";
 
@@ -161,8 +161,8 @@ function _renderBrands(list) {
   const brands = _brandsForKind(_kind);
   const tiles = brands.map((b) => {
     const n = _boardsFor(_kind, b).length;
-    // Reuse the phone/other glyph as a neutral brand marker — brands have no
-    // glyph of their own; the breadcrumb already carries the type.
+    // 重复使用电话/其他字形作为中性品牌标记——品牌没有
+    // 他们自己的字形； breadcrumb already 携带类型。
     return _tileHtml("data-tile-brand", b, KIND_ICON[_kind] || KIND_ICON.other, _brandLabel(b), n);
   });
   list.innerHTML = _breadcrumbHtml() + `<div class="landing-catalogue-tiles">${tiles.join("")}</div>`;
@@ -172,9 +172,9 @@ function _cardHtml(d) {
   const draftBadge = d.complete ? "" : `<span class="landing-catalogue-badge is-draft">${escapeHtml(t("landing.catalogue.draft"))}</span>`;
   const graphBadge = d.has_electrical_graph ? `<span class="landing-catalogue-badge is-on">${escapeHtml(t("landing.catalogue.graph"))}</span>` : "";
   const brand = d.subtitle ? `<div class="landing-catalogue-card-brand">${escapeHtml(d.subtitle)}</div>` : "";
-  // Identifier line — the board's distinguishing model / board number (e.g.
-  // "A1706 / A1708", "A2289 / 820-01987-A"). This is what tells two boards of
-  // the same model apart; falls back to the form factor when version is absent.
+  // Identifier 行 — board 的区分hing 型号 / board 编号（例如
+  // “A1706 / A1708”、“A2289 / 820-01987-A”）。 This 表示两个 boards
+  // 同一型号的分开；回退到 when 版本为 absent 的外形尺寸。
   const idText = d.version || d.form_factor || "";
   const idLine = idText ? `<div class="landing-catalogue-card-id">${escapeHtml(idText)}</div>` : "";
   return `<button type="button" class="landing-catalogue-card${d.complete ? "" : " is-draft"}" role="listitem" data-slug="${escapeHtml(d.slug)}">`
@@ -199,7 +199,7 @@ function _renderSearch(list) {
   list.innerHTML = back + cards;
 }
 
-// --- fiche (unchanged contract) --------------------------------------------
+// --- 表（unchanged 合同）--------------------------------------------------------
 
 async function _openFiche(slug) {
   const d = _devices.find((x) => x.slug === slug);
@@ -212,7 +212,7 @@ async function _openFiche(slug) {
     + (d.subtitle ? `<div class="landing-catalogue-card-brand">${escapeHtml(d.subtitle)}</div>` : "");
 
   let summary = null;
-  try { summary = await apiGet(`/pipeline/packs/${encodeURIComponent(slug)}`); } catch { /* show stats-less fiche */ }
+  try { summary = await apiGet(`/pipeline/packs/${encodeURIComponent(slug)}`); } catch { /* 显示无统计数据的影片 */ }
 
   const rows = [
     ["fiche_registry", summary?.has_registry],
@@ -251,14 +251,14 @@ async function _openFiche(slug) {
   }
 }
 
-// --- navigation ------------------------------------------------------------
+// - - 导航  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -  -
 
 function _pickKind(kind) {
   _kind = kind;
   const brands = _brandsForKind(kind);
   if (brands.length <= 1) {
-    // Auto-skip the brand step when there's only one (or none) — straight to
-    // the boards. The breadcrumb still shows the brand for back-nav.
+    // 自动跳过品牌步骤 when re 只有一个（或没有） — 直接
+    // boards。 breadcrumb 仍然显示后退导航的品牌。
     _brand = brands[0] ?? null;
     _step = "board";
   } else {
@@ -287,7 +287,7 @@ function _onCrumb(step) {
   _render();
 }
 
-// One-time wiring. Called from initLanding (index.js).
+// 一-time接线。称为 from initLanding (index.js)。
 export function initCatalogue() {
   $("landingBrowseBtn")?.addEventListener("click", openCatalogue);
   $("landingCatalogueClose")?.addEventListener("click", closeCatalogue);

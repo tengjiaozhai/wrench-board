@@ -1,1 +1,1 @@
-"""Agent orchestration: Claude tool loop, system prompt assembly, streaming."""
+"""代理编排：克劳德工具循环、系统提示组装、流式传输。"""

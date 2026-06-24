@@ -1,10 +1,9 @@
-// Explanatory modal — a reusable glass dialog that explains what a feature does
-// before the user commits to it. Two topics today: "knowledge" (the + Add
-// knowledge action) and "stock" (the donor stock). Opened on a feature's first
-// use (one-shot flag) and on demand via a persistent "?" affordance.
+// 说明性 modal — 可复用的玻璃对话框，在用户承诺使用某功能前解释其作用。
+// 当前两个主题："knowledge"（+ 添加知识操作）和 "stock"（donor 库存）。
+// 在功能首次使用时打开（一次性标志），也可通过常驻「?」入口按需打开。
 //
-// Content is i18n (onboarding.info.<topic>.{title,intro,p1..p4} + onboarding.info.cta).
-// Styling reuses the .ob-* tokens in web/styles/onboarding.css.
+// 内容由 i18n 驱动（onboarding.info.<topic>.{title,intro,p1..p4} + onboarding.info.cta）。
+// 样式复用 web/styles/onboarding.css 中的 .ob-* token。
 
 import { t } from "./i18n.js";
 

@@ -82,7 +82,7 @@ def test_append_is_noop_without_repair_id(tmp_path, monkeypatch):
         event={"role": "user", "content": "Pas de son"},
         memory_root=tmp_path,
     )
-    # Nothing should have been written under demo-pi/repairs/.
+    # 不是hing应该是demo-pi/repairs/下的en写en。
     assert not (tmp_path / "demo-pi" / "repairs").exists()
 
 
@@ -102,8 +102,8 @@ def test_append_is_noop_when_backend_not_jsonl(tmp_path, monkeypatch):
 def test_load_skips_malformed_lines(tmp_path, monkeypatch):
     monkeypatch.setenv("CHAT_HISTORY_BACKEND", "jsonl")
     monkeypatch.setenv("MEMORY_ROOT", str(tmp_path))
-    # Seed a conversation-scoped messages.jsonl directly (legacy migration is
-    # covered in test_conversations.py — here we just test the load path).
+    # 播种对话范围的消息。jsonl directly（旧版迁移是
+    # test_conversations.py 中的 covered — 他re我们只是测试load路径）。
     conv_id = _ensure_conv(tmp_path)
     d = tmp_path / "demo-pi" / "repairs" / "r1" / "conversations" / conv_id
     d.mkdir(parents=True, exist_ok=True)
@@ -117,13 +117,13 @@ def test_load_skips_malformed_lines(tmp_path, monkeypatch):
         device_slug="demo-pi", repair_id="r1", conv_id=conv_id,
         memory_root=tmp_path,
     )
-    assert len(events) == 2  # middle line dropped
+    assert len(events) == 2  # 中线掉了
 
 
 def test_touch_status_updates_metadata(tmp_path, monkeypatch):
     monkeypatch.setenv("CHAT_HISTORY_BACKEND", "jsonl")
     monkeypatch.setenv("MEMORY_ROOT", str(tmp_path))
-    # Seed a metadata file like /pipeline/repairs creates.
+    # 播种元数据文件，例如 /pipeline/repairs creates。
     repairs_dir = tmp_path / "demo-pi" / "repairs"
     repairs_dir.mkdir(parents=True)
     meta_path = repairs_dir / "r1.json"
@@ -149,7 +149,7 @@ def test_touch_status_updates_metadata(tmp_path, monkeypatch):
 
 def test_touch_status_noop_when_file_missing(tmp_path, monkeypatch):
     monkeypatch.setenv("MEMORY_ROOT", str(tmp_path))
-    # Should not raise.
+    # 不应提高。
     touch_status(
         device_slug="nobody",
         repair_id="never",
@@ -185,14 +185,14 @@ def test_cost_persists_alongside_event(tmp_path, monkeypatch):
         memory_root=tmp_path,
     )
 
-    # load_events (legacy) still returns just events.
+    # load_events（旧版）仍然re仅变成events。
     plain = load_events(
         device_slug="demo-pi", repair_id="r1", conv_id=conv_id, memory_root=tmp_path
     )
     assert len(plain) == 2
     assert plain[0]["role"] == "user"
 
-    # load_events_with_costs surfaces per-record cost.
+    # load_events_with_costs 每个re线 cost 个表面。
     records = load_events_with_costs(
         device_slug="demo-pi", repair_id="r1", conv_id=conv_id, memory_root=tmp_path,
     )
@@ -224,7 +224,7 @@ def test_save_and_load_ma_session_id_per_tier(tmp_path, monkeypatch):
 
     conv_id = _ensure_conv(tmp_path)
 
-    # Legacy top-level ma_session_id is IGNORED by the new loader.
+    # 旧的顶级 ma_session_id 被新的 loader 忽略。
     assert load_ma_session_id(
         device_slug="demo-pi", repair_id="r1", conv_id=conv_id, tier="fast",
         memory_root=tmp_path,
@@ -274,10 +274,10 @@ def test_build_ctx_tag_includes_label_and_initial_complaint(tmp_path):
     tag = build_ctx_tag(
         device_slug="iphone-x", repair_id="r42", memory_root=tmp_path
     )
-    # Wording is deliberately passive — `initial_complaint` (not `symptom`)
-    # and quoted so the agent reads it as intake-sheet metadata, not as a
-    # fresh symptom declaration that would re-trigger
-    # mb_get_rules_for_symptoms.
+    # 措辞故意是被动的——“initial_complaint”（不是“symptom”）
+    # 并引用，因此 agent re 将其广告为摄入表元数据，而不是作为
+    # fresh symptom 会触发 re 的声明
+    # mb_get_rules_for_symptoms。
     assert (
         tag
         == '[ctx · device=iPhone X (iphone-x) · initial_complaint="pas de boot, écran noir"]'
@@ -288,7 +288,7 @@ def test_build_ctx_tag_falls_back_to_slug_when_no_meta(tmp_path):
     tag = build_ctx_tag(
         device_slug="iphone-x", repair_id="r-missing", memory_root=tmp_path
     )
-    # No meta file → label defaults to slug, no initial_complaint segment.
+    # 无元文件→标签默认为slug，无initial_complaint segment。
     assert tag == "[ctx · device=iphone-x (iphone-x)]"
 
 
@@ -326,8 +326,8 @@ def test_strip_ctx_tag_returns_empty_on_tag_only():
     assert strip_ctx_tag("[ctx · device=foo]") == ""
 
 
-# `_strip_intro_wrapper` was removed when the layered MA memory architecture
-# replaced the LLM-driven session-resume summary path (2026-04-26). The
-# function it tested no longer exists; the agent now self-orients from the
-# per-repair scribe mount, and there's no longer a Haiku summarization that
-# needs the prior intro stripped from transcript lines.
+# `_strip_intro_wrapper` 被re移动到en层red MA内存弧hitecture
+# re放置了LLM-driveen会话-resume summary路径（2026-04-26）。这
+# 它测试的功能不再存在； agent 现在自行ents from
+# 每repair划线安装，并且re不再是Haikusummarization
+# 需要先删除 from 转录行。

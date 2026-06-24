@@ -1,10 +1,9 @@
-"""Helper for tracking fire-and-forget mirror tasks spawned from a managed
-diagnostic session.
+"""用于跟踪从托管生成的 fire-and-forget 镜像任务的帮助程序
+诊断会议。
 
-Lifted out of ``runtime_managed.py`` so the dispatch surface
-(``tool_dispatch.py``) and the runtime can both reference it without forming
-an import cycle. Behaviour is unchanged from the original in-line definition.
-"""
+从``runtime_managed.py`` so the dispatch surface
+(``tool_dispatch.py``中取出）并且运行时可以引用它而无需形成
+一个导入周期。行为与原始内联定义相比没有变化。"""
 
 from __future__ import annotations
 
@@ -19,13 +18,12 @@ logger = logging.getLogger("wrench_board.agent.managed")
 
 
 class SessionMirrors:
-    """Tracks fire-and-forget mirror tasks and awaits them on session close.
+    """跟踪 fire-and-forget 镜像任务并在会话关闭时等待它们。
 
-    Used by the managed runtime to make sure ``mb_validate_finding``'s
-    fire-and-forget MA-store mirror, the ``cam_capture`` round-trip, and the
-    auto-seed re-upload are not orphaned by a fast WebSocket disconnect. The
-    drain timeout is read from ``settings.ma_session_drain_timeout_seconds``.
-    """
+    由托管运行时用来确保``mb_validate_finding``'s
+    ⟦PRESERVE0⟧ MA-store mirror, the ``⟦PRESERVE1⟧`` round-trip, and the
+    auto-seed re-upload are not orphaned by a fast ⟦PRESERVE2⟧ disconnect. The
+    drain timeout is read from ``settings.ma_session_drain_timeout_seconds``。"""
 
     def __init__(self) -> None:
         self._pending: set[asyncio.Task] = set()

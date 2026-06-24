@@ -21,5 +21,4 @@ byte payload blocks inside the pin record extension are still opaque
 and likely carry the net id. Currently every pin lands on a catch-all
 `__unmapped__` carrier net; the device-specific net *names* (`+12V`,
 `GND`, `PCIE_RX`, …) are still surfaced in `Board.nets` for the agent
-to grep against.
-"""
+to grep against."""

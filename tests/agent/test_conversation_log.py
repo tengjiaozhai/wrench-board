@@ -42,7 +42,7 @@ async def test_session_log_is_owner_scoped(tmp_path: Path, monkeypatch):
     a = list_session_logs(device_slug="demo-pi", memory_root=tmp_path, owner_ref="tenant-a")
     assert len(a) == 1 and a[0]["repair_id"] == "R1"
     assert list_session_logs(device_slug="demo-pi", memory_root=tmp_path, owner_ref="tenant-b") == []
-    assert list_session_logs(device_slug="demo-pi", memory_root=tmp_path) == []  # standalone view isolated
+    assert list_session_logs(device_slug="demo-pi", memory_root=tmp_path) == []  # 孤立的独立视图
 
 
 async def test_record_writes_markdown_file(tmp_path: Path, monkeypatch):
@@ -125,7 +125,7 @@ async def test_ma_mirror_invoked_when_flag_on(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MA_MEMORY_STORE_ENABLED", "true")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
 
-    # Patch the two MA helpers so we don't hit the network.
+    # 修补两个 MA 助手，这样我们就不会 hi net 工作。
     from api.agent import conversation_log as mod
 
     fake_store_id = "memstore_TESTID"
@@ -155,12 +155,12 @@ async def test_list_returns_newest_first(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MA_MEMORY_STORE_ENABLED", "false")
     common = dict(client=None, device_slug="demo-pi", symptom="x", memory_root=tmp_path)
     await record_session_log(**common, repair_id="R1", conv_id="c1", outcome="resolved")
-    # tiny sleep substitute: re-call with a different conv to get a second file
+    # 微小的睡眠替代品：re-使用不同的ent 转换来获取第二个文件
     await record_session_log(**common, repair_id="R2", conv_id="c1", outcome="paused")
 
     rows = list_session_logs(device_slug="demo-pi", memory_root=tmp_path)
     assert len(rows) == 2
-    # both present, sorted desc by created_at — at least the keys are intact
+    # 两个 present，按 created_at 排序 - 至少键 are 完好无损
     outcomes = {r["outcome"] for r in rows}
     assert outcomes == {"resolved", "paused"}
     repairs = {r["repair_id"] for r in rows}

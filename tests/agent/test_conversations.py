@@ -223,7 +223,7 @@ def test_ensure_none_picks_most_recently_touched(tmp_path: Path) -> None:
         device_slug=SLUG, repair_id=REPAIR, tier="fast",
         memory_root=tmp_path,
     )
-    # Simulate real activity on the older-started conv, none on the newer.
+    # 在较早开始的转换上模拟 real 活动，在较新的转换上模拟 real 活动。
     touch_conversation(
         device_slug=SLUG, repair_id=REPAIR, conv_id=older_started,
         cost_usd=0.01, memory_root=tmp_path,
@@ -234,7 +234,7 @@ def test_ensure_none_picks_most_recently_touched(tmp_path: Path) -> None:
     )
     assert resolved == older_started
     assert created is False
-    # Sanity: the empty newer one is still in the index, just not the default.
+    # 理智：空的较新的仍在索引中，只是不是默认值。
     convs = list_conversations(
         device_slug=SLUG, repair_id=REPAIR, memory_root=tmp_path
     )
@@ -248,7 +248,7 @@ def test_ensure_pending_does_not_write(tmp_path: Path) -> None:
         memory_root=tmp_path, materialize=False,
     )
     assert resolved and created is True
-    # No index, no conv dir — pending convs are in-memory only.
+    # 没有索引，没有转换目录 - pending 转换 are 仅在内存中。
     assert list_conversations(
         device_slug=SLUG, repair_id=REPAIR, memory_root=tmp_path
     ) == []
@@ -272,7 +272,7 @@ def test_ensure_pending_then_materialize(tmp_path: Path) -> None:
         device_slug=SLUG, repair_id=REPAIR, memory_root=tmp_path
     )
     assert len(convs) == 1 and convs[0]["id"] == resolved
-    # Idempotent — second call is a no-op.
+    # Idempotent — 第二次调用是no-op。
     written_again = materialize_conversation(
         device_slug=SLUG, repair_id=REPAIR, conv_id=resolved, tier="fast",
         memory_root=tmp_path,
@@ -298,8 +298,8 @@ def test_ensure_pending_uses_active_when_index_exists(tmp_path: Path) -> None:
 
 
 def test_migration_legacy_messages_jsonl(tmp_path: Path) -> None:
-    # Set up a legacy repair: messages.jsonl sitting at the repair root,
-    # no conversations/ subtree yet.
+    # Set 继承repair：消息。jsonl 位于repair根，
+    # 还没有conversations/ subtree。
     repair_dir = _repair_root(tmp_path)
     repair_dir.mkdir(parents=True, exist_ok=True)
     legacy = repair_dir / "messages.jsonl"
@@ -307,18 +307,18 @@ def test_migration_legacy_messages_jsonl(tmp_path: Path) -> None:
         '{"ts":"2026-04-22T10:00:00Z","event":{"role":"user","content":"legacy hello"}}\n'
         '{"ts":"2026-04-22T10:00:05Z","event":{"role":"assistant","content":"legacy reply"}}\n'
     )
-    # ensure_conversation(None, ...) should migrate and return the migrated id.
+    # ensure_conversation(None, ...) 应该迁移并 re 转换迁移的 id。
     resolved, created = ensure_conversation(
         device_slug=SLUG, repair_id=REPAIR, conv_id=None, tier="fast",
         memory_root=tmp_path,
     )
     assert resolved
-    # Not a freshly created empty conv — it's the migrated one.
+    # 不是 freshly created 空转换 — 这是迁移后的转换。
     assert created is True
     events = load_events(
         device_slug=SLUG, repair_id=REPAIR, conv_id=resolved,
         memory_root=tmp_path,
     )
     assert [e["content"] for e in events] == ["legacy hello", "legacy reply"]
-    # Legacy file removed or preserved? Spec says keep for safety; check not crashed.
-    # We don't assert on legacy existence — the migration may leave it or move it.
+    # 旧文件re已移动或pre已提供？规格说明保留以确保安全；检查没有崩溃。
+    # 我们不断言遗留存在ence——迁移可能会留下它或移动它。

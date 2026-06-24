@@ -1,7 +1,6 @@
 // web/js/shared/dom.js
-// Shared DOM/string utilities. Single source of truth for the helpers that
-// were duplicated across the feature modules (~10 escapeHtml variants,
-// prettifySlug ×2, relative-time).
+// 共享 DOM/字符串工具。各 feature 模块中重复实现的单一来源
+//（约 10 种 escapeHtml 变体、prettifySlug ×2、relative-time）。
 
 export function escapeHtml(s) {
   if (s == null) return "";
@@ -14,16 +13,15 @@ export function escapeHtml(s) {
   })[c]);
 }
 
-// COPIE VERBATIM du corps de router.js::prettifySlug (l'implémentation
-// exportée, canonique).
+// router.js::prettifySlug 函数体的逐字拷贝（导出版本，canonical）。
 export function prettifySlug(slug) {
   if (!slug) return "";
   return slug.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
 }
 
-// COPIE VERBATIM du corps de home.js::relativeTimeFr (web/js/home.js).
-// Renommé relativeTime (le comportement FR reste identique). Dépend des
-// globaux window.t / window.i18n (câblés par i18n.js), comme dans home.js.
+// home.js::relativeTimeFr（web/js/home.js）函数体的逐字拷贝。
+// 重命名为 relativeTime（法语行为不变）。依赖全局 window.t / window.i18n
+//（由 i18n.js 接线），与 home.js 相同。
 export function relativeTime(isoString) {
   if (!isoString) return "…";
   const then = new Date(isoString);

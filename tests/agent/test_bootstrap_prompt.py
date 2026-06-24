@@ -18,12 +18,12 @@ def test_system_prompt_has_layered_memory_block():
     device + repair) and the scribe discipline for the per-repair mount."""
     mod = _load_bootstrap_module()
     prompt = mod.SYSTEM_PROMPT
-    # 4 layers must be named so the agent knows what to grep where.
+    # 必须命名 4 个层，以便 agent 知道rep re 的内容。
     assert "/mnt/memory/" in prompt
     assert "global-patterns" in prompt
     assert "global-playbooks" in prompt
     assert "scribe" in prompt.lower()
-    # Must NOT mention the deprecated tool / mode.
+    # 不得移动ention 指定的recat 工具/模式。
     assert "mb_list_findings" not in prompt
     assert "Mode disk-only" not in prompt
 

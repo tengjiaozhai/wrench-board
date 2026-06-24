@@ -1,20 +1,20 @@
-// Camera picker + capture helpers for the LLM panel head.
+// LLM 面板头的相机选择器 + capture 助手。
 //
-// Uses a custom chip+popover dropdown (cohérent avec .llm-tier-chip) so
-// the look matches the rest of the panel — the native <select> renders
-// with the OS default which is jarring on the dark theme.
+// 使用自定义 chip+popover 下拉菜单 (cohérent avec .llm-tier-chip)
+// 外观与面板的 rest 相匹配 - 原生 <select> renders
+// 操作系统默认的 which 在黑暗主题上是不和谐的。
 //
-// Public surface :
-//   - initCameraPicker(onChange) — wires the chip + popover, populates
-//     from enumerateDevices(), restores the previous selection from
-//     localStorage. `onChange(deviceId, label)` fires every time the
-//     tech picks a different device (or "— aucune —").
-//   - selectedCameraDeviceId / selectedCameraLabel — read picker state
-//   - isCameraAvailable — gate the capabilities frame
-//   - captureFrame({deviceId, mime, quality}) → Blob — Flow B snap. If
-//     camera_preview is open and on the same device, draws from its
+// 公共表面：
+//   - initCameraPicker(onChange) — wires chip + popover，填充
+//     from enumerateDevices(), restores pre前一个选择 from
+//     localStorage。 `onChange(deviceId, label)` fire 每time
+//     技术人员选择了不同的ent设备（或“— aucune —”）。
+//   - selectedCameraDeviceId / selectedCameraLabel — re广告选择器状态
+//   - isCameraAvailable — 控制功能 frame
+//   - captureFrame({deviceId, mime,quality}) → Blob — Flow B 快照。如果
+//     camera_preview 是 open 并在同一设备上绘制 from
 //     live <video> instead of opening a second getUserMedia.
-//   - blobToBase64(Blob) → string
+//   - blobToBase64(Blob) → 字符串
 
 import { captureFromPreview, isPreviewOpen } from './camera_preview.js';
 
@@ -65,7 +65,7 @@ function _renderPopover() {
 
 function _setSelected(id) {
   _selectedDeviceId = id || '';
-  try { localStorage.setItem(LS_KEY, _selectedDeviceId); } catch (_) { /* quota */ }
+  try { localStorage.setItem(LS_KEY, _selectedDeviceId); } catch (_) { /* 配额 */ }
   _renderChipLabel();
   _renderPopover();
   if (_onChangeCb) _onChangeCb(_selectedDeviceId, selectedCameraLabel());
@@ -77,14 +77,14 @@ export async function initCameraPicker(onChange) {
   const popover = document.getElementById('cameraPopover');
   if (!chip || !popover) return;
 
-  // Trigger a perm prompt to unlock device labels. Without granted
-  // permission, enumerateDevices returns empty labels.
+  // 触发永久提示以解锁设备标签。未经许可
+  // 许可，enumerateDevicesre转空标签。
   try {
     const probe = await navigator.mediaDevices.getUserMedia({ video: true });
     probe.getTracks().forEach((t) => t.stop());
   } catch (_) {
-    // Permission denied or no camera — labels will be empty but the
-    // picker still works (blank options) and the user can re-grant later.
+    // 权限已enied或没有相机 - 标签将为空，但
+    // 选择器仍然有效（空白选项），并且用户可以稍后 re 授予。
   }
 
   await refreshDevices();
@@ -95,16 +95,16 @@ export async function initCameraPicker(onChange) {
     window.i18n.onChange(() => { _renderChipLabel(); _renderPopover(); });
   }
 
-  // Restore previous selection if still present.
+  // 如果仍然是 present，则恢复re pre之前的选择。
   let saved = '';
-  try { saved = localStorage.getItem(LS_KEY) || ''; } catch (_) { /* ignore */ }
+  try { saved = localStorage.getItem(LS_KEY) || ''; } catch (_) { /* 忽略re */ }
   if (saved && _cachedDevices.some((d) => d.deviceId === saved)) {
     _selectedDeviceId = saved;
   }
   _renderChipLabel();
   _renderPopover();
 
-  // Chip toggles popover.
+  // Chip 切换popover。
   chip.addEventListener('click', (e) => {
     e.stopPropagation();
     const open = !popover.hidden;
@@ -116,7 +116,7 @@ export async function initCameraPicker(onChange) {
       chip.setAttribute('aria-expanded', 'true');
     }
   });
-  // Popover delegated click on a menuitem button.
+  // 弹出窗口将 click 委托给 menuitem 按钮。
   popover.addEventListener('click', (e) => {
     const btn = e.target.closest('button[data-device-id]');
     if (!btn) return;
@@ -124,7 +124,7 @@ export async function initCameraPicker(onChange) {
     popover.hidden = true;
     chip.setAttribute('aria-expanded', 'false');
   });
-  // Outside-click + Escape close.
+  // 外侧-click + Escape close。
   document.addEventListener('click', (e) => {
     if (popover.hidden) return;
     if (popover.contains(e.target) || chip.contains(e.target)) return;
@@ -142,7 +142,7 @@ export async function initCameraPicker(onChange) {
 async function refreshDevices() {
   const all = await navigator.mediaDevices.enumerateDevices();
   _cachedDevices = all.filter((d) => d.kind === 'videoinput');
-  // If the previously-selected device just disappeared, downgrade.
+  // 如果 pre先前选择的设备刚刚消失red，则降级。
   if (_selectedDeviceId && !_cachedDevices.some((d) => d.deviceId === _selectedDeviceId)) {
     _setSelected('');
     return;
@@ -164,8 +164,8 @@ export function isCameraAvailable() {
 }
 
 export async function captureFrame({ deviceId, mime = 'image/jpeg', quality = 0.92 }) {
-  // If the live preview is open on the same device, snap from its
-  // existing stream instead of paying another getUserMedia.
+  // 如果实时 pre 视图是同一设备上的 open，则捕捉 fr 其
+  // 现有 stream 而不是支付另一个getUserMedia。
   if (isPreviewOpen()) {
     const blob = await captureFromPreview(mime, quality);
     if (blob) return blob;

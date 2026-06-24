@@ -11,8 +11,7 @@ A ContextVar (not a module global) so concurrent sessions — each a separate
 asyncio task per WS connection — stay isolated: ``asyncio.create_task`` copies the
 context, so child tasks of a session inherit the owner set at its top, while a
 different session's task carries its own value. The engine treats owner_ref as an
-opaque key; the cloud is the gatekeeper that authenticated it.
-"""
+opaque key; the cloud is the gatekeeper that authenticated it."""
 
 from __future__ import annotations
 
@@ -22,10 +21,10 @@ _owner_ref: ContextVar[str | None] = ContextVar("agent_owner_ref", default=None)
 
 
 def set_owner_ref(ref: str | None) -> None:
-    """Bind the current diagnostic session to its tenant (call once, at the top)."""
+    """将当前诊断会话绑定到其租户（在顶部调用一次）。"""
     _owner_ref.set(ref or None)
 
 
 def current_owner_ref() -> str | None:
-    """The tenant owning the current session, or None (standalone / self-host)."""
+    """拥有当前会话的租户，或无（独立/self-host）。"""
     return _owner_ref.get()

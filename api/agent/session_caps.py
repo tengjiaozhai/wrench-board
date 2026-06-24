@@ -1,21 +1,19 @@
-"""Per-session plan capabilities for the diagnostic agent.
+"""诊断代理的每会话计划功能。
 
-The multi-tenant cloud front-door is the only gatekeeper for money/plan logic
-(the public engine holds no such logic). For capabilities that depend on the
-tenant's PLAN — today only ``can_expand`` (may the agent trigger a paid
-``mb_expand_knowledge`` pack enrichment?) — the cloud signals its verdict on the
-diagnostic WS handshake via the ``X-Wb-Can-Expand`` header, and the engine reads
+multi-tenant 云前门是资金/计划逻辑的唯一看门人
+（公共引擎没有这样的逻辑）。对于依赖于的功能
+租户的计划——仅限今天``can_expand`` (may the agent trigger a paid
+``⟦PRESERVE0⟧`` pack enrichment?) — the cloud signals its verdict on the
+diagnostic ⟦PRESERVE6⟧ handshake via the ``X-Wb-Can-Expand`` header, and the engine reads
 it here.
 
-Mirrors ``owner_ref`` exactly (a ContextVar, not a module global, so concurrent
-WS sessions stay isolated — ``asyncio.create_task`` copies the context). The
+Mirrors ``⟦PRESERVE3⟧`⟦PRESERV E14⟧`⟦PRESERVE4⟧.create_task`` copies the context). The
 engine treats the value as opaque policy decided by the cloud.
 
-Default ``True`` so STANDALONE / SELF-HOST (no cloud, header absent) keeps full
-capability — a self-hoster can always enrich their own pack, today's behaviour.
-The cloud always sends an explicit ``true``/``false``; a missing header therefore
-means "not behind the cloud" → unrestricted.
-"""
+Default ``True`` so STANDALONE / SELF-⟦PRESERVE5⟧ (no cloud, header absent) keeps full
+capability — a ⟦PRESERVE2⟧er can always enrich their own pack, today's behaviour.
+The cloud always sends an explicit ``true``/``false``；因此缺少标头
+意思是“不在云后面”→不受限制。"""
 
 from __future__ import annotations
 
@@ -25,10 +23,10 @@ _can_expand: ContextVar[bool] = ContextVar("agent_can_expand", default=True)
 
 
 def set_can_expand(value: bool) -> None:
-    """Bind the current diagnostic session's expand capability (call once, top)."""
+    """绑定当前诊断会话的扩展能力（调用一次，置顶）。"""
     _can_expand.set(bool(value))
 
 
 def current_can_expand() -> bool:
-    """True when the current session's plan may trigger pack enrichment."""
+    """当当前会话的计划可能触发包丰富时为真。"""
     return _can_expand.get()

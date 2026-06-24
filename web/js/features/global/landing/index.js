@@ -1,15 +1,34 @@
-// Landing hero — captures {device_label, symptom}, kicks the existing
-// /pipeline/repairs endpoint, and renders a live narrated timeline of the
-// pipeline phases as the agent learns the device. When the pipeline finishes
-// (or the pack was already on disk) the page redirects into the workspace
-// at ?repair={id}&device={slug}.
+// Landing 首页 — 「开始诊断」完整流程（HTTP + progress WebSocket）
 //
-// No classifier here — the existing pipeline (Scout → Registry → Mapper? →
-// Writers ×3 → Auditor) does device identification + knowledge construction
-// in one shot. The orchestrator emits live `phase_step` events from inside
-// each phase (Scout rounds, schematic pages, each writer completing, audit
-// rounds); we render those into each timeline row's live line + a collapsible
-// "détail" log so the technician watches the agent work in real time.
+// ┌─ 前端（本文件 + pipelineSocket.js）──────────────────────────────────────┐
+// │ Step 1  用户点「开始诊断」→ submitDiagnostic() → _launchDiagnostic()      │
+// │ Step 2  fetch POST /pipeline/repairs  （HTTP 短连接，~474 行）            │
+// │ Step 3  repair = await res.json()    （HTTP 结束，读 RepairResponse）     │
+// │ Step 4  若 pipeline_started=false → goToWorkspace，流程结束              │
+// │ Step 5  若 pipeline_started=true  → subscribeToProgress(slug) (~547)   │
+// │ Step 6  connectProgress → new WebSocket(/pipeline/progress/{slug})       │
+// │ Step 7  handleProgressEvent 消费 WS 帧，更新 landing timeline            │
+// │ Step 8  pipeline_finished → goToWorkspace(repair_id, slug)               │
+// └──────────────────────────────────────────────────────────────────────────┘
+//
+// ┌─ 后端（repairs.py + events.py + progress.py + orchestrator）─────────────┐
+// │ Step A  @router.post create_repair 接收 HTTP                              │
+// │ Step B  persist repair → 判断 pack_complete → Branch 0/1/2/3            │
+// │ Step C  Branch 1: create_task(_launch) → _run_pipeline_with_events       │
+// │ Step D  orchestrator emit → events.publish(slug, ev)                      │
+// │ Step E  return RepairResponse（HTTP 响应发出，连接关闭）                    │
+// │ Step F  progress_ws: subscribe(slug) → while True 转发 event 给浏览器      │
+// └──────────────────────────────────────────────────────────────────────────┘
+//
+// slug = device_slug，是 HTTP 响应与 progress WS 的唯一 join key。
+// 响应体字段详解：api/pipeline/models.py :: RepairResponse
+//
+// 此处无独立分类器 — 现有 pipeline（Scout → Registry → Mapper? →
+// Writers ×3 → Auditor）一次性完成设备识别与知识构建。
+// orchestrator 在各阶段内部发出实时 `phase_step` 事件
+//（Scout 轮次、原理图页、各 writer 完成、审计轮次）；
+// 前端将其渲染到各 timeline 行的实时行 + 可折叠「détail」日志，
+// 让技师实时观看 agent 工作。
 
 import { mountMascot, setMascotState } from '../../../mascot.js';
 import { prettifySlug, repairHash, seedSlugForRepair } from '../../../router.js';
@@ -40,26 +59,26 @@ const STATUS_NEUTRAL = "";
 const STATUS_LOADING = "loading";
 const STATUS_ERROR = "error";
 
-// Short device-kind codes for the suggest chip — not i18n'd (compact mono
-// codes, same in every locale). Mirrors the backend device_kind enum.
+// 建议芯片上的设备类型简码 — 不做 i18n（紧凑等宽码，各语言相同）。
+// 与后端 device_kind 枚举对应。
 export const DEVICE_KIND_SHORT = { gpu_card:"GPU", laptop_logic_board:"PORTABLE", phone_logic_board:"TÉLÉPHONE", desktop_motherboard:"BUREAU", sbc_board:"SBC", power_charging_board:"ALIM", other:"AUTRE" };
 
 let isSubmitting = false;
 let progressConn = null;
 let _landingMascot = null;
-// Set by the pre-flight modal's email checkbox (cloud only); read after the
-// repair is created to arm the "email me when ready" opt-in. Reset per launch.
+// 由预检弹窗的邮件复选框设置（仅 cloud）；repair 创建后读取以启用
+//「完成后邮件通知」选项。每次启动时重置。
 let _preflightNotifyOptIn = false;
-// Whether the CURRENT progress subscription navigates into the workspace when
-// the build finishes. True for a fresh submit and an explicit tile-resume click;
-// false for a passive resume-on-load (we don't want to yank a browsing tech).
+// 当前 progress 订阅在构建完成时是否自动进入工作区。
+// 全新提交或显式点击瓦片恢复时为 true；
+// 被动加载恢复时为 false（避免打断正在浏览的技师）。
 let _autoNavOnFinish = true;
-// Set true while a build is parked on a device-kind disagreement
-// (pipeline_paused / needs_kind_confirmation). The build coroutine returns
-// deliberately and the WS closes — we must NOT treat that close as a failure.
+// 构建因设备类型分歧暂停时设为 true
+//（pipeline_paused / needs_kind_confirmation）。构建协程故意返回且 WS 关闭 —
+// 不得将此关闭视为失败。
 let _landingPaused = false;
-// Active slug/rid for the in-flight build. Stored at (re)subscribe time so
-// confirmLandingKind can re-subscribe to the fresh build on the same slug.
+// 进行中构建的活跃 slug/rid。（重新）订阅时存储，以便 confirmLandingKind
+// 在同一 slug 上重新订阅新构建。
 let _activeSlug = null;
 let _activeRid = null;
 
@@ -68,21 +87,21 @@ function setLandingMascot(state) {
   setMascotState(_landingMascot, state);
 }
 
-// Date formatter follows the active i18n locale (driven by profile.reply_language
-// since commit 548ed20 dropped the topbar switch). Re-derived lazily so we
-// pick up locale changes mid-session without a page reload.
+// 日期格式化跟随当前 i18n 区域（由 profile.reply_language 驱动，
+// 自 commit 548ed20 移除顶栏切换后）。惰性重算以便会话中途
+// 切换语言无需刷新页面。
 function _landingDateFmt() {
   const locale = (i18n && i18n.locale) || 'en';
-  // Map our short locale codes to BCP-47 region tags Intl expects.
+  // 将短区域码映射为 Intl 所需的 BCP-47 区域标签。
   const bcp47 = locale === 'fr' ? 'fr-FR' : 'en-US';
   return new Intl.DateTimeFormat(bcp47, {
     day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
   });
 }
 
-// Mobile drawer (≤999px): the recent-repairs sidebar slides in from the left,
-// opened by #landingRepairsToggle. On desktop the sidebar is a persistent
-// column and these are inert (the toggle/backdrop are display:none via CSS).
+// 移动端抽屉（≤999px）：最近维修侧栏从左滑入，
+// 由 #landingRepairsToggle 打开。桌面端侧栏为固定列，
+// 这些控件无效（toggle/backdrop 经 CSS display:none 隐藏）。
 function openRepairsDrawer() {
   document.getElementById("landing-overlay")?.classList.add("sidebar-open");
   const bd = document.getElementById("landingSidebarBackdrop");
@@ -112,12 +131,12 @@ async function loadAndRenderSidebar() {
   }
   if (!repairs || repairs.length === 0) {
     sidebar.hidden = true;
-    if (toggle) toggle.hidden = true;   // nothing to open → hide the mobile trigger
+    if (toggle) toggle.hidden = true;   // 无内容可打开 → 隐藏移动端触发器
     closeRepairsDrawer();
     return;
   }
 
-  // Most recent first.
+  // 最新的排在最前。
   repairs.sort((a, b) => {
     const ta = new Date(a.created_at).getTime() || 0;
     const tb = new Date(b.created_at).getTime() || 0;
@@ -135,21 +154,19 @@ async function loadAndRenderSidebar() {
     const li = document.createElement("li");
     li.className = "landing-sidebar-item";
 
-    // Pack build state of this repair's device (from _build_state.json via the
-    // listing). Only the non-ready states get a tile badge — 'complete'/null is
-    // the normal case and stays unbadged.
+    // 该 repair 对应设备的 pack 构建状态（来自列表接口的 _build_state.json）。
+    // 仅非就绪状态显示瓦片徽章 — 'complete'/null 为正常情况，不显示徽章。
     const bs = r.build_state;
     const badged = bs === "building" || bs === "failed" || bs === "paused";
     if (badged) li.classList.add(`is-${bs}`);
 
     const a = document.createElement("a");
     a.className = "landing-sidebar-link";
-    seedSlugForRepair(r.repair_id, r.device_slug);   // known slug — keep nav synchronous
+    seedSlugForRepair(r.repair_id, r.device_slug);   // 已知 slug — 保持导航同步
     a.href = repairHash(r.repair_id, "diagnostic");
     if (bs === "building") {
-      // A building tile routes to the LIVE timeline (resume), not the workspace
-      // whose pack isn't ready yet. autoNav: an explicit click means "I want to
-      // watch this", so navigate into the device when it finishes.
+      // 构建中的瓦片跳转到实时 timeline（恢复），而非 pack 尚未就绪的工作区。
+      // autoNav：显式点击表示「我要观看」，构建完成时自动进入设备。
       a.title = tFn("landing.sidebar.locked_hint");
       a.setAttribute("aria-label", tFn("landing.sidebar.resume_aria"));
       a.addEventListener("click", (ev) => {
@@ -158,7 +175,7 @@ async function loadAndRenderSidebar() {
         resumeBuild(r.device_slug, r.repair_id, { autoNav: true });
       });
     } else {
-      a.addEventListener("click", closeRepairsDrawer);  // close the mobile drawer on navigation
+      a.addEventListener("click", closeRepairsDrawer);  // 导航时关闭移动端抽屉
       if (bs === "failed" || bs === "paused") a.title = tFn(`landing.sidebar.state_${bs}`);
     }
 
@@ -209,19 +226,18 @@ async function loadAndRenderSidebar() {
     list.appendChild(li);
   }
   sidebar.hidden = false;
-  if (toggle) toggle.hidden = false;   // repairs exist → expose the mobile trigger
+  if (toggle) toggle.hidden = false;   // 有维修记录 → 显示移动端触发器
 
-  // A build was in flight when the page (re)loaded → resume its live timeline so
-  // a refresh mid-build doesn't lose the progress view. Passive (autoNav off) so
-  // a finish doesn't yank a tech who reopened the landing to start another job.
+  // 页面（重新）加载时若有进行中的构建 → 被动恢复其实时 timeline，
+  // 避免构建中途刷新丢失进度视图。autoNav 关闭以免打断
+  // 重新打开 landing 准备开新工单的技师。
   maybeResumeActiveBuild(repairs);
 }
 
-// Build a human-readable Error from a failed Response. Prefers the structured
-// error message when the backend sent one (the cloud front-door's
-// {error:{message}} gates, FastAPI's {detail:...}) — a raw JSON body in a
-// status line reads as a bug to the technician. Non-JSON bodies keep the raw
-// `HTTP <status> <body>` line (still the most useful thing to show).
+// 从失败的 Response 构建可读 Error。优先使用后端结构化错误信息
+//（cloud 前门的 {error:{message}} 门控、FastAPI 的 {detail:...}）—
+// 状态行里裸 JSON 对技师来说像 bug。非 JSON 正文保留原始
+// `HTTP <status> <body>` 行（仍是最有用的展示）。
 async function httpError(res) {
   const detail = await res.text().catch(() => "");
   let msg = `HTTP ${res.status} ${detail}`;
@@ -231,7 +247,7 @@ async function httpError(res) {
       || parsed?.detail?.message
       || (typeof parsed?.detail === "string" ? parsed.detail : null);
     if (m) msg = m;
-  } catch { /* not JSON — keep the raw line */ }
+  } catch { /* 非 JSON — 保留原始行 */ }
   return new Error(msg);
 }
 
@@ -275,12 +291,11 @@ export function showLanding() {
   document.body.classList.add("show-landing");
   const ov = document.getElementById("landing-overlay");
   if (ov) ov.hidden = false;
-  // Dim the hero synchronously on a likely first-run so the staged reveal
-  // doesn't flash the full cockpit first (cheap flag check; un-gated below if
-  // onboarding turns out not to run).
+  // 首次运行时同步调暗 hero，避免分阶段揭示前先闪出完整驾驶舱
+  //（廉价标志检查；若 onboarding 不运行则下方会解除）。
   preGateOnboarding();
-  // Mount the hero mascot once; reopens reset to idle. Sidebar refetches
-  // every reopen so a fresh leaveSession() shows the latest repair list.
+  // 挂载 hero 吉祥物一次；重新打开时重置为 idle。每次重新打开时
+  // 刷新侧栏，以便 leaveSession() 后显示最新维修列表。
   if (!_landingMascot) {
     _landingMascot = mountMascot(document.getElementById("landingMascot"), {
       size: "md", state: "idle",
@@ -290,16 +305,16 @@ export function showLanding() {
   }
   loadAndRenderSidebar();
   loadPacksForSuggest();
-  _updateFreeLock(); // état initial du lock free (mode managé uniquement)
+  _updateFreeLock(); // free 锁初始状态（仅托管模式）
   setTimeout(() => document.getElementById("landingDevice")?.focus(), 50);
 
-  // Profile pill (always present) + the one-time guided onboarding. Both read
-  // the profile; onboarding additionally gates on the repair count and a
-  // localStorage flag, and drives the hero mascot through its states.
+  // 资料 pill（始终存在）+ 一次性引导 onboarding。两者都读取 profile；
+  // onboarding 额外按维修数量与 localStorage 标志门控，
+  // 并驱动 hero 吉祥物的状态切换。
   refreshProfileMenu();
   maybeStartOnboarding({ setMascotState: setLandingMascot });
 
-  // Sidebar tour button — manual replay of the onboarding tour
+  // 侧栏导览按钮 — 手动重放 onboarding 导览
   document.getElementById("landingSidebarTour")
     ?.addEventListener("click", () => {
       replayOnboarding({ setMascotState: setLandingMascot });
@@ -313,10 +328,9 @@ export function hideLanding() {
   if (progressConn) { progressConn.close(); progressConn = null; }
 }
 
-// Called by the catalogue modal's fiche "Start diagnostic" button. Pins the
-// chosen device into the landing state + form, then runs the standard submit
-// so ALL existing gating (free-lock, fresh-build preflight, disambiguation,
-// navigation) applies unchanged — no POST duplication.
+// 由目录弹窗设备卡「开始诊断」按钮调用。将所选设备固定到
+// landing 状态与表单，然后走标准提交流程，使所有现有门控
+//（free-lock、全新构建预检、消歧、导航）不变 — 不重复 POST。
 export async function launchFromCatalogue({ slug, label, complete, device_kind, symptom }) {
   _selectedDeviceSlug = slug || null;
   _selectedDeviceComplete = Boolean(complete);
@@ -345,16 +359,14 @@ function setSubmitting(on) {
   const sym = document.getElementById("landingSymptom");
   if (dev) dev.disabled = on;
   if (sym) sym.disabled = on;
-  // En sortie de soumission, le lock free reprend la main sur l'état du bouton.
+  // 提交结束后 free 锁重新接管按钮状态。
   if (!on) _updateFreeLock();
 }
 
-// Lock free du start-diagnostic (cloud_hints.packedOnly — mode managé
-// uniquement) : le bouton reste désactivé tant que le tech n'a pas SÉLECTIONNÉ
-// au picker un appareil dont le pack est complet (badge ✓), avec un texte
-// d'aide + CTA upgrade sous le formulaire. Self-host : packedOnly() est faux,
-// cette fonction ne touche à rien. Cosmétique pur — le cloud répond 402
-// FREE_PACK_ONLY de toute façon si on force la soumission.
+// 开始诊断的 free 锁（cloud_hints.packedOnly — 仅托管模式）：
+// 技师未在 picker 中选择 pack 完整（✓ 徽章）的设备前按钮保持禁用，
+// 表单下方显示帮助文案 + 升级 CTA。自托管：packedOnly() 为 false，
+// 本函数不生效。纯 UI — cloud 端强制提交仍会返回 402 FREE_PACK_ONLY。
 function _updateFreeLock() {
   if (!packedOnly()) return;
   const locked = !(_selectedDeviceSlug && _selectedDeviceComplete);
@@ -378,19 +390,18 @@ function _updateFreeLock() {
   hint.hidden = !locked;
 }
 
-// Reset for a fresh run: clear the orchestration-pause state + device-kind
-// panel (owned here), then delegate the phase-row DOM reset to timeline.js.
+// 全新运行前重置：清除编排暂停状态 + 设备类型面板（本文件负责），
+// 再将阶段行 DOM 重置委托给 timeline.js。
 function resetTimeline() {
   _landingPaused = false;
   document.getElementById("landingKindPanel")?.remove();
   resetTimelineRows();
 }
 
-// A launch is a "fresh build" (full ~15-min pipeline, 1 credit on cloud) when
-// the tech did NOT pick an already-complete known pack. Free-text or an
-// incomplete pack → the backend will run the full pipeline. A complete pack
-// pick → cache hit or cheap background expand (no pre-flight gate). Mirrors the
-// free-lock predicate so the two stay consistent.
+// 「全新构建」（完整 ~15 分钟 pipeline，cloud 上 1 积分）指技师
+// 未选择已完整的已知 pack。自由文本或不完整 pack → 后端跑完整 pipeline。
+// 完整 pack 选择 → 缓存命中或廉价后台 expand（无预检门控）。
+// 与 free-lock 谓词保持一致。
 function _isFreshBuild() {
   return !(_selectedDeviceSlug && _selectedDeviceComplete);
 }
@@ -419,17 +430,16 @@ async function submitDiagnostic() {
     return;
   }
 
-  // Ceinture du lock free : la soumission implicite (Entrée) ne doit pas
-  // contourner le bouton désactivé. Le serveur refuserait pareil (402).
+  // free 锁安全带：隐式提交（回车）不得绕过禁用按钮。服务端同样会拒绝（402）。
   if (packedOnly() && !(_selectedDeviceSlug && _selectedDeviceComplete)) {
     _updateFreeLock();
     deviceEl?.focus();
     return;
   }
 
-  // Fresh build → gate behind the pre-flight modal (credit cost, ~15-min build,
-  // last-chance schematic, email opt-in). Confirming there calls _launchDiagnostic.
-  // Known-complete pack → no gate, launch straight away (cache hit / expand).
+  // 全新构建 → 经预检弹窗门控（积分消耗、~15 分钟构建、
+  // 最后机会附原理图、邮件选项）。确认后调用 _launchDiagnostic。
+  // 已知完整 pack → 无门控，直接启动（缓存命中 / expand）。
   if (_isFreshBuild()) {
     openPreflightModal(device);
     return;
@@ -438,6 +448,8 @@ async function submitDiagnostic() {
 }
 
 async function _launchDiagnostic() {
+  // ═══ Step 1：Landing「开始诊断」主流程入口 ═══
+  // 完整链路见本文件顶部注释；下文按 Step 2–8 标注。
   const t = window.t || ((k) => k);
   const device = (document.getElementById("landingDevice")?.value || "").trim();
   const symptom = (document.getElementById("landingSymptom")?.value || "").trim();
@@ -448,15 +460,13 @@ async function _launchDiagnostic() {
   resetTimeline();
 
   try {
-    // If the tech picked a known device from the autocomplete, send the
-    // canonical slug so the backend skips re-slugification and lands on
-    // the right pack — sidesteps near-but-not-identical spellings.
+    // 若技师从自动补全选了已知设备，发送 canonical slug，
+    // 后端跳过重新 slug 化并命中正确 pack — 避免近似拼写偏差。
     //
-    // Repair-create is a pure metadata call (urlencoded, NO file): the
-    // schematic rides the dedicated /packs/{slug}/documents endpoint once the
-    // slug is known (see uploadSchematicForSlug). That keeps the cloud
-    // front-door able to gate creation without the schematic ever bypassing
-    // its encrypted, tenant-scoped uploader-only store.
+    // repair 创建为纯元数据调用（urlencoded，无文件）：原理图走
+    // 专用 /packs/{slug}/documents 端点（见 uploadSchematicForSlug）。
+    // 这样 cloud 前门可门控创建，原理图不会绕过
+    // 加密、租户隔离的上传专用存储。
     const body = new URLSearchParams();
     body.append("device_label", device);
     body.append("symptom", symptom);
@@ -465,11 +475,12 @@ async function _launchDiagnostic() {
     if (kind) body.append("device_kind", kind);
     const boardNumber = (document.getElementById("landingBoardNumber")?.value || "").trim();
     if (boardNumber) body.append("board_number", boardNumber);
-    // Signal the out-of-band schematic so the pipeline waits for its electrical
-    // graph before device-kind classification (the upload fires below, post-create).
+    // 通知带外原理图：pipeline 在设备类型分类前等待其电气图
+    //（上传在创建后下方触发）。
     if (_schematicFile) body.append("schematic_pending", "true");
+    // ═══ Step 2：发起 HTTP POST（短连接）═══
+    // 后端：repairs.py create_repair @router.post("/repairs") ~780 行
     // 【HTTP 短连接 — 建立并在此请求内结束】POST /pipeline/repairs；
-    // 后端入口 repairs.py:737 create_repair，响应 repairs.py:988 return RepairResponse。
     // res.json() 读完后本 HTTP 连接关闭；构建进度不走此连接。
     const res = await fetch("/pipeline/repairs", {
       method: "POST",
@@ -477,11 +488,13 @@ async function _launchDiagnostic() {
       body: body.toString(),
     });
     if (!res.ok) throw await httpError(res);
+    // ═══ Step 3：解析 RepairResponse JSON（HTTP 在此结束）═══
+    // 字段含义：models.py RepairResponse — pipeline_started / device_slug / repair_id …
     const repair = await res.json();
 
-    // T9a confirm-on-uncertainty: a broad label matched several sibling boards.
-    // No repair was created and no quota spent — show the candidate menu in the
-    // suggest dropdown; picking one pins its device_slug, then the tech re-runs.
+    // T9a 不确定时确认：宽泛标签匹配多块同族板卡。
+    // 未创建 repair、未消耗配额 — 在建议下拉显示候选菜单；
+    // 选择一项固定 device_slug 后技师重新提交。
     if (repair && repair.needs_disambiguation) {
       setSubmitting(false);
       _renderDisambiguation(repair.candidates || []);
@@ -496,15 +509,14 @@ async function _launchDiagnostic() {
     const slug = repair.device_slug;
     if (!rid || !slug) throw new Error(t("landing.status.error_invalid_response"));
 
-    // Schematic intake — canonical path now that the slug exists. Best-effort:
-    // a failed upload must not abort the diagnostic the tech just started (the
-    // pack still builds from web research; the schematic is re-importable from
-    // the Memory Bank dashboard later).
+    // 原理图摄入 — slug 已知后的 canonical 路径。尽力而为：
+    // 上传失败不得中止技师刚启动的诊断（pack 仍从网络调研构建；
+    // 原理图可稍后从 Memory Bank 仪表盘重新导入）。
     if (_schematicFile) await uploadSchematicForSlug(slug, _schematicFile);
 
-    // Three response shapes, three UX flows.
-    // Branch 2 — symptom already covered by a known rule: no LLM work,
-    // fast redirect to workspace.
+    // ═══ Step 4：按 RepairResponse 分支决定 UX ═══
+    // pipeline_started=false → Branch 0/2/3（pack 已有），直接进工作区，不开 progress WS
+    // pipeline_started=true  → Branch 1（需构建 pack），继续 Step 5
     if (!repair.pipeline_started) {
       if (repair.matched_rule_id) {
         setStatus(
@@ -517,19 +529,16 @@ async function _launchDiagnostic() {
           STATUS_NEUTRAL,
         );
       }
-      // Cache hit — the pack is already on disk, there is genuinely nothing to
-      // build. Go straight to the diagnostic workspace (no artificial wait). The
-      // status message above is the lead-in. (A ~15s fake-timeline animation used
-      // to play here for demo polish — removed; only the real flow remains.)
+      // 缓存命中 — pack 已在磁盘，无需构建。直接进入诊断工作区
+      //（无人工等待）。上方状态消息为引导。（此处曾有 ~15s 假 timeline
+      // 动画作演示润色 — 已移除，仅保留真实流程。）
       goToWorkspace(rid, slug, "diagnostic");
       return;
     }
 
-    // Branch 3 — pack exists but the symptom is new: the backend kicked a real
-    // targeted expand in the background. The pack is on disk so the agent works
-    // from existing rules immediately; the expand finishes silently. Go straight
-    // to the workspace — no artificial wait. (A ~15s fake-timeline used to play
-    // here too — removed.)
+    // Branch 3 — pack 存在但症状为新：后端在后台启动真实定向 expand。
+    // pack 在磁盘上故 agent 可立即用现有规则工作；expand 静默完成。
+    // 直接进入工作区 — 无人工等待。（此处也曾有 ~15s 假 timeline — 已移除。）
     if (repair.pipeline_kind === "expand") {
       setStatus(
         t("landing.status.device_known", { device: repair.device_label }),
@@ -539,15 +548,14 @@ async function _launchDiagnostic() {
       return;
     }
 
-    // Branch 1 — full pipeline on a fresh device. Preparing a brand-new device
-    // can take a while (vision build, possibly queued), so be upfront about it.
+    // ═══ Step 5–8：Branch 1 — 需要构建 pack，开启 progress WebSocket ═══
     setStatus(t("landing.status.build_delay"), STATUS_NEUTRAL);
     showTimeline();
     setTimelineTitle(t("landing.timeline.title_build", { device: repair.device_label }));
+    // Step 5→6：subscribeToProgress → connectProgress → new WebSocket
     subscribeToProgress(slug, rid);
-    // Email-when-ready opt-in was chosen in the pre-flight modal. Arm it now that
-    // the repair exists. Cloud-only (the checkbox is hidden without plan hints,
-    // and /notify is a front-door route), so self-host never reaches the POST.
+    // 预检弹窗中已选「完成后邮件通知」。repair 存在后启用。
+    // 仅 cloud（无 plan hints 时复选框隐藏，/notify 为前门路由），自托管不会 POST。
     if (_preflightNotifyOptIn && planHints()) armNotify(rid);
   } catch (err) {
     console.error("[landing] submit failed", err);
@@ -557,10 +565,9 @@ async function _launchDiagnostic() {
   }
 }
 
-// Arm the "email me when ready" opt-in chosen in the pre-flight modal. POSTs to
-// the cloud front-door's /notify route, which emails the tech at
-// pipeline_finished. Best-effort: a failure is logged, never blocks the build.
-// Self-host never calls this (the checkbox is hidden without plan hints).
+// 启用预检弹窗中选的「完成后邮件通知」。POST 到 cloud 前门 /notify 路由，
+// 在 pipeline_finished 时给技师发邮件。尽力而为：失败仅记录日志，不阻塞构建。
+// 自托管不调用（无 plan hints 时复选框隐藏）。
 async function armNotify(repairId) {
   const tt = window.t || ((k) => k);
   try {
@@ -572,18 +579,16 @@ async function armNotify(repairId) {
 }
 
 // ============================================================
-// Pre-flight launch-confirmation modal. Opened from onSubmit when the launch is
-// a fresh build (_isFreshBuild). Makes the cost explicit and gives the tech a
-// last chance to attach the schematic before a ~15-min build. The credit line
-// and the email opt-in are cloud-only (gated on planHints()); self-host still
-// sees the duration warning + schematic prompt. Confirm → _launchDiagnostic.
+// 启动前确认弹窗。onSubmit 在全新构建（_isFreshBuild）时打开。
+// 明确积分消耗，给技师最后机会附原理图（~15 分钟构建前）。
+// 积分行与邮件选项仅 cloud（planHints() 门控）；自托管仍见
+// 时长警告 + 原理图提示。确认 → _launchDiagnostic。
 // ============================================================
 
 let _preflightLastFocus = null;
 
-// Reflect the shared _schematicFile state inside the modal: either the
-// "attach it now" prompt or the "attached ✓" filename. Safe to call when the
-// modal is closed (the elements just aren't visible).
+// 在弹窗内反映共享的 _schematicFile 状态：「立即附加」提示或「已附加 ✓」文件名。
+// 弹窗关闭时也可安全调用（元素只是不可见）。
 function renderPreflightSchematic() {
   const hint = document.getElementById("landingPreflightSchematicHint");
   const name = document.getElementById("landingPreflightSchematicName");
@@ -605,7 +610,7 @@ function renderPreflightSchematic() {
 function openPreflightModal(deviceLabel) {
   const bd = document.getElementById("landingPreflightBackdrop");
   if (!bd) {
-    // No modal markup (shouldn't happen) — fail open rather than block a launch.
+    // 无弹窗 DOM（不应发生）— 放行启动而非阻塞。
     _launchDiagnostic();
     return;
   }
@@ -615,8 +620,8 @@ function openPreflightModal(deviceLabel) {
   const title = document.getElementById("landingPreflightTitle");
   if (title) title.textContent = t("landing.preflight.title", { device: deviceLabel });
 
-  // Cloud-only rows: the credit line and the email opt-in. Hidden on self-host
-  // (no plan hints) — the engine must not surface a billing/email concept.
+  // 仅 cloud 行：积分行与邮件选项。自托管隐藏（无 plan hints）—
+  // 引擎不得暴露计费/邮件概念。
   const cloud = !!planHints();
   const credit = document.getElementById("landingPreflightCredit");
   if (credit) credit.hidden = !cloud;
@@ -625,8 +630,7 @@ function openPreflightModal(deviceLabel) {
   const notifyCb = document.getElementById("landingPreflightNotify");
   if (notifyCb) notifyCb.checked = false;
 
-  // Schematic block: hidden on plans that can't upload (defensive — the free
-  // lock already blocks fresh-build launches before we get here).
+  // 原理图区块：不可上传的套餐上隐藏（防御性 — free 锁已在此前阻止全新构建）。
   const schemField = document.getElementById("landingPreflightSchematicField");
   if (schemField) schemField.hidden = hideUploads();
   renderPreflightSchematic();
@@ -654,9 +658,13 @@ async function confirmPreflight() {
 }
 
 function subscribeToProgress(slug, repairId, { autoNav = true } = {}) {
+  // ═══ Step 5→6：progress WebSocket 订阅入口 ═══
+  // slug 必须等于 Step 3 里 repair.device_slug（与后端 events.publish 同一 key）
+  // 实际握手：pipelineSocket.js connectProgress → new WebSocket(url)
+  // 后端接住：progress.py progress_ws → websocket.accept → events.subscribe(slug)
   if (progressConn) { progressConn.close(); progressConn = null; }
-  // Remember the active build so confirmLandingKind() can re-subscribe to the
-  // fresh build on the same slug after the tech resolves a kind disagreement.
+  // 记住活跃构建，以便技师解决类型分歧后 confirmLandingKind()
+  // 在同一 slug 上重新订阅新构建。
   _activeSlug = slug;
   _activeRid = repairId;
   _autoNavOnFinish = autoNav;
@@ -671,15 +679,13 @@ function subscribeToProgress(slug, repairId, { autoNav = true } = {}) {
     },
     onClose: () => {
       stopEtaTicker();
-      // _landingPaused → the build coroutine returned deliberately on a
-      // device-kind disagreement; the panel is up and the tech will confirm.
-      // Don't surface a "connection lost" failure in that case.
+      // _landingPaused → 构建协程因设备类型分歧故意返回；
+      // 面板已显示，技师将确认。此情况下勿报「连接丢失」。
     },
   });
 
-  // Reload restore — if a prior build is parked on a kind disagreement (e.g.
-  // the tech refreshed the page), re-render the confirmation panel. A missing /
-  // non-pending state is silent: the common case is "no pending disagreement".
+  // 刷新恢复 — 若先前构建因类型分歧暂停（如技师刷新了页面），
+  // 重新渲染确认面板。无 / 非 pending 状态静默：常见情况是「无待确认分歧」。
   fetchPendingKind(slug).then((p) => {
     if (p) {
       handleProgressEvent({
@@ -695,15 +701,14 @@ function subscribeToProgress(slug, repairId, { autoNav = true } = {}) {
   });
 }
 
-// Re-attach the live build timeline for a repair whose pack is still building.
-// The progress event bus replays its recent-event ring buffer on (re)subscribe,
-// so the timeline catches up to the phases already done instead of staring at a
-// blank until the next phase boundary. Shared by the tile-resume click (autoNav
-// true) and the passive resume-on-load (autoNav false).
+// 为 pack 仍在构建的 repair 重新挂载实时构建 timeline。
+// progress 事件总线在（重新）订阅时重放近期事件环形缓冲，
+// timeline 可追上已完成阶段，而非空白等到下一阶段边界。
+// 瓦片恢复点击（autoNav true）与被动加载恢复（autoNav false）共用。
 function resumeBuild(slug, repairId, { autoNav = true } = {}) {
-  // Both callers (tile click, passive resume-on-load) already run with the hero
-  // visible — do NOT call showLanding() here: it re-renders the sidebar, which
-  // re-enters maybeResumeActiveBuild before progressConn is set → recursion.
+  // 两路调用（瓦片点击、被动恢复）时 hero 已可见 —
+  // 勿在此调用 showLanding()：会重渲染侧栏，在 progressConn 设置前
+  // 再次进入 maybeResumeActiveBuild → 递归。
   const t = window.t || ((k) => k);
   resetTimeline();
   showTimeline();
@@ -713,21 +718,20 @@ function resumeBuild(slug, repairId, { autoNav = true } = {}) {
   subscribeToProgress(slug, repairId, { autoNav });
 }
 
-// On landing (re)load, if a build was in flight, resume its timeline passively.
-// Guarded so we never stomp an already-active connection (a fresh submit, or a
-// resume already running) and never auto-resume while the tech is submitting.
+// landing（重新）加载时，若有进行中的构建则被动恢复 timeline。
+// 守卫：不覆盖已有活跃连接（新提交或恢复中），提交中不自动恢复。
 function maybeResumeActiveBuild(repairs) {
   if (progressConn || isSubmitting) return;
-  // Newest-first list (sorted by caller) → the first building repair is the most
-  // recent one. The build cap means there's normally at most one in flight.
+  // 最新优先列表（调用方已排序）→ 第一个 building 为最近一条。
+  // 构建上限通常意味着最多一条在飞。
   const building = (repairs || []).find((r) => r.build_state === "building");
   if (!building) return;
   resumeBuild(building.device_slug, building.repair_id, { autoNav: false });
 }
 
-// Localize a live `phase_step` sub-step into the short line the timeline shows
-// ("recherche web · tour 2", "page 3/12", "graphe ✓ 142 nœuds", "révision 1").
-// Returns "" for an unknown step kind (forward-compat — ignored silently).
+// 将实时 `phase_step` 子步骤本地化为 timeline 显示的短行
+//（"recherche web · tour 2"、"page 3/12" 等）。
+// 未知 step 类型返回 ""（前向兼容 — 静默忽略）。
 function phaseStepText(ev, t) {
   switch (ev.step) {
     case "search_round":
@@ -750,14 +754,16 @@ function phaseStepText(ev, t) {
 }
 
 function handleProgressEvent(ev, slug, repairId) {
+  // ═══ Step 7：消费 progress WS 推送的每一帧 JSON ═══
+  // 事件由后端 orchestrator emit → events.publish → progress_ws 转发
+  // Step 8：pipeline_finished 分支内 setTimeout → goToWorkspace(repairId, slug)
   const t = window.t || ((k) => k);
   switch (ev.type) {
     case "subscribed":
       break;
     case "queued": {
-      // Build accepté mais EN ATTENTE derrière le cap de builds concurrents.
-      // On montre clairement la position ; elle décroît à mesure que la file se
-      // vide, puis `pipeline_started` prend le relais quand un créneau se libère.
+      // 构建已接受但在并发构建上限后排队等待。
+      // 清晰显示位置；队列消化时递减，槽位释放后由 pipeline_started 接管。
       const position = ev.position || 1;
       const ahead = ev.ahead != null ? ev.ahead : Math.max(0, position - 1);
       setTimelineTitle(t("landing.timeline.title_queued", { position }));
@@ -767,8 +773,8 @@ function handleProgressEvent(ev, slug, repairId) {
     }
     case "pipeline_started": {
       const dev = ev.device_label || ev.device_slug || slug;
-      // Reset the title in case it was showing the queued state ("En file
-      // d'attente · position N") — the build just left the queue and started.
+      // 若标题仍显示排队状态（"En file d'attente · position N"）则重置 —
+      // 构建刚出队并开始。
       setTimelineTitle(t("landing.timeline.title_build", { device: dev }));
       setStatus(t("landing.status.pipeline_started", { device: dev }), STATUS_LOADING);
       break;
@@ -802,13 +808,12 @@ function handleProgressEvent(ev, slug, repairId) {
       stopEtaTicker();
       setLandingMascot("success");
       if (_autoNavOnFinish) {
-        // Fresh submit / explicit tile-resume: take the tech into the now-ready
-        // device. Short grace so the final audit sub-step renders first.
+        // 全新提交 / 显式瓦片恢复：将技师带入已就绪设备。
+        // 短暂延迟以便最终审计子步骤先渲染。
         setTimeout(() => goToWorkspace(repairId, slug), 2500);
       } else {
-        // Passive resume-on-load: don't yank a browsing tech. Just refresh the
-        // sidebar so the tile flips from "building" to ready (clickable into the
-        // workspace), and drop the now-finished progress connection.
+        // 被动加载恢复：勿打断浏览中的技师。仅刷新侧栏使瓦片
+        // 从「building」变为可点击进入工作区，并关闭已结束的 progress 连接。
         if (progressConn) { progressConn.close(); progressConn = null; }
         loadAndRenderSidebar();
       }
@@ -841,18 +846,15 @@ function handleProgressEvent(ev, slug, repairId) {
 }
 
 // ============================================================
-// Device-kind pause panel — the orchestrator emits `pipeline_paused`
-// (reason: needs_kind_confirmation) when the graph-inferred device kind
-// disagrees with what the technician declared. We inject an inline
-// confirmation panel into the timeline; confirming POSTs the chosen kind
-// and starts a fresh build, which we re-subscribe to. Mirrors the drawer's
-// renderKindConfirm / confirmKind (web/js/pipeline_progress.js).
+// 设备类型暂停面板 — orchestrator 在图推断类型与技师声明不一致时
+// 发出 `pipeline_paused`（reason: needs_kind_confirmation）。
+// 在 timeline 内注入内联确认面板；确认 POST 所选类型并启动新构建后重新订阅。
+// 镜像抽屉 renderKindConfirm / confirmKind（web/js/pipeline_progress.js）。
 // ============================================================
 
-// Resolve a human label for a device_kind code. Empty / "unknown" /
-// undeclared → the shared "non déclaré" string; otherwise the
-// repair.device_kind.options.<k> label (resolves on the landing because
-// i18n loads all modules at boot), falling back to the raw code on a miss.
+// 将 device_kind 代码解析为人类可读标签。空 / "unknown" / 未声明
+// → 共享「non déclaré」串；否则 repair.device_kind.options.<k> 标签
+//（landing 启动时 i18n 已加载全部模块），未命中则回退原始代码。
 function _landingKindLabel(k) {
   const tFn = window.t || ((key) => key);
   if (!k || k === "unknown") return tFn("pipeline.kind.undeclared");
@@ -862,7 +864,7 @@ function _landingKindLabel(k) {
 }
 
 function renderLandingKindConfirm(ev) {
-  // Idempotent — drop any panel from a prior pause/restore.
+  // 幂等 — 丢弃先前暂停/恢复留下的面板。
   document.getElementById("landingKindPanel")?.remove();
   const timeline = document.getElementById("landingTimeline");
   if (!timeline) return;
@@ -872,8 +874,8 @@ function renderLandingKindConfirm(ev) {
   const candidates = [];
   if (ev.graph_inferred) candidates.push({ k: ev.graph_inferred, recommended: true });
   if (ev.user_declared && ev.user_declared !== ev.graph_inferred) candidates.push({ k: ev.user_declared });
-  // Neither inferred nor declared → a single "unknown" radio so the panel
-  // still offers an actionable confirm (posts "unknown", pipeline proceeds).
+  // 既未推断也未声明 → 单个 "unknown" 单选，面板仍可确认
+  //（POST "unknown"，pipeline 继续）。
   if (candidates.length === 0) candidates.push({ k: "unknown", recommended: true });
 
   const radios = candidates.map((c, i) => `
@@ -892,8 +894,7 @@ function renderLandingKindConfirm(ev) {
     <div class="landing-kind-opts">${radios}</div>
     <button type="button" class="landing-kind-confirm" id="landingKindConfirm" data-i18n="pipeline.kind.confirm">${_escapeHtml(tFn("pipeline.kind.confirm"))}</button>`;
 
-  // Append after #landingPhaseList so the panel sits at the foot of the
-  // timeline, below the phase rows.
+  // 追加在 #landingPhaseList 之后，面板位于 timeline 底部、阶段行下方。
   timeline.appendChild(panel);
   if (window.i18n && window.i18n.applyDom) window.i18n.applyDom(panel);
 
@@ -914,8 +915,8 @@ async function confirmLandingKind(deviceKind) {
     ok = res.ok;
   } catch (_) { ok = false; }
   if (!ok) {
-    // A 4xx/5xx or network failure means the pipeline did NOT resume. Surface
-    // the error and stop — do NOT re-subscribe into a confusing dead WS.
+    // 4xx/5xx 或网络失败表示 pipeline 未恢复。显示错误并停止 —
+    // 勿重新订阅到死 WS。
     setStatus(t("landing.status.ws_lost"), STATUS_ERROR);
     setLandingMascot("error");
     return;
@@ -923,34 +924,29 @@ async function confirmLandingKind(deviceKind) {
   document.getElementById("landingKindPanel")?.remove();
   setPhaseState("device_kind", "done");
   _landingPaused = false;
-  // Fresh build started by confirm-kind — close the old WS and re-subscribe
-  // to watch the re-run on the same slug.
+  // confirm-kind 启动的新构建 — 关闭旧 WS 并在同一 slug 上重新订阅以观看重跑。
   if (progressConn) { progressConn.close(); progressConn = null; }
   subscribeToProgress(_activeSlug, _activeRid);
 }
 
 
 function goToWorkspace(repairId, slug, vue = "graph") {
-  // Land the tech on the requested repair vue — default the graph view (loads
-  // graph + memory bank + opens the chat via openLLMPanelIfRepairParam) rather
-  // than the diagnostic dashboard. The dashboard is the "diagnostic" vue,
-  // reachable via the left rail. repairHash coerces an unknown vue to diagnostic.
+  // 将技师带到请求的 repair 视图 — 默认图视图（加载 graph + memory bank +
+  // 经 openLLMPanelIfRepairParam 打开聊天），而非诊断仪表盘。
+  // 仪表盘为 "diagnostic" 视图，经左侧栏进入。repairHash 将未知 vue 强制为 diagnostic。
   //
-  // Strip the landing overlay first so a hash navigation doesn't leave the
-  // overlay sitting on top of the freshly-loaded view.
+  // 先剥离 landing 遮罩，避免 hash 导航后遮罩仍盖在新视图上。
   hideLanding();
-  // Close any active progress WS so it can't fire late events (e.g. a
-  // duplicate pipeline_finished) onto the page after navigation.
+  // 关闭活跃 progress WS，避免导航后迟到事件（如重复 pipeline_finished）打到页面。
   if (progressConn) { progressConn.close(); progressConn = null; }
 
-  seedSlugForRepair(repairId, slug);   // known slug — keep the deep nav synchronous
+  seedSlugForRepair(repairId, slug);   // 已知 slug — 保持深层导航同步
   const target = new URL(location.origin + location.pathname);
   target.hash = repairHash(repairId, vue);
 
-  // Force a real navigation. location.href to the same URL is a no-op and a
-  // hash-only delta does not reload — either case would leave the landing
-  // module's state inconsistent with the post-pipeline view. location.assign +
-  // reload on duplicate guarantees a clean bootstrap of main.js.
+  // 强制真实导航。同 URL 的 location.href 为 no-op，仅 hash 变化不刷新 —
+  // 任一情况都会使 landing 模块状态与 pipeline 后视图不一致。
+  // 重复时 location.assign + reload 保证 main.js 干净启动。
   if (target.toString() === location.href) {
     location.reload();
   } else {
@@ -959,24 +955,20 @@ function goToWorkspace(repairId, slug, vue = "graph") {
 }
 
 // ============================================================
-// Device autocomplete — surfaces devices already known under the device
-// input as the technician types. Sourced from /pipeline/taxonomy so the
-// list is deduplicated to ONE entry per (brand, model) — no
-// "iPhone X" / "iPhone X logic board" / "iPhone X bench" noise.
-// Cached for the session in `_devicesCache`. Keyboard nav: ↑/↓/Enter/Esc.
+// 设备自动补全 — 技师输入时在设备输入框下展示已知设备。
+// 数据来自 /pipeline/taxonomy，按 (brand, model) 去重为一条 —
+// 无「iPhone X / iPhone X logic board / iPhone X bench」噪声。
+// 会话内缓存在 `_devicesCache`。键盘：↑/↓/Enter/Esc。
 //
-// At selection, we store the canonical slug of the chosen pack on the
-// form so onSubmit can pass `device_slug` to the backend explicitly,
-// guaranteeing a cache hit on the right pack rather than re-slugifying
-// the label and risking a miss on a near-but-not-identical spelling.
+// 选择时将所选 pack 的 canonical slug 存到表单，
+// onSubmit 显式传 `device_slug`，保证命中正确 pack 而非重新 slug 化标签。
 // ============================================================
 
 let _devicesCache = null;
 let _suggestActiveIdx = -1;
 let _selectedDeviceSlug = null;
-// Complétude du pack du device sélectionné au picker (badge ✓). Sert au lock
-// free (cloud_hints.packedOnly) : le plan gratuit ne lance que sur un pack
-// complet — cosmétique, le cloud refuse pareil côté serveur (402).
+// picker 所选设备的 pack 完整性（✓ 徽章）。用于 free 锁
+//（cloud_hints.packedOnly）：免费套餐仅对完整 pack 启动 — 纯 UI，服务端同样拒绝（402）。
 let _selectedDeviceComplete = false;
 let _schematicFile = null;
 
@@ -997,12 +989,11 @@ function _matchDevices(query) {
       const label = (d.label || "").toLowerCase();
       const sub = (d.subtitle || "").toLowerCase();
       const slug = (d.slug || "").toLowerCase();
-      // T9a: match carnet aliases too (board# / Apple model / EMC / codename /
-      // marketing) so "820-2533" or "A1286" finds the MacBook Pro 15 pack.
+      // T9a：同时匹配 carnet 别名（板号 / Apple 型号 / EMC / 代号 / 营销名），
+      // 使 "820-2533" 或 "A1286" 能找到 MacBook Pro 15 pack。
       const aliases = (d.aliases || []).join(" ").toLowerCase();
-      // Also match the version line shown on the suggestion (the Apple model
-      // number(s) / board# live there, e.g. "A1984" finds the iPhone XR) —
-      // carnet aliases are empty for packs not registered in it.
+      // 同时匹配建议上显示的 version 行（Apple 型号 / 板号在此，
+      // 如 "A1984" 找 iPhone XR）— 未登记 carnet 的 pack 别名为空。
       const version = (d.version || "").toLowerCase();
       return label.includes(q) || sub.includes(q) || slug.includes(q)
         || aliases.includes(q) || version.includes(q);
@@ -1010,10 +1001,9 @@ function _matchDevices(query) {
     .slice(0, 6);
 }
 
-// Second line of a suggestion: the identifiers that distinguish THIS exact board
-// — the model version / Apple number(s), the board number (820-xxxx) when known,
-// and the form factor. e.g. "A2172 / A2176 · logic board" or
-// "A1286 · 820-2533 · logic board". Empty when nothing distinguishing is known.
+// 建议第二行：区分此确切板卡的标识 —
+// 型号版本 / Apple 编号、板号（820-xxxx，若已知）、外形。
+// 如 "A2172 / A2176 · logic board"。无区分信息时为空。
 function _deviceIdLine(d) {
   const parts = [];
   const seen = new Set();
@@ -1024,7 +1014,7 @@ function _deviceIdLine(d) {
     if (!seen.has(k)) { seen.add(k); parts.push(s); }
   };
   if (d.version) push(d.version);
-  // Board number(s) from the carnet aliases, if not already in the version text.
+  // carnet 别名中的板号，若 version 文本中尚未包含。
   const vtext = (d.version || "").toLowerCase();
   for (const a of (d.aliases || [])) {
     const m = String(a).match(/\b8\d{2}-\d{3,5}\b/);
@@ -1052,9 +1042,8 @@ function _renderSuggest(query) {
     const safeSlug = _escapeHtml(d.slug);
     const iconClass = d.complete ? "is-complete" : "is-partial";
     const iconText = d.complete ? "✓" : "•";
-    // Readiness badges (right of line 1): draft marker (incomplete pack), the
-    // graph badge (lit when an electrical graph is compiled), and the device-kind
-    // short code (GPU / PORTABLE / …).
+    // 就绪徽章（第一行右侧）：草稿标记（不完整 pack）、
+    // 图徽章（已编译电气图时点亮）、设备类型简码（GPU / PORTABLE / …）。
     const draftBadge = d.complete ? "" : `<span class="landing-suggest-badge is-draft">${_escapeHtml(draftLabel)}</span>`;
     const graphBadge = `<span class="landing-suggest-badge${d.has_electrical_graph ? " is-on" : ""}" title="${_escapeHtml(tFn("landing.suggest.graph_title"))}">${_escapeHtml(tFn("landing.suggest.graph_label"))}</span>`;
     const kindBadge = (d.device_kind && d.device_kind !== "unknown")
@@ -1062,10 +1051,9 @@ function _renderSuggest(query) {
       : "";
     const idLine = _escapeHtml(_deviceIdLine(d));
     const brand = safeSub ? `<span class="landing-suggest-brand">${safeSub}</span>` : "";
-    // data-label = the short model name (e.g. "iPhone 12") that lands in
-    // the input on selection. NOT d.device_label, which is the raw
-    // registry label (e.g. "Apple iPhone 12 logic board") and would
-    // pollute the input with brand + form-factor noise.
+    // data-label = 选择后填入输入框的短型号名（如 "iPhone 12"）。
+    // 非 d.device_label（原始 registry 标签，如 "Apple iPhone 12 logic board"），
+    // 后者会污染输入框的品牌 + 外形噪声。
     return `<div class="landing-suggest-item" role="option" `
       + `data-slug="${safeSlug}" data-label="${safeLabel}" data-index="${i}" `
       + `data-graph="${d.has_electrical_graph ? "1" : ""}" data-complete="${d.complete ? "1" : ""}">`
@@ -1083,9 +1071,8 @@ function _renderSuggest(query) {
   _suggestActiveIdx = -1;
 }
 
-// T9a: render the disambiguation candidates into the suggest dropdown using the
-// SAME .landing-suggest-item markup, so the existing mousedown handler pins the
-// chosen device_slug (via _selectSuggest) with zero extra wiring.
+// T9a：用相同 .landing-suggest-item 标记将消歧候选渲染到建议下拉，
+// 现有 mousedown 处理器经 _selectSuggest 固定 device_slug，无需额外接线。
 function _renderDisambiguation(candidates) {
   const box = document.getElementById("landingSuggest");
   if (!box || !Array.isArray(candidates) || candidates.length === 0) return;
@@ -1117,14 +1104,11 @@ function _selectSuggest(label, slug, hasGraph, isComplete) {
   const dev = document.getElementById("landingDevice");
   const sym = document.getElementById("landingSymptom");
   if (dev) dev.value = label;
-  // Pin the canonical slug so onSubmit sends device_slug to the backend
-  // (skips re-slugification of the label and guarantees the cache hit
-  // on the right pack — defends against near-but-not-identical spellings).
+  // 固定 canonical slug，onSubmit 向后端发送 device_slug
+  //（跳过标签重新 slug 化，保证命中正确 pack — 防御近似拼写）。
   _selectedDeviceSlug = slug || null;
   _selectedDeviceComplete = !!isComplete;
-  // When the picked device already has a compiled electrical graph, the
-  // schematic is on disk — no need to attach a PDF. Otherwise restore the
-  // default "attach" affordance.
+  // 所选设备已有编译电气图时原理图在磁盘 — 无需附 PDF。否则恢复默认「附加」入口。
   const field = document.getElementById("landingSchematicField");
   const pick = document.getElementById("landingSchematicPick");
   const name = document.getElementById("landingSchematicName");
@@ -1162,10 +1146,8 @@ function _initSuggest() {
   if (!dev || !box) return;
 
   dev.addEventListener("input", () => {
-    // Free-text editing invalidates the previously-selected slug — the
-    // tech may now be heading toward a different (or unknown) device.
-    // Restore the schematic-attach affordance too: a graph-backed pick is
-    // no longer in force once the label diverges.
+    // 自由文本编辑使先前所选 slug 失效 — 技师可能改向其他（或未知）设备。
+    // 同时恢复原理图附加入口：标签偏离后基于图的选取不再有效。
     _selectedDeviceSlug = null;
     _selectedDeviceComplete = false;
     resetSchematicField();
@@ -1187,8 +1169,7 @@ function _initSuggest() {
       ev.preventDefault();
       _setSuggestActive(_suggestActiveIdx <= 0 ? items.length - 1 : _suggestActiveIdx - 1);
     } else if (ev.key === "Enter" && _suggestActiveIdx >= 0) {
-      // Only intercept Enter when the user has explicitly highlighted a
-      // suggestion via arrows. Otherwise let the form submit naturally.
+      // 仅当用户用方向键显式高亮建议时拦截 Enter，否则让表单自然提交。
       ev.preventDefault();
       const item = items[_suggestActiveIdx];
       if (item) _selectSuggest(item.dataset.label, item.dataset.slug, !!item.dataset.graph, !!item.dataset.complete);
@@ -1197,12 +1178,11 @@ function _initSuggest() {
     }
   });
 
-  // Hide on blur, but with a small delay so a click on a suggestion
-  // (which fires after blur) gets processed first.
+  // blur 时隐藏，短延迟以便建议上的点击（blur 后触发）先被处理。
   dev.addEventListener("blur", () => setTimeout(_hideSuggest, 150));
 
   box.addEventListener("mousedown", (ev) => {
-    // Use mousedown (not click) so it fires before blur on the input.
+    // 用 mousedown（非 click）以便在输入框 blur 之前触发。
     const item = ev.target.closest(".landing-suggest-item");
     if (item && item.dataset.label) {
       ev.preventDefault();
@@ -1211,10 +1191,9 @@ function _initSuggest() {
   });
 }
 
-// Restore the schematic-upload affordance to its default "attach" state
-// (no PDF attached, CTA re-enabled, not flagged ingested). Called when a
-// graph-backed device pick is invalidated by free-text editing — the kind
-// select is left untouched since it's an independent manual choice.
+// 将原理图上传入口恢复为默认「附加」状态
+//（无 PDF、CTA 重新启用、未标记已摄入）。自由文本编辑使基于图的选取失效时调用 —
+// 类型 <select> 不动，因其为独立的手动选择。
 function resetSchematicField() {
   _schematicFile = null;
   const field = document.getElementById("landingSchematicField");
@@ -1228,12 +1207,10 @@ function resetSchematicField() {
   renderKnowledgeIndicators();
 }
 
-// ─── Knowledge modal (optional device context: board type + schematic) ───
-// The board-type <select> and schematic picker live inside this modal so the
-// landing hero stays a clean device+symptom form. The modal is pure
-// presentation — submit reads the live <select> value and `_schematicFile`
-// exactly as before. The hero reflects what's been added via a count badge on
-// the trigger button plus removable summary chips.
+// ─── 知识弹窗（可选设备上下文：板类型 + 原理图）───
+// 板类型 <select> 与原理图选择器在此弹窗内，landing hero 保持简洁的设备+症状表单。
+// 弹窗纯展示 — submit 仍读取实时 <select> 与 `_schematicFile`。
+// hero 经触发按钮上的数量徽章与可移除摘要芯片反映已添加内容。
 let _knowledgeLastFocus = null;
 
 function openKnowledgeModal() {
@@ -1255,9 +1232,8 @@ function closeKnowledgeModal() {
   }
 }
 
-// Re-render the hero's knowledge indicators (count badge + summary chips) from
-// the current control state. Single source of truth: the live <select> value
-// and `_schematicFile` — no duplicated mirror state.
+// 从当前控件状态重渲染 hero 知识指示器（数量徽章 + 摘要芯片）。
+// 单一真相源：实时 <select> 与 `_schematicFile` — 无重复镜像状态。
 function renderKnowledgeIndicators() {
   const select = document.getElementById("landingDeviceKind");
   const kind = select?.value || "";
@@ -1299,12 +1275,9 @@ function onKnowledgeChipClick(ev) {
   renderKnowledgeIndicators();
 }
 
-// Upload an attached schematic PDF to the device's pack via the dedicated
-// document endpoint (kind=schematic_pdf) — the canonical ingestion path. The
-// cloud front-door routes this through its encrypted, tenant-scoped
-// uploader-only store, so the schematic never bypasses tenant isolation (which
-// attaching it to repair-create would). Best-effort: logged on failure, never
-// throws into the submit flow.
+// 将附加的原理图 PDF 经专用文档端点（kind=schematic_pdf）上传到设备 pack —
+// canonical 摄入路径。cloud 前门经加密、租户隔离的上传专用存储路由，
+// 原理图不会绕过租户隔离（附在 repair-create 上会）。尽力而为：失败仅记录，不抛入提交流程。
 async function uploadSchematicForSlug(slug, file) {
   try {
     const fd = new FormData();
@@ -1326,10 +1299,8 @@ async function uploadSchematicForSlug(slug, file) {
 export function initLanding() {
   const form = document.getElementById("landingForm");
   if (form) form.addEventListener("submit", onSubmit);
-  // Plan free (mode managé) : pas d'analyse de nouveau fichier → l'affordance
-  // « Add knowledge » disparaît EN ENTIER : le bouton, son « ? » d'explication
-  // (qui ouvrait le modal info) et la rangée de chips. Le serveur refuse
-  // l'upload de toute façon (402).
+  // 免费套餐（托管模式）：不可分析新文件 → 完整隐藏「添加知识」入口：
+  // 按钮、说明「?」、芯片行。服务端同样拒绝上传（402）。
   if (hideUploads()) {
     for (const id of ["landingKnowledgeBtn", "landingKnowledgeInfo", "landingKnowledgeChips"]) {
       const el = document.getElementById(id);
@@ -1345,11 +1316,10 @@ export function initLanding() {
     if (n) n.textContent = _schematicFile ? _schematicFile.name : "";
     e.target.value = "";
     renderKnowledgeIndicators();
-    renderPreflightSchematic();   // keep the pre-flight modal's view in sync
+    renderPreflightSchematic();   // 与预检弹窗视图保持同步
   });
-  // Pre-flight modal: its schematic pick triggers the SAME hidden file input as
-  // the knowledge modal (single source of truth, _schematicFile). Cancel/confirm
-  // gate the actual launch; the backdrop + Escape dismiss like the other modals.
+  // 预检弹窗：原理图选择与知识弹窗共用同一隐藏 file input（_schematicFile 单一真相源）。
+  // 取消/确认门控实际启动；backdrop + Escape 与其他弹窗相同关闭。
   document.getElementById("landingPreflightSchematicPick")?.addEventListener("click", () => {
     document.getElementById("landingSchematic")?.click();
   });
@@ -1362,14 +1332,13 @@ export function initLanding() {
       if (ev.target === pfBackdrop) closePreflightModal();
     });
   }
-  // Knowledge modal: trigger, close affordances, board-type change, chip removal.
-  // First click explains what "Add knowledge" is for, then opens the modal;
-  // afterwards it goes straight in. A persistent "?" reopens the explainer.
+  // 知识弹窗：触发、关闭、板类型变更、芯片移除。
+  // 首次点击说明「添加知识」用途再打开；之后直接进入。持久「?」可重开说明。
   document.getElementById("landingKnowledgeBtn")?.addEventListener("click", () => {
     let seen = true;
-    try { seen = !!localStorage.getItem(KNOWLEDGE_INFO_FLAG); } catch { /* private mode */ }
+    try { seen = !!localStorage.getItem(KNOWLEDGE_INFO_FLAG); } catch { /* 隐私模式 */ }
     if (!seen) {
-      try { localStorage.setItem(KNOWLEDGE_INFO_FLAG, "1"); } catch { /* ignore */ }
+      try { localStorage.setItem(KNOWLEDGE_INFO_FLAG, "1"); } catch { /* 忽略 */ }
       openInfoModal("knowledge", { onClose: openKnowledgeModal });
     } else {
       openKnowledgeModal();
@@ -1387,7 +1356,7 @@ export function initLanding() {
   document.addEventListener("keydown", (ev) => {
     if (ev.key === "Escape") { closeKnowledgeModal(); closePreflightModal(); closeRepairsDrawer(); closeCatalogue(); }
   });
-  // Mobile recent-repairs drawer: toggle from the nav, dismiss via the scrim.
+  // 移动端最近维修抽屉：从导航切换，经遮罩关闭。
   document.getElementById("landingRepairsToggle")?.addEventListener("click", () => {
     const open = document.getElementById("landing-overlay")?.classList.contains("sidebar-open");
     if (open) closeRepairsDrawer(); else openRepairsDrawer();

@@ -1,20 +1,19 @@
-"""Per-session board-number context for the diagnostic agent.
+"""诊断代理的每个会话板号上下文。
 
-The board number (e.g. "820-02016") identifies the PCB revision being
-diagnosed and determines which board-delta pack the agent loads. It is
-bound once at the top of a diagnostic session from the ``?board=`` query
-parameter on the WS handshake, and read by board-delta-aware tools to
+板号（例如“820-02016”）标识 PCB 版本
+诊断并确定代理加载哪个板增量包。这是
+在诊断会话顶部从``?board=`` query
+parameter on the ⟦PRESERVE2⟧ handshake, and read by board-delta-aware tools to
 inject the revision-specific delta into the session context.
 
 A ContextVar (not a module global) so concurrent sessions — each a
-separate asyncio task per WS connection — stay isolated: ``asyncio.create_task``
+separate ⟦PRESERVE0⟧ task per ⟦PRESERVE2⟧ connection — stay isolated: ``⟦PRESERVE0⟧.create_task``
 copies the context, so child tasks of a session inherit the board_ref set at
 its top, while a different session's task carries its own value. The engine
 treats board_ref as an opaque string; no trust or gating logic lives here.
 
-Default ``None`` so STANDALONE / SELF-HOST (no ``?board=`` param) is fully
-functional — the delta is simply not injected, preserving today's behaviour.
-"""
+Default ``None`` so STANDALONE / SELF-⟦PRESERVE1⟧ (no ``?board=``参数绑定一次）是完全
+功能性——Delta 根本没有被注入，保留了今天的行为。"""
 
 from __future__ import annotations
 
@@ -24,10 +23,10 @@ _board_ref: ContextVar[str | None] = ContextVar("agent_board_ref", default=None)
 
 
 def set_board_ref(value: str | None) -> None:
-    """Bind the current diagnostic session to a board number (call once, at the top)."""
+    """将当前诊断会话绑定到板号（在顶部调用一次）。"""
     _board_ref.set(value or None)
 
 
 def current_board_ref() -> str | None:
-    """The board number for the current session, or None (not supplied / standalone)."""
+    """当前会话的板号，或无（不提供/独立）。"""
     return _board_ref.get()

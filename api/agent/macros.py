@@ -1,15 +1,14 @@
-"""Persistence helpers for macro images.
+"""宏图像的持久性助手。
 
-Macros land under ``memory/{slug}/repairs/{repair_id}/macros/{ts}_{source}.{ext}``.
+宏位于``memory/{⟦PRESERVE2⟧}/repairs/{⟦PRESERVE1⟧}/macros/{ts}_{source}.{ext}``.
 Two sources :
 
   - ``manual`` : tech drag-dropped or uploaded via the chat panel (Flow A)
-  - ``capture`` : agent called ``cam_capture``, frontend snapped via
+  - ``capture`` : agent called ``⟦PRESERVE0⟧``, frontend snapped via
     getUserMedia (Flow B)
 
 The path layout is mirrored on the frontend's replay route
-(``GET /api/macros/{slug}/{repair_id}/{filename}``).
-"""
+(``GET /api/macros/{⟦PRESERVE2⟧}/{⟦PRESERVE1⟧}/{filename}``）。"""
 
 from __future__ import annotations
 
@@ -35,13 +34,12 @@ def persist_macro(
     bytes_: bytes,
     mime: str,
 ) -> Path:
-    """Write ``bytes_`` under ``macros/{ts}_{source}.{ext}`` and return the path.
+    """在未知 mime 或无效源上写入 ``bytes_`` under ``macros/{ts}_{source}.{ext}`` and return the path.
 
     Creates the macros directory if missing. Disambiguates same-second
     collisions with a numeric suffix.
 
-    Raises :class:`ValueError` on unknown mime or invalid source.
-    """
+    Raises :class:`ValueError`。"""
     if source not in ("manual", "capture"):
         raise ValueError(f"source must be 'manual' or 'capture', got {source!r}")
     ext = _EXT_FROM_MIME.get(mime.lower())
@@ -66,11 +64,10 @@ def macro_path_for(
     repair_id: str,
     filename: str,
 ) -> Path:
-    """Resolve a stored macro path safely. Blocks path traversal.
+    """安全地解析存储的宏路径。阻止路径遍历。
 
-    Raises :class:`ValueError` if the filename contains directory separators,
-    leading dots, or escapes the macros directory after resolution.
-    """
+    如果文件名包含目录分隔符，则引发 :class:`ValueError`，
+    前导点，或在解析后转义宏目录。"""
     if (
         "/" in filename
         or "\\" in filename
@@ -98,12 +95,11 @@ def build_image_ref(
     repair_id: str,
     source: Source,
 ) -> dict:
-    """Build the ``image_ref`` dict that lands in ``messages.jsonl``.
+    """在回放时构建``image_ref`` dict that lands in ``messages.jsonl``.
 
     The frontend resolves ``path`` (relative to
-    ``memory/{slug}/repairs/{repair_id}/``) via the
-    ``GET /api/macros/{slug}/{repair_id}/{filename}`` route on replay.
-    """
+    ``memory/{⟦PRESERVE1⟧}/repairs/{⟦PRESERVE0⟧}/``) via the
+    ``GET /api/macros/{⟦PRESERVE1⟧}/{⟦PRESERVE0⟧}/{filename}``路线。"""
     repair_root = memory_root / slug / "repairs" / repair_id
     relative = path.relative_to(repair_root)
     return {

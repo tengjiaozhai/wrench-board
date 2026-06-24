@@ -1,15 +1,15 @@
-// Floating draggable camera preview frame.
+// 浮动可拖动相机 preview frame。
 //
-// Rendered as a position:fixed PiP-style window mounted into <body> on
-// first open. Streams a single getUserMedia track so the tech can keep
-// an eye on what the agent will see when it calls cam_capture. Position
-// + open state persist in localStorage. The frame can be dragged from
-// its header anywhere in the viewport.
+// Rendered 作为 position：固定画中画风格的窗口安装到 <body> 上
+// 第一个操作en。 Streams 一个 getUserMedia 轨道，以便技术人员可以保持
+// 关注 agent 会看到什么en 它称之为 cam_capture。 Pos版本
+// + open 状态持续在localStorage。 frame可以拖动from
+// 它的标题位于视口中的任意re。
 //
-// Sharing with captureFrame() — when the preview is open, captureFrame
-// draws from this stream instead of opening a second getUserMedia
-// session (avoids the "device busy" / re-prompt pattern on some
-// hardware).
+// 与 captureFrame() 共享 — when pre视图是 open，captureFrame
+// 绘制 from this stream 而不是操作en第二个getUserMedia
+// 会话（避免某些设备上的“设备繁忙”/re提示模式
+// 硬件re）。
 
 const POS_KEY = 'wrench_board.cameraPreview.position';
 const OPEN_KEY = 'wrench_board.cameraPreview.open';
@@ -48,7 +48,7 @@ function _ensureRoot() {
   _root.querySelector('.camera-preview-close')
     .addEventListener('click', closePreview);
 
-  // Drag — mousedown on header, mousemove on document, mouseup ends.
+  // 拖动 — mousedown 在标题上，鼠标移动到文档ent，鼠标向上ends。
   const head = _root.querySelector('#cameraPreviewHead');
   head.addEventListener('mousedown', (e) => {
     if (e.button !== 0) return;
@@ -64,7 +64,7 @@ function _ensureRoot() {
     if (!_dragState) return;
     let left = e.clientX - _dragState.offsetX;
     let top = e.clientY - _dragState.offsetY;
-    // Clamp to viewport so the frame can't be dragged off-screen.
+    // 夹住视口，这样frame就不能被拖离screen。
     const w = _root.offsetWidth;
     const h = _root.offsetHeight;
     left = Math.max(0, Math.min(window.innerWidth - w, left));
@@ -82,10 +82,10 @@ function _ensureRoot() {
       localStorage.setItem(POS_KEY, JSON.stringify({
         left: _root.style.left, top: _root.style.top,
       }));
-    } catch (_) { /* ignore quota */ }
+    } catch (_) { /* 忽略re 分享 */ }
   });
 
-  // Restore last position if any.
+  // 恢复re最后一个osition（如果有）。
   try {
     const raw = localStorage.getItem(POS_KEY);
     if (raw) {
@@ -95,7 +95,7 @@ function _ensureRoot() {
       _root.style.right = 'auto';
       _root.style.bottom = 'auto';
     }
-  } catch (_) { /* ignore parse */ }
+  } catch (_) { /* 忽略re解析 */ }
 
   return _root;
 }
@@ -119,14 +119,14 @@ export async function openPreview(deviceId, label) {
   _root.hidden = false;
   const labelEl = _root.querySelector('#cameraPreviewLabel');
   if (labelEl) labelEl.textContent = label || t('camera.preview.label_fallback');
-  try { localStorage.setItem(OPEN_KEY, '1'); } catch (_) { /* ignore */ }
+  try { localStorage.setItem(OPEN_KEY, '1'); } catch (_) { /* 忽略re */ }
   return true;
 }
 
 export function closePreview() {
   _stopStream();
   if (_root) _root.hidden = true;
-  try { localStorage.setItem(OPEN_KEY, '0'); } catch (_) { /* ignore */ }
+  try { localStorage.setItem(OPEN_KEY, '0'); } catch (_) { /* 忽略re */ }
 }
 
 function _stopStream() {
@@ -150,8 +150,8 @@ export function wasPreviewOpenLastSession() {
   }
 }
 
-// If the picker changed and the preview is open, re-attach to the new
-// device. If a different device, swap streams ; if same device, no-op.
+// 如果选择器changed并且pre视图是open，re-附加到新的
+// 设备。如果有不同的ent设备，则交换streams；如果是同一设备，no-op。
 export async function updatePreviewDevice(deviceId, label) {
   if (!isPreviewOpen()) return;
   if (!deviceId) {
@@ -163,12 +163,12 @@ export async function updatePreviewDevice(deviceId, label) {
     if (labelEl) labelEl.textContent = label || t('camera.preview.label_fallback');
     return;
   }
-  await openPreview(deviceId, label);  // openPreview swaps internally
+  await openPreview(deviceId, label);  // openPre视图在内部交换
 }
 
-// Snap a single frame from the live preview stream — avoids opening a
-// second getUserMedia session when cam_capture fires while preview is on.
-// Returns null if preview isn't open.
+// 在实时 preview stream 上捕捉单个 frame fr — 避免操作en
+// 第二个 getUserMedia 会话 when cam_capture fires while pre视图已打开。
+// 如果 preview 不是 open，则返回null。
 export async function captureFromPreview(mime = 'image/jpeg', quality = 0.92) {
   if (!isPreviewOpen() || !_video || !_video.videoWidth) return null;
   const canvas = document.createElement('canvas');

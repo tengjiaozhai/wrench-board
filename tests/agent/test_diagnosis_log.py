@@ -53,13 +53,13 @@ def test_load_missing_returns_empty(tmp_path: Path):
 
 
 def test_append_swallows_missing_dir_errors(tmp_path: Path, monkeypatch):
-    # Force the write to a read-only location — should not raise.
+    # 强制写入 re仅包含广告的位置 — 不应引发。
     mr = tmp_path / "memory"
     mr.mkdir()
-    # Simulate a permission error on parent mkdir by pre-creating a file where a dir should go.
+    # 通过 pre-cre在 re 目录应该去的地方模拟 parent mkdir 上的权限错误。
     conflict = mr / "d"
     conflict.write_text("block")
-    # Should not raise — best-effort write.
+    # 不应该提高 - best-effort 写。
     append_diagnosis(
         memory_root=mr, device_slug="d", repair_id="r",
         observations={"state_comps": {}, "state_rails": {}, "metrics_comps": {}, "metrics_rails": {}},
