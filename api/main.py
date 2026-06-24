@@ -57,16 +57,8 @@ async def _prewarm_active_boardviews(memory_root: Path) -> None:
 
     # 检查 pcbnew 是否可用（KiCad 文件需要）
     # KiCad parser 调用系统 Python，故在此检查
-    import subprocess
-    try:
-        result = subprocess.run(
-            ["/usr/bin/env", "python3", "-c", "import pcbnew"],
-            capture_output=True,
-            timeout=5,
-        )
-        pcbnew_available = result.returncode == 0
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        pcbnew_available = False
+    from api.board.parser.kicad import _find_kicad_python
+    pcbnew_available = _find_kicad_python() is not None
     
     if not pcbnew_available:
         logger.info("[prewarm] pcbnew not available — skipping KiCad files")
