@@ -1,13 +1,13 @@
-// Diagnostic chat — Files+Vision (Flow A macro upload + Flow B camera capture)
-// (Phase D.6 extraction from llm.js). Owns the image side-channel of the chat:
-// announcing camera capabilities to the backend, the optimistic image bubble +
-// fullscreen modal in the log, the drag/drop/upload handler (Flow A), and the
-// agent-triggered capture handler (Flow B).
+//  诊断聊天 - Files+Vision（Flow A宏上传+Flow B相机捕捉）
+//  （从llm.js提取Phase D.6）。拥有聊天的图像侧通道：
+//  向后端宣布相机功能，乐观的图像气泡+
+//  日志中的全屏模式、拖/放/上传处理程序 (Flow A) 以及
+//  代理触发的捕获处理程序 (Flow B)。
 //
-// Transport goes through services/diagnosticSocket.js (sendDiagnostic /
-// getDiagnosticWS) — the same live socket llm.js drives — so this module never
-// holds its own `ws`. Camera plumbing comes from camera.js; log rows from
-// chatLog.js. `t` resolves through the global window.t at call time.
+//  传输经过 services/diagnosticSocket.js (sendDiagnostic /
+//  getDiagnosticWS) — 相同的实时套接字 llm.js 驱动 — 因此该模块永远不会
+//  拥有自己的“ws”。相机管道来自camera.js；记录行来自
+//  chatLog.js。 `t` 在调用时通过全局 window.t 解析。
 
 import {
   blobToBase64,
@@ -23,15 +23,15 @@ import { logSys } from './chatLog.js';
 const t = (key, params) => (window.t ? window.t(key, params) : key);
 const el = (id) => document.getElementById(id);
 
-export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;  // 5MB raw, mirrors backend cap
+export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;  //  5MB 原始大小，镜像后端上限
 
 function socketOpen() {
   const ws = getDiagnosticWS();
   return !!(ws && ws.readyState === WebSocket.OPEN);
 }
 
-// Announce camera availability so the backend gates cam_capture in the manifest
-// (runtime_direct) and can short-circuit empty captures (managed runtime).
+//  宣布相机可用性，以便后端门cam_capture在清单中
+//  (runtime_direct)并且可以短路空捕获(managed运行时)。
 export function sendCapabilities() {
   if (!socketOpen()) return;
   sendDiagnostic({
@@ -41,8 +41,8 @@ export function sendCapabilities() {
   });
 }
 
-// Optimistic image bubble in the chat log. URL is either a blob: URL
-// (Flow A optimistic local render) or a /api/macros/... URL (replay).
+//  聊天记录中乐观的图像气泡。 URL 可以是 blob: URL
+//  （Flow A 乐观本地渲染）或 /api/macros/... URL（重播）。
 function appendImageBubble(role, srcUrl, captionText) {
   const log = el("llmLog");
   if (!log) return;
@@ -81,8 +81,8 @@ function openImageModal(srcUrl, captionText) {
   modal.appendChild(img);
 }
 
-// Flow A — tech-initiated macro upload (button / drag-drop). Validates size +
-// mime client-side, renders optimistically, then ships the base64 over the WS.
+//  Flow A — 技术发起的宏上传（按钮/拖放）。验证尺寸 +
+//  mime 客户端，乐观地渲染，然后通过 WS 传送 Base64。
 export async function handleMacroUpload(file) {
   if (!file) return;
   if (file.size > MAX_UPLOAD_BYTES) {
@@ -97,7 +97,7 @@ export async function handleMacroUpload(file) {
     logSys(t('chat.upload.socket_closed'), true);
     return;
   }
-  // Optimistic local render — blob URL stays valid for the page lifetime.
+  //  乐观本地渲染 — blob URL 在页面生命周期内保持有效。
   const url = URL.createObjectURL(file);
   appendImageBubble("user", url, t('chat.image_bubble.macro_caption'));
   try {
@@ -113,9 +113,9 @@ export async function handleMacroUpload(file) {
   }
 }
 
-// Flow B — agent called cam_capture. Snap from the metabar-selected device and
-// post back client.capture_response (success, or empty so the backend's
-// is_error response closes the loop on the agent side).
+//  Flow B — 代理名为 cam_capture。从metabar选择的设备捕捉并
+//  回发 client.capture_response （成功，或者为空，因此后端的
+//  is_error 响应关闭代理端的循环）。
 export async function handleCaptureRequest(payload) {
   const { request_id, reason } = payload;
   const deviceId = selectedCameraDeviceId();
@@ -134,7 +134,7 @@ export async function handleCaptureRequest(payload) {
     });
     if (!blob) throw new Error("canvas.toBlob returned null");
     const base64 = await blobToBase64(blob);
-    // Optimistic render so the tech sees what the agent received.
+    //  乐观渲染，以便技术人员可以看到代理收到的内容。
     const url = URL.createObjectURL(blob);
     appendImageBubble("user", url, t('chat.image_bubble.capture_caption', { label: selectedCameraLabel() }));
     sendDiagnostic({

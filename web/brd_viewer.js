@@ -1,26 +1,26 @@
-// Board source selection — backend-only. The active boardview for a slug
-// is whatever `active_sources.json` pins to (versioned per device). No
-// hardcoded fixture fallback: a missing or unknown slug renders an
-// empty-state, never silently swaps in another device's board.
+//  板源选择 - 仅后端。 slug 的活动boardview
+//  是“active_sources.json”固定的任何内容（每个设备的版本）。否
+//  硬编码的固定装置回退：丢失或未知的slug渲染
+//  空状态，永远不会默默地交换另一个设备的板。
 function resolveBoardSlug() {
   const qs = new URLSearchParams(window.location.search);
   return qs.get('device') || qs.get('board') || null;
 }
 
-// Returns the backend boardview URL for this slug, or null if the server
-// has no file on disk for it. HEAD probe so we don't pay the transfer
-// just to test for existence.
+//  返回此 slug 的后端 boardview URL，如果服务器返回 null
+//  磁盘上没有对应的文件。 HEAD 探测，因此我们不支付转账费用
+//  只是为了测试是否存在。
 async function probeBackendBoardview(slug) {
   if (!slug) return null;
   const url = `/pipeline/packs/${encodeURIComponent(slug)}/boardview`;
   try {
     const res = await fetch(url, { method: 'HEAD', cache: 'no-store' });
     if (res.ok) return url;
-  } catch (_) { /* network error → null */ }
+  } catch (_) { /*  网络错误→空  */ }
   return null;
 }
 
-// No slug or no backend file → null (loader renders empty-state).
+//  没有 slug 或没有后端文件 → null（加载器呈现空状态）。
 async function resolveBoardUrl() {
   const slug = resolveBoardSlug();
   if (!slug) return null;
@@ -33,43 +33,43 @@ const state = {
   board: null,
   partsSorted: null,
   partBodyBboxes: null,
-  pinsByNet: null,        // Map<netName, number[]>  pin indices grouped by net
-  netCategory: null,      // Map<netName, 'power' | 'ground' | 'signal'>
-  partByRefdes: null,     // Map<refdes, Part>  — lookup from pin.part_refdes
-  hoveredPinIdx: null,    // pin under the cursor (for click-affordance outline)
-  netColorHex: null,      // { signal, power, ground, clock, reset, 'no-net' } → "#rrggbb"
-  pinPalette: null,       // rebuilt rgba palette derived from netColorHex
-  // User-origin interactive state (mouse/keyboard) — previously flat.
+  pinsByNet: null,        //  Map<netName, number[]> 按网络分组的引脚索引
+  netCategory: null,      //  地图<netName, 'power' | '地面' | '信号'>
+  partByRefdes: null,     //  Map<refdes, Part> — 从 pin.part_refdes 查找
+  hoveredPinIdx: null,    //  固定在光标下方（用于点击可供性大纲）
+  netColorHex: null,      //  { 信号、电源、接地、时钟、重置、'无网' } → "#rrggbb"
+  pinPalette: null,       //  重建源自 netColorHex 的 rgba 调色板
+  //  用户源交互状态（鼠标/键盘）——之前持平。
   user: {
-    selectedPart: null,     // currently highlighted part (object or null)
-    selectedPinIdx: null,   // currently highlighted pin (index into board.pins)
+    selectedPart: null,     //  当前突出显示的部分（对象或空）
+    selectedPinIdx: null,   //  当前突出显示的引脚（board.pins 中的索引）
   },
-  // Agent-origin state (WS events from dispatch_bv). Independent from user.
+  //  代理起源状态（来自dispatch_bv的WS事件）。独立于用户。
   agent: {
-    highlights: new Set(),   // Set<refdes> — cyan stroke on these parts
-    focused: null,            // refdes string or null — primary focus target
-    dimmed: false,            // when true, non-highlighted parts render faded
-    annotations: new Map(),   // id → {refdes, label}
-    arrows: new Map(),        // id → {from: [x,y], to: [x,y]}  — mils coords
-    net: null,                // agent-highlighted net name or null
-    filter: null,             // agent-filter refdes prefix or null
-    highlightPulseAt: null,   // performance.now() ts of latest highlight/focus event — drives halo+badge
-    protocolSteps: [],         // [{id, target, status}, ...] from active protocol
-    protocolActive: null,      // current_step_id
+    highlights: new Set(),   //  Set<refdes> — 这些部分上的青色描边
+    focused: null,            //  refdes string 或 null — 主要焦点目标
+    dimmed: false,            //  当 true 时，非突出显示的部分呈现褪色
+    annotations: new Map(),   //  id → {refdes, 标签}
+    arrows: new Map(),        //  id → {从：[x,y]，到：[x,y]} — mils 坐标
+    net: null,                //  代理突出显示的网络名称或 null
+    filter: null,             //  代理过滤器 refdes 前缀或 null
+    highlightPulseAt: null,   //  最新亮点/焦点事件的 Performance.now() ts — 驱动 halo+badge
+    protocolSteps: [],         //  来自活动协议的 [{id, target, status}, ...]
+    protocolActive: null,      //  当前步骤id
   },
 };
 
-const RATNEST_MAX_PINS = 50;  // skip drawing fly-lines for huge nets (GND has ~500)
-const PIN_HIT_TOLERANCE_PX = 4;  // extra margin around the pad rect for easier clicks at low zoom
-const AGENT_PULSE_DURATION_MS = 3200;  // halo decays over this window; AGENT badge over 60% of it
+const RATNEST_MAX_PINS = 50;  //  跳过为巨大的网绘制飞线（GND有〜500）
+const PIN_HIT_TOLERANCE_PX = 4;  //  焊盘矩形周围有额外的边距，以便在低变焦时更轻松地点击
+const AGENT_PULSE_DURATION_MS = 3200;  //  光晕在这个窗口上衰减；代理徽章超过 60%
 
-// ---------- Net colour configuration ----------
-// Default hex per category; override-able at runtime via window.setBoardviewNetColor,
-// persisted in localStorage so the technician's palette survives reloads.
-// KEEP IN SYNC with `web/js/pcb_viewer.js`'s PCB_DEFAULT_NET_HEX +
-// PCB_NET_COLOR_STORAGE_KEY — both viewers share the same picker /
-// localStorage entry. (Can't import: pcb_viewer.js loads as a classic
-// script and this file is an ES module.)
+//  ---------- 净色配置 ----------
+//  每个类别的默认十六进制；可在运行时通过 window.setBoardviewNetColor 覆盖，
+//  坚持localStorage，因此技术人员的调色板可以在重新加载后幸存下来。
+//  与 `web/js/pcb_viewer.js` 的 PCB_DEFAULT_NET_HEX 保持同步 +
+//  PCB_NET_COLOR_STORAGE_KEY — 两个查看器共享相同的选择器/
+//  localStorage 条目。 （无法导入：pcb_viewer.js作为经典加载
+//  脚本，该文件是一个 ES 模块。）
 const DEFAULT_NET_HEX = {
   signal:   '#a9b6cc',
   power:    '#B16628',
@@ -77,11 +77,11 @@ const DEFAULT_NET_HEX = {
   clock:    '#c084fc',
   reset:    '#f58278',
   'no-net': '#e6edf7',
-  // Entity-typed pseudo-categories — kept here for storage parity
-  // with the WebGL viewer; the SVG renderer doesn't use them at draw
-  // time but reads/writes the same localStorage entry, so we keep
-  // both maps shape-aligned to avoid losing user picks when one
-  // viewer writes a value the other doesn't know about.
+  //  实体类型的伪类别 - 保留在这里用于存储奇偶校验
+  //  与 WebGL 查看器； SVG 渲染器在绘制时不使用它们
+  //  时间但读/写相同的localStorage条目，所以我们保留
+  //  两张地图形状对齐，以避免在一张地图时丢失用户选择
+  //  观看者写入了其他人不知道的值。
   testPad:  '#5a6378',
   via:      '#c084fc',
   boardOutline: '#67d4f5',
@@ -113,9 +113,9 @@ function saveNetColors(hexMap) {
   try { localStorage.setItem(NET_COLOR_STORAGE_KEY, JSON.stringify(hexMap)); } catch {}
 }
 
-// Rebuild the full pin palette (fill/stroke rgba tuples, trace colours, fly-line
-// colour) from the current hex configuration. Called on init and on every colour
-// change — cheap (six categories × a handful of rgba strings).
+//  重建完整的引脚调色板（填充/描边 rgba 元组、描迹颜色、飞线
+//  颜色）来自当前的十六进制配置。在 init 和每种颜色上调用
+//  变化——便宜（六个类别×一些rgba字符串）。
 function rebuildPinPalette() {
   const c = state.netColorHex || DEFAULT_NET_HEX;
   state.pinPalette = {
@@ -130,7 +130,7 @@ function rebuildPinPalette() {
                   dim:    [hexToRgba(c.clock,  0.25), hexToRgba(c.clock,  0.40)] },
       reset:    { normal: [hexToRgba(c.reset,  0.95), hexToRgba(c.reset,  1.00)],
                   dim:    [hexToRgba(c.reset,  0.25), hexToRgba(c.reset,  0.40)] },
-      // no-net: fill transparent so the pin reads as hollow; stroke takes colour
+      //  no-net：填充透明，因此引脚读取为空心；笔触带有颜色
       'no-net': { normal: ['rgba(0,0,0,0)',  hexToRgba(c['no-net'], 0.65)],
                   dim:    ['rgba(0,0,0,0)',  hexToRgba(c['no-net'], 0.28)] },
     },
@@ -153,11 +153,11 @@ function rebuildPinPalette() {
   };
 }
 
-// Initialise colour state on module load so the palette is ready before first draw.
+//  在模块加载时初始化颜色状态，以便调色板在第一次绘制之前准备就绪。
 state.netColorHex = loadNetColors();
 rebuildPinPalette();
 
-// ---------- Public API for the Tweaks panel ----------
+//  ---------- 调整面板的公共 API ----------
 window.setBoardviewNetColor = function setBoardviewNetColor(category, hex) {
   if (!(category in DEFAULT_NET_HEX)) return;
   state.netColorHex[category] = hex;
@@ -178,11 +178,11 @@ window.getBoardviewColorDefaults = function getBoardviewColorDefaults() {
   return { ...DEFAULT_NET_HEX };
 };
 
-// whitequark/kicad-boardview (for BRD2 / Test_Link) uses module.GetBoundingBox()
-// which includes silkscreen + reference text + value text, so PART bboxes from
-// those sources are ~5x bigger than the actual component body. Our native
-// KiCad parser (source_format='kicad_pcb') already emits pads-only bboxes in
-// board coords, so no correction is needed there — see needsBodyBboxCorrection.
+//  Whitequark/kicad-boardview（对于 BRD2 / Test_Link）使用 module.GetBoundingBox()
+//  其中包括丝印+参考文本+值文本，因此PART bboxes来自
+//  这些源大约比实际组件主体大 5 倍。我们土生土长的
+//  KiCad 解析器 (source_format='kicad_pcb') 已在以下位置发出仅限焊盘的 bbox
+//  板坐标，因此不需要在那里进行校正 - 请参阅needsBodyBboxCorrection。
 function computeBodyBbox(part, pinsById) {
   const pins = (part.pin_refs || []).map(i => pinsById[i]).filter(Boolean);
   if (pins.length === 0) {
@@ -196,10 +196,10 @@ function computeBodyBbox(part, pinsById) {
     if (p.pos.y < y0) y0 = p.pos.y;
     if (p.pos.y > y1) y1 = p.pos.y;
   }
-  // Pad with a fixed 15 mils (~0.4 mm) so 2-pad passives (0603/1210) stay
-  // visible in the axis orthogonal to the pad separation, and single-pin
-  // mounting holes render as a 30x30 mil dot. No percentage padding — it
-  // inflates big connectors (J3, U1, etc.) visibly beyond their real size.
+  //  具有固定 15 mils (~0.4 mm) 的焊盘，因此保留 2 焊盘无源器件 (0603/1210)
+  //  在与焊盘分离正交的轴上可见，并且单引脚
+  //  安装孔呈现为 30x30 mil 点。没有百分比填充——它
+  //  使大型连接器（J3、U1 等）膨胀明显超出其实际尺寸。
   const pad = 15;
   return [
     { x: x0 - pad, y: y0 - pad },
@@ -207,14 +207,14 @@ function computeBodyBbox(part, pinsById) {
   ];
 }
 
-// Source formats that need the pin-derived bbox correction. KiCad native emits
-// pads-only bboxes directly; BRD2 / Test_Link emit inflated module bboxes.
+//  需要 pin 导出的 bbox 校正的源格式。 KiCad 原生发射
+//  仅包含 pads 的 bbox directly； BRD2 / Test_Link 发出膨胀的模块框。
 function needsBodyBboxCorrection(board) {
   return board.source_format !== 'kicad_pcb';
 }
 
-// Map part.refdes -> body bbox (pin-derived). Computed once per board when
-// the source format needs the correction; returns null otherwise.
+//  地图部分。refdes -> 主体 bbox（引脚衍生）。每块板计算一次
+//  源格式需要更正；否则返回 null。
 function computeAllBodyBboxes(board) {
   if (!needsBodyBboxCorrection(board)) return null;
   const pinsById = board.pins || [];
@@ -225,11 +225,11 @@ function computeAllBodyBboxes(board) {
   return out;
 }
 
-// Classify each net into one of: reset, clock, power, ground, signal.
-// Regex patterns are generic / cross-board — they match KiCad, OrCAD, Altium,
-// and vendor conventions from Apple / Samsung / ThinkPad / microcontroller
-// reference designs. Priority: reset > clock > power > ground > signal, so a
-// name like CLK_3V3 routes to 'clock' (the more specific cue).
+//  将每个网络分类为以下之一：复位、时钟、电源、接地、信号。
+//  正则表达式模式是通用/跨板的 - 它们匹配 KiCad、OrCAD、Altium、
+//  以及 Apple / Samsung / ThinkPad / 微控制器的供应商约定
+//  参考设计。优先级：复位>时钟>电源>地>信号，所以
+//  像 CLK_3V3 这样的名称会路由到“时钟”（更具体的提示）。
 const NET_CLOCK_RE = /(^|[_\-/.])(CLK|CLOCK|XTAL|X_?IN|X_?OUT|OSC(IN|OUT)?|SCLK|SCK|SYSCLK|[MHP]CLK)([_\-/.0-9]|$)/i;
 const NET_RESET_RE = /(^|[_\-/.])(N_?RESET|N_?RST|RESET_?N|RST_?N|POR|PWR_?(GOOD|OK)|RESET|RST)([_\-/.0-9]|$)/i;
 
@@ -246,7 +246,7 @@ function computeNetCategory(board) {
   return out;
 }
 
-// Index pins by net name so we can highlight / trace a whole net from one click.
+//  按网络名称索引引脚，这样我们就可以一键突出显示/跟踪整个网络。
 function computePinsByNet(board) {
   const out = new Map();
   const pins = board.pins || [];
@@ -259,16 +259,16 @@ function computePinsByNet(board) {
   return out;
 }
 
-// Index parts by refdes for O(1) lookup from a pin's part_refdes.
+//  按 refdes 索引零件，以便从引脚的零件_refdes 进行 O(1) 查找。
 function computePartByRefdes(board) {
   const out = new Map();
   for (const p of board.parts || []) out.set(p.refdes, p);
   return out;
 }
 
-// Hit-test: is (sx, sy) inside any part's body bbox? Iterate smallest-first
-// so that a small component sitting on top of a large connector is picked.
-// 0-pin annotations and wrong-side parts are skipped.
+//  命中测试：(sx, sy) 是否在任何部件的主体 bbox 内？迭代最小优先
+//  以便拾取位于大连接器顶部的小元件。
+//  0 引脚注释和错误侧部分被跳过。
 function hitTestPart(sx, sy) {
   if (!state.board) return null;
   const parts = state.partsSorted || state.board.parts || [];
@@ -292,14 +292,14 @@ function hitTestPart(sx, sy) {
   return null;
 }
 
-// Hit-test: given screen-px coords, return the index of the pin under the cursor.
-// Each pin has a pad_size (in mils) AND a pad_rotation_deg (for multi-row
-// packages like QFP/BGA where the side-row pads are rotated 90° vs top/bottom).
-// To test containment correctly we transform the click point into the pad's
-// local frame (inverse of the -rotDeg applied at draw time) and test against
-// an axis-aligned rectangle there.
-// A small tolerance margin (default 4 px) keeps very small pads clickable at
-// low zoom. Among overlapping hits (dense clusters) pick the smallest pad.
+//  命中测试：给定屏幕像素坐标，返回光标下引脚的索引。
+//  每个引脚都有一个 pad_size （在 mils 中）和一个 pad_rotation_deg （用于多行
+//  像QFP/BGA这样的封装，其中侧排焊盘相对于顶部/底部旋转90°）。
+//  为了正确测试遏制，我们将点击点转换为打击垫的点
+//  本地框架（绘制时应用的 -rotDeg 的逆）并进行测试
+//  那里有一个轴对齐的矩形。
+//  小容差（默认 4 像素）可保持非常小的焊盘可点击
+//  低变焦。在重叠的命中（密集的簇）中选择最小的垫。
 function hitTestPin(sx, sy, tolerancePx = PIN_HIT_TOLERANCE_PX) {
   if (!state.board) return null;
   const pins = state.board.pins || [];
@@ -318,8 +318,8 @@ function hitTestPin(sx, sy, tolerancePx = PIN_HIT_TOLERANCE_PX) {
     const halfW = Math.max(sizeMils[0] * vp.zoom / 2, 2) + tolerancePx;
     const halfH = Math.max(sizeMils[1] * vp.zoom / 2, 2) + tolerancePx;
 
-    // Transform click into the pad's local frame. The draw applied
-    // ctx.rotate(-rotRad); to invert, rotate (dx, dy) by +rotRad.
+    //  将单击变换到打击垫的本地框架中。抽签已应用
+    //  ctx.rotate(-rotRad);要反转，请按 +rotRad 旋转 (dx, dy)。
     const dx = sx - p.x;
     const dy = sy - p.y;
     const rotDeg = pin.pad_rotation_deg || 0;
@@ -342,10 +342,10 @@ function hitTestPin(sx, sy, tolerancePx = PIN_HIT_TOLERANCE_PX) {
   return bestIdx;
 }
 
-// Sort parts by descending bbox area so big packages (SoM connectors, BGA SoCs)
-// are drawn first and dense clusters of small passives on top of them remain
-// visible. Uses bodyBboxes when provided (BRD2 / Test_Link sources), otherwise
-// falls back to part.bbox (already pads-only for kicad_pcb source).
+//  按 bbox 面积降序对部件进行排序，直至大封装（SoM 连接器、BGA SoC）
+//  首先绘制，并且在它们上面保留密集的小无源簇
+//  可见。如果提供则使用 bodyBboxes（BRD2 / Test_Link 源），否则
+//  退回到part.bbox（已经仅用于kicad_pcb 源的焊盘）。
 function sortPartsByAreaDesc(parts, bodyBboxes) {
   const bboxOf = (p) => (bodyBboxes && bodyBboxes.get(p.refdes)) || p.bbox;
   return [...parts].sort((a, b) => {
@@ -359,16 +359,16 @@ function sortPartsByAreaDesc(parts, bodyBboxes) {
   });
 }
 
-// layer IntFlag values
+//  层 IntFlag 值
 const LAYER_TOP    = 1;
 const LAYER_BOTTOM = 2;
 const LAYER_BOTH   = 3;
 
-// Center the viewport on a bbox (mils) at the requested zoom. Returns false
-// when the canvas is currently 0×0 (section hidden) so callers can queue
-// the focus for a later flush. Accepts both bbox flavours used across the
-// codebase: [[x,y],[x,y]] (WS Focus events — tuples) and [{x,y},{x,y}]
-// (in-memory partBodyBboxes / part.bbox from the parsed board).
+//  按请求的缩放比例将视口置于 bbox (mils) 的中心。返回错误
+//  当画布当前为 0×0（部分隐藏）时，调用者可以排队
+//  稍后冲洗的焦点。接受跨界使用的两种 bbox 风格
+//  代码库：[[x,y],[x,y]]（WS 焦点事件 - 元组）和 [{x,y},{x,y}]
+//  （来自解析板的内存中的partBodyBboxes/part.bbox）。
 function _computeFocusPan(bbox, zoom) {
   if (!bbox || !canvas) return false;
   const cw = canvas.clientWidth;
@@ -390,27 +390,27 @@ function _computeFocusPan(bbox, zoom) {
   return true;
 }
 
-// viewport: mils-to-pixel transform
+//  视口：mils到像素变换
 const vp = { panX: 0, panY: 0, zoom: 1 };
 
-// Focus request deferred because the canvas was hidden (clientWidth === 0)
-// at the time _applyFocus ran. Flushed by the ResizeObserver as soon as
-// the canvas gains non-zero dimensions (i.e. the user navigates to #pcb).
+//  由于画布被隐藏，焦点请求被推迟（clientWidth === 0）
+//  当时 _applyFocus 运行。一旦被ResizeObserver冲走
+//  画布获得非零尺寸（即用户导航到#pcb）。
 let pendingFocus = null;
 
-// render state
+//  渲染状态
 let canvas = null, ctx = null;
 let dirty = false;
 let animFrame = null;
-let activeSide = LAYER_TOP;   // LAYER_TOP or LAYER_BOTTOM
-let cursorMils = null;        // {x, y} or null
-let showAnnotations = true;   // silkscreen labels / logos (0-pin footprints)
+let activeSide = LAYER_TOP;   //  LAYER_TOP 或 LAYER_BOTTOM
+let cursorMils = null;        //  {x, y} 或 null
+let showAnnotations = true;   //  丝网印刷标签/徽标（0 针封装）
 
 function cssVar(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
-// --- board bbox ---
+//  ---板bbox ---
 function outlineBbox(board) {
   const pts = board.outline;
   if (!pts || pts.length === 0) return { x0: 0, y0: 0, x1: 1000, y1: 1000 };
@@ -424,7 +424,7 @@ function outlineBbox(board) {
   return { x0, y0, x1, y1 };
 }
 
-// --- fit viewport to board outline bbox, 8% padding ---
+//  --- 使视口适合板轮廓框，8% 填充 ---
 function fitToBoard() {
   if (!canvas || !state.board) return;
   const bb = outlineBbox(state.board);
@@ -442,11 +442,11 @@ function fitToBoard() {
   requestRedraw();
 }
 
-// --- coordinate helpers ---
-// milsToScreen: apply pan/zoom, then mirror if on bottom side
+//  --- 协调助手 ---
+//  milsToScreen：应用平移/缩放，然后镜像（如果在底部）
 function milsToScreen(mx, my, boardW) {
   if (activeSide === LAYER_BOTTOM) {
-    // X-axis mirror: reflect around board centre x
+    //  X轴镜：围绕板中心x反射
     mx = boardW - mx;
   }
   return {
@@ -457,7 +457,7 @@ function milsToScreen(mx, my, boardW) {
 
 function screenToMils(sx, sy) {
   const bb = outlineBbox(state.board);
-  const boardW = bb.x1 - bb.x0 + bb.x0 * 2; // full width in mils coords
+  const boardW = bb.x1 - bb.x0 + bb.x0 * 2; //  mils 坐标中的全宽
   let mx = (sx - vp.panX) / vp.zoom;
   const my = (sy - vp.panY) / vp.zoom;
   if (activeSide === LAYER_BOTTOM) {
@@ -466,9 +466,9 @@ function screenToMils(sx, sy) {
   return { x: mx, y: my };
 }
 
-// Choose an overlay stroke for a part based on user + agent state.
-// Precedence: user selection (violet) > agent focused (cyan strong)
-// > agent highlighted (cyan normal) > null.
+//  根据用户 + 代理状态为零件选择 overlay 笔画。
+//  优先级：用户选择（紫色）> 代理聚焦（青色强）
+//  > 代理突出显示（青色 normal） > 空。
 function _partStrokeOverlay(part) {
   if (state.user.selectedPart && state.user.selectedPart.refdes === part.refdes) {
     return { color: cssVar('--violet') || '#c084fc', width: 2.4 };
@@ -482,7 +482,7 @@ function _partStrokeOverlay(part) {
   return null;
 }
 
-// --- drawing ---
+//  --- 绘图 ---
 function draw() {
   animFrame = null;
   dirty = false;
@@ -492,25 +492,25 @@ function draw() {
   const cw  = canvas.clientWidth;
   const ch  = canvas.clientHeight;
 
-  // Resize backing store if needed
+  //  如果需要，调整后备存储的大小
   if (canvas.width !== Math.round(cw * dpr) || canvas.height !== Math.round(ch * dpr)) {
     canvas.width  = Math.round(cw * dpr);
     canvas.height = Math.round(ch * dpr);
   }
 
-  // HiDPI base transform — everything drawn in CSS pixels, DPR applied once here
+  //  HiDPI 基础变换 — 所有内容均以 CSS 像素绘制，DPR 在此应用一次
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-  // background
+  //  背景
   ctx.fillStyle = cssVar('--bg') || '#0a1120';
   ctx.fillRect(0, 0, cw, ch);
 
   const board = state.board;
   const bb    = outlineBbox(board);
-  // board width in mils (used for mirror transform)
-  const boardW = bb.x1 + bb.x0;  // mirror: x' = boardW - x
+  //  mils 的板宽度（用于镜像变换）
+  const boardW = bb.x1 + bb.x0;  //  镜子：x' = 板W - x
 
-  // ---- outline ----
+  //  ---- 概要 ----
   const outline = board.outline;
   if (outline && outline.length > 1) {
     ctx.beginPath();
@@ -526,19 +526,19 @@ function draw() {
     ctx.stroke();
   }
 
-  // ---- parts (skip 0-pin footprints — those are silkscreen annotations
-  //                drawn separately below as labels) ----
+  //  ---- 零件（跳过 0 引脚封装 — 这些是丝印注释
+  //                                下面单独绘制作为标签）----
   const parts = state.partsSorted || board.parts || [];
   ctx.lineWidth = 1;
   for (const part of parts) {
     if (!part.pin_refs || part.pin_refs.length === 0) continue;
-    // layer filter: skip parts that don't belong to the active side
+    //  图层过滤器：跳过不属于活动侧的部分
     if (part.layer !== LAYER_BOTH) {
       if (activeSide === LAYER_TOP    && part.layer !== LAYER_TOP)    continue;
       if (activeSide === LAYER_BOTTOM && part.layer !== LAYER_BOTTOM) continue;
     }
-    // Prefer the pin-derived body bbox (tighter, matches physical component)
-    // over the BRD2 bbox which is inflated by silkscreen + ref/value text.
+    //  Prefer the pin-derived body bbox (tighter, matches physical component)
+    //  over the BRD2 bbox which is inflated by silkscreen + ref/value text.
     const bbox = state.partBodyBboxes?.get(part.refdes) || part.bbox;
     if (!bbox || bbox.length < 2) continue;
 
@@ -549,7 +549,7 @@ function draw() {
     const rw = Math.abs(b.x - a.x);
     const rh = Math.abs(b.y - a.y);
 
-    // Agent dim: fade unrelated parts when state.agent.dimmed is set.
+    //  Agent dim: fade unrelated parts when state.agent.dimmed is set.
     const isUserSelected = state.user.selectedPart && state.user.selectedPart.refdes === part.refdes;
     const isAgentActive  = state.agent.highlights.has(part.refdes) || state.agent.focused === part.refdes;
     const shouldDim = state.agent.dimmed && !isUserSelected && !isAgentActive;
@@ -564,13 +564,13 @@ function draw() {
       ctx.fillRect(rx, ry, rw, rh);
       ctx.strokeRect(rx, ry, rw, rh);
 
-      // Overlay stroke: user selection (violet) > agent focused (cyan strong)
-      // > agent highlighted (cyan normal). Replaces the old isSelected branch.
+      //  Overlay stroke: user selection (violet) > agent focused (cyan strong)
+      //  > agent highlighted (cyan normal). Replaces the old isSelected branch.
       const overlay = _partStrokeOverlay(part);
       if (overlay) {
         ctx.strokeStyle = overlay.color;
         ctx.lineWidth   = overlay.width;
-        // For user-selected parts also use a tinted fill to match prior look.
+        //  For user-selected parts also use a tinted fill to match prior look.
         if (isUserSelected) ctx.fillStyle = 'rgba(56,189,248,0.22)';
         ctx.fillRect(rx, ry, rw, rh);
         ctx.strokeRect(rx, ry, rw, rh);
@@ -581,11 +581,11 @@ function draw() {
     ctx.lineWidth = 1;
   }
 
-  // Agent action pulse + persistent marker. Two-phase render:
-  //   - 0..AGENT_PULSE_DURATION_MS: beefy pulsing halo (4 rings, sin modulation) +
-  //     AGENT badge. Schedules continuous redraws.
-  //   - after pulse: discreet single ring + faint fill stays as long as the refdes
-  //     is in state.agent.highlights, so the tech still knows what the agent picked.
+  //  Agent action pulse + persistent marker. Two-phase render:
+  //      - 0..AGENT_PULSE_DURATION_MS: beefy pulsing halo (4 rings, sin modulation) +
+  //          AGENT badge. Schedules continuous redraws.
+  //      - after pulse: discreet single ring + faint fill stays as long as the refdes
+  //          is in state.agent.highlights, so the tech still knows what the agent picked.
   if (state.agent.highlights.size > 0) {
     const now = performance.now();
     const pulseElapsed = state.agent.highlightPulseAt ? now - state.agent.highlightPulseAt : Infinity;
@@ -596,8 +596,8 @@ function draw() {
     let intensity = 0;
     if (pulsing) {
       const envelope = 1 - pulseProgress;
-      // Slower oscillation than the original 0.008 — at 0.005 we get ~2.5 wave
-      // crests over the 3.2 s envelope instead of feeling rushed.
+      //  Slower oscillation than the original 0.008 — at 0.005 we get ~2.5 wave
+      //  超越 3.2 秒的包络线，而不是感到匆忙。
       const wave = 0.55 + 0.45 * Math.sin(now * 0.005);
       intensity = envelope * wave;
     }
@@ -621,9 +621,9 @@ function draw() {
 
       ctx.save();
 
-      // Corner radius capped to ¼ of the smaller side so tiny components
-      // (passives, 0402…) still get a visibly rounded outline without
-      // collapsing to a circle.
+      //  圆角半径上限为较小边的 1/4，因此元件很小
+      //  （被动，0402…）仍然得到明显的圆形轮廓，没有
+      //  塌陷成一个圆圈。
       const cr = Math.max(0, Math.min(3, rw / 4, rh / 4));
 
       if (pulsing) {
@@ -644,9 +644,9 @@ function draw() {
           ctx.stroke();
         }
       } else {
-        // Persistent marker — sit ON the bbox (no inflate) with a rounded
-        // outline so it visibly hugs the component instead of floating
-        // around it. Slightly bumped fill+stroke alpha for crispness.
+        //  持久标记 — 坐在 bbox 上（不充气），带有圆形标记
+        //  轮廓，因此它明显地拥抱组件而不是浮动
+        //  围绕它。稍微提高填充+描边阿尔法以获得清晰度。
         ctx.globalAlpha = 0.16;
         ctx.fillStyle = cyan;
         ctx.beginPath();
@@ -694,19 +694,19 @@ function draw() {
     if (pulsing) requestRedraw();
   }
 
-  // Protocol step badges — numbered circles above each step's target refdes.
-  // Color = cyan for pending/done/active, amber for failed/skipped. Active
-  // step pulses (uses the same highlightPulseAt timestamp envelope).
-  // Multiple steps targeting the same refdes stack vertically (newer steps
-  // sit higher above the bbox), so each step gets its own visible badge.
+  //  协议步骤徽章 - 每个步骤目标 refdes 上方的编号圆圈。
+  //  颜色 = 青色表示待处理/完成/活动，琥珀色表示失败/跳过。活跃
+  //  步进脉冲（使用相同的highlightPulseAt时间戳包络）。
+  //  针对相同 refdes 的多个步骤垂直堆叠（较新的步骤
+  //  位于 bbox 上方更高的位置），因此每个步骤都有自己的可见徽章。
   if (state.agent.protocolSteps && state.agent.protocolSteps.length > 0) {
     const cyan = cssVar('--cyan') || '#38bdf8';
     const amber = cssVar('--amber') || '#f59e0b';
     const bgDeep = cssVar('--bg-deep') || '#06080d';
     const now = performance.now();
 
-    // Group steps by target refdes so we can stack badges sharing the same anchor.
-    const grouped = new Map();   // refdes → [{step, displayIndex}]
+    //  按目标refdes对步骤进行分组，以便我们可以堆叠共享相同锚点的徽章。
+    const grouped = new Map();   //  refdes → [{步骤, 显示索引}]
     for (let i = 0; i < state.agent.protocolSteps.length; i++) {
       const st = state.agent.protocolSteps[i];
       if (!st.target) continue;
@@ -729,7 +729,7 @@ function draw() {
       const cx = (a.x + b.x) / 2;
       const cyBase = Math.min(a.y, b.y) - 10;
 
-      // Stack: first badge sits closest to the bbox, later badges climb upward.
+      //  堆栈：第一个徽章最靠近 bbox，后面的徽章向上爬。
       for (let k = 0; k < group.length; k++) {
         const { step: st, displayIndex } = group[k];
         const cy = cyBase - k * 22;
@@ -763,7 +763,7 @@ function draw() {
     }
   }
 
-  // Agent annotations: small cyan label near the part's bbox top-left.
+  //  代理注释：靠近零件 bbox 左上角的小青色标签。
   for (const [, ann] of state.agent.annotations) {
     const part = state.partByRefdes?.get(ann.refdes);
     if (!part) continue;
@@ -777,7 +777,7 @@ function draw() {
     ctx.restore();
   }
 
-  // Agent arrows: straight line + small arrowhead, mils → screen coords.
+  //  代理箭头：直线+小箭头，mils→屏幕坐标。
   for (const [, arr] of state.agent.arrows) {
     const { x: fx, y: fy } = milsToScreen(arr.from[0], arr.from[1], boardW);
     const { x: tx, y: ty } = milsToScreen(arr.to[0],   arr.to[1],   boardW);
@@ -796,24 +796,24 @@ function draw() {
     ctx.restore();
   }
 
-  // ---- pins ----
-  // Each pin is drawn at its real pad size and shape (from KiCad).
-  // Rects are axis-aligned (part rotation not applied to the pad rect yet —
-  // accepted imprecision for rotated packages at MVP scope).
+  //  ---- 引脚 ----
+  //  每个引脚均以其真实焊盘尺寸和形状绘制（从 KiCad 开始）。
+  //  矩形是轴对齐的（零件旋转尚未应用于焊盘矩形 -
+  //  接受 MVP 范围内旋转包的不精确性）。
   const pins = board.pins || [];
-  // Pin colour palette keyed by { category, state }.
-  //   state: 'normal' (no selection)  | 'dim' (another net is selected)  | 'net' (selected net)
-  //   category: 'signal' | 'power' | 'ground'
-  // Keeping category colours in the dim state lets the tech still see which of
-  // the non-traced pins are power / ground / signal during net exploration.
-  // Colour palette comes from state.pinPalette (rebuilt from user config +
-  // localStorage — see rebuildPinPalette above). Users can tweak via the
-  // Tweaks panel without touching code.
+  //  固定调色板，按 {category, state } 键控。
+  //      状态：'normal'（无选择）| 'dim'（选择另一个网络）| 'net'（选定的网络）
+  //      类别： '信号' | '权力' | '地面'
+  //  将类别颜色保持在暗淡状态可以让技术人员仍然看到哪些
+  //  在网络探索期间，未跟踪的引脚是电源/接地/信号。
+  //  调色板来自state.pinPalette（从用户配置重建+
+  //  localStorage — 参见上面的rebuildPinPalette）。用户可以通过调整
+  //  无需触摸代码即可调整面板。
   const PIN_COLORS    = state.pinPalette.PIN_COLORS;
   const PIN_NET_SEL   = state.pinPalette.PIN_NET_SEL;
   const FLY_LINE_COLOR = state.pinPalette.FLY_LINE_COLOR;
 
-  // Determine the selected net (if any) from state.user.selectedPinIdx
+  //  从 state.user.selectedPinIdx 确定选定的网络（如果有）
   const selectedPin = state.user.selectedPinIdx != null ? pins[state.user.selectedPinIdx] : null;
   const selectedNet = selectedPin && selectedPin.net ? selectedPin.net : null;
   const netPinSet = selectedNet ? new Set(state.pinsByNet?.get(selectedNet) || []) : null;
@@ -832,39 +832,39 @@ function draw() {
     }
     const s = milsToScreen(pin.pos.x, pin.pos.y, boardW);
 
-    // pad_size is in mils, convert to screen via zoom. Fallback to 30x30 mils
-    // (~0.75mm) for pins lacking size (BRD2 / Test_Link don't carry it).
+    //  pad_size在mils，通过缩放转换到屏幕。回退到 30x30 mils
+    //  (~0.75mm) 用于缺少尺寸的引脚（BRD2 / Test_Link 不携带）。
     const sizeMils = pin.pad_size || [30, 30];
     const sw = sizeMils[0] * vp.zoom;
     const sh = sizeMils[1] * vp.zoom;
-    // Clamp to at least 2 px so pins stay visible when zoomed out hard.
+    //  夹紧到至少 2 像素，以便在大力缩小时图钉保持可见。
     const w = Math.max(sw, 2);
     const h = Math.max(sh, 2);
 
-    // Semantic category for this pin (drives both colour and fill/outline style)
+    //  该引脚的语义类别（驱动颜色和填充/轮廓样式）
     const pinCat = pin.net
       ? (state.netCategory?.get(pin.net) || 'signal')
       : 'no-net';
-    // no-net pads are drawn as hollow outlines so they never blend into any
-    // filled category (power / ground / signal / clock / reset).
+    //  无网垫被绘制为空心轮廓，因此它们永远不会融入任何
+    //  填充类别（电源/接地/信号/时钟/复位）。
     const isHollow = pinCat === 'no-net' && !(netPinSet && netPinSet.has(i)) && state.user.selectedPinIdx !== i;
 
     if (netPinSet && netPinSet.has(i)) {
       [ctx.fillStyle, ctx.strokeStyle] = PIN_NET_SEL[selectedCat];
     } else if (state.user.selectedPinIdx === i && !netPinSet) {
-      // Clicked a no-net pin — no fly-lines, but still highlight the pin itself
+      //  单击无网络图钉 - 没有飞线，但仍突出显示图钉本身
       [ctx.fillStyle, ctx.strokeStyle] = PIN_NET_SEL[selectedCat];
     } else {
       const stateKey = netPinSet ? 'dim' : 'normal';
       [ctx.fillStyle, ctx.strokeStyle] = PIN_COLORS[pinCat][stateKey];
     }
 
-    // Apply this pin's own pad rotation — each pad carries its own orientation
-    // independent of the footprint's placement rotation. On multi-row packages
-    // (QFP / BGA) the pads on the sides are rotated 90° relative to the
-    // top/bottom pads, so using the footprint rotation for every pin is wrong.
-    // KiCad reports CCW-positive angles in an X-right/Y-up math frame; canvas
-    // is CW-positive in an X-right/Y-down frame — invert the sign.
+    //  应用该引脚自己的焊盘旋转 - 每个焊盘都有自己的方向
+    //  与封装的放置旋转无关。在多行封装上
+    //  (QFP / BGA) 侧面的焊盘相对于
+    //  顶部/底部焊盘，因此对每个引脚使用封装旋转是错误的。
+    //  KiCad 报告 X-right/Y-up 数学框架中的 CCW 正角度；画布
+    //  在 X 右/Y 下坐标系中为 CW 正值 — 反转符号。
     const rotDeg = pin.pad_rotation_deg || 0;
     const rotRad = -rotDeg * Math.PI / 180;
 
@@ -882,7 +882,7 @@ function draw() {
       if (!isHollow) ctx.fill();
       if (isHollow || vp.zoom >= 1.5) ctx.stroke();
     } else {
-      // circle / custom / fallback (rotation-invariant)
+      //  圆/自定义/后备（旋转不变）
       const r = Math.max(w, h) / 2;
       ctx.beginPath();
       ctx.arc(0, 0, r, 0, Math.PI * 2);
@@ -890,9 +890,9 @@ function draw() {
       if (isHollow || vp.zoom >= 1.5) ctx.stroke();
     }
 
-    // Hover affordance — same shape as the pad, inflated by a 3 px gap.
+    //  悬停功能可供性 — 与 pad 形状相同，但膨胀了 3 px 间隙。
     if (i === state.hoveredPinIdx && i !== state.user.selectedPinIdx) {
-      ctx.strokeStyle = 'rgba(56, 189, 248, 0.95)';   // --cyan
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.95)';   //  --青色
       ctx.lineWidth = 1.5;
       const gap = 3;
       if (shape === 'rect' || shape === 'roundrect' || shape === 'trapezoid') {
@@ -913,7 +913,7 @@ function draw() {
     ctx.restore();
   }
 
-  // ---- ratnest fly-lines (selected net only, skip huge nets like GND) ----
+  //  ---- 鼠巢飞线（仅限选定的网，跳过像GND这样的巨大网）----
   if (selectedNet && netPinSet && netPinSet.size <= RATNEST_MAX_PINS && state.user.selectedPinIdx != null) {
     const anchor = pins[state.user.selectedPinIdx];
     const anchorScr = milsToScreen(anchor.pos.x, anchor.pos.y, boardW);
@@ -932,15 +932,15 @@ function draw() {
     ctx.setLineDash([]);
   }
 
-  // ---- silkscreen annotations (0-pin footprints: logos, labels, badges) ----
-  // Rendered as text at the footprint centre, respecting rotation. Matches
-  // what is physically printed on the PCB silkscreen layer.
+  //  ---- 丝印注释（0 针脚印：徽标、标签、徽章）----
+  //  在足迹中心呈现为文本，尊重旋转。火柴
+  //  PCB丝印层上物理印刷的是什么。
   if (showAnnotations) {
     ctx.fillStyle = cssVar('--text-3') || '#6e7d96';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     for (const part of parts) {
-      if (part.pin_refs && part.pin_refs.length > 0) continue;  // only 0-pin
+      if (part.pin_refs && part.pin_refs.length > 0) continue;  //  仅0针
       if (part.layer !== LAYER_BOTH) {
         if (activeSide === LAYER_TOP    && part.layer !== LAYER_TOP)    continue;
         if (activeSide === LAYER_BOTTOM && part.layer !== LAYER_BOTTOM) continue;
@@ -957,15 +957,15 @@ function draw() {
       const hMils = Math.abs(bbox[1].y - bbox[0].y);
       const center = milsToScreen(cxMils, cyMils, boardW);
 
-      // Fit text to the LONG axis of the bbox (the KiCad footprint rotation
-      // is already implicit in the bbox proportions — portrait bboxes want
-      // rotated text to match the side they're printed along).
+      //  使文本适合 bbox 的长轴（KiCad 足迹旋转
+      //  已经隐含在 bbox 比例中 — 肖像 bbox 想要
+      //  旋转文本以匹配它们打印的一面）。
       const landscape = wMils >= hMils;
       const longPx  = (landscape ? wMils : hMils) * vp.zoom;
       const shortPx = (landscape ? hMils : wMils) * vp.zoom;
-      if (longPx < 14) continue;  // too small to render readably
+      if (longPx < 14) continue;  //  太小而无法可读
 
-      // Font size: fit to the short axis, clamped by the long axis / char count
+      //  字体大小：适合短轴，受长轴限制/字符数
       let fontSize = Math.min(shortPx * 0.7, (longPx * 1.5) / Math.max(label.length, 1));
       fontSize = Math.max(8, Math.min(fontSize, 48));
       ctx.font = `500 ${fontSize}px 'JetBrains Mono', ui-monospace, monospace`;
@@ -985,7 +985,7 @@ function requestRedraw() {
   animFrame = requestAnimationFrame(draw);
 }
 
-// --- toolbar DOM helpers ---
+//  --- 工具栏 DOM 助手 ---
 function updateZoomReadout(toolbar) {
   const el = toolbar.querySelector('.brd-zoom');
   if (el) el.textContent = vp.zoom.toFixed(2) + '×';
@@ -1011,9 +1011,9 @@ function updateInspector() {
     return;
   }
 
-  // Compute per-net pin counts for this part
-  const netCounts = new Map();  // netName → count
-  let firstPinByNet = new Map();  // netName → first pin index (for click-to-trace)
+  //  计算该部分的每网络引脚数
+  const netCounts = new Map();  //  网络名称 → 计数
+  let firstPinByNet = new Map();  //  网络名称 → 第一个引脚索引（用于点击跟踪）
   for (const pinIdx of (part.pin_refs || [])) {
     const pin = state.board.pins[pinIdx];
     if (!pin) continue;
@@ -1025,19 +1025,19 @@ function updateInspector() {
   const selectedNetName_hoisted = state.user.selectedPinIdx != null
     ? (state.board.pins[state.user.selectedPinIdx]?.net || null)
     : null;
-  // Promote the currently-selected net to the top of the list so the user
-  // doesn't have to scroll past GND / power rails to find it.
+  //  将当前选择的网络提升到列表顶部，以便用户
+  //  不必滚动过去 GND / power rails 即可找到它。
   const netsSorted = [...netCounts.entries()].sort((a, b) => {
     if (a[0] === selectedNetName_hoisted) return -1;
     if (b[0] === selectedNetName_hoisted) return 1;
     return b[1] - a[1];
   });
 
-  // Linked parts: other footprints that share a signal/clock/reset net with
-  // this part. Power and ground are intentionally skipped — GND touches
-  // nearly every part and would produce a useless "everything is linked"
-  // list. The remaining relations reflect real signal topology.
-  const linked = new Map();  // otherRefdes → Set<netName>
+  //  链接部件：与以下部件共享信号/时钟/复位网络的其他封装
+  //  这部分。故意跳过电源和接地 — GND 接触
+  //  几乎每个部分都会产生无用的“一切都是相互联系的”
+  //  列表。其余关系反映真实的信号拓扑。
+  const linked = new Map();  //  otherRefdes → 设置<网络名称>
   for (const pinIdx of (part.pin_refs || [])) {
     const pin = state.board.pins[pinIdx];
     if (!pin || !pin.net) continue;
@@ -1053,7 +1053,7 @@ function updateInspector() {
   }
   const linkedSorted = [...linked.entries()].sort((a, b) => b[1].size - a[1].size);
 
-  // Compute dimensions from body bbox
+  //  从 body bbox 计算尺寸
   const bbox = state.partBodyBboxes?.get(part.refdes) || part.bbox;
   const wMils = Math.abs(bbox[1].x - bbox[0].x);
   const hMils = Math.abs(bbox[1].y - bbox[0].y);
@@ -1289,7 +1289,7 @@ function attachInteraction(containerEl, toolbar, badge) {
     }
   });
 
-  // Escape clears selection
+  //  退出清除选择
   window.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape' && (state.user.selectedPinIdx != null || state.user.selectedPart != null)) {
       state.user.selectedPinIdx = null;
@@ -1314,10 +1314,10 @@ function attachInteraction(containerEl, toolbar, badge) {
   });
 }
 
-// --- loading skeleton ---
-// Shown during the first fetch + parse round-trip on a fresh boardview.
-// Skipped on subsequent re-mounts (state.board cached). Spinner + shimmer
-// on the placeholder bars so the canvas never feels frozen.
+//  ---加载骨架---
+//  在第一次获取 + 解析新的 boardview 上的 round-trip 期间显示。
+//  在后续重新安装时跳过（state.board 已缓存）。旋转+闪光
+//  在占位栏上，这样画布就不会感觉冻结。
 function renderSkeleton(root) {
   root.innerHTML = `
     <div class="brd-loader-card">
@@ -1345,11 +1345,11 @@ function renderError(root, detail) {
     </div>`;
 }
 
-// Empty-state — no boardview fixture exists for the current ?device= slug.
-// Shown instead of silently falling back to a wrong device's PCB. Reuses
-// the .error-card chrome (same dark-bg + centered text grammar) so styling
-// stays consistent with the existing error path; the copy explains how to
-// upload one.
+//  空状态 — 当前 ?device= slug 不存在 boardview 固定装置。
+//  显示出来，而不是默默地退回到错误设备的 PCB。重用
+//  .error-card chrome（相同的 dark-bg + 居中文本语法）如此样式
+//  与现有的错误路径保持一致；该副本解释了如何
+//  上传一张。
 function renderEmpty(root, slug) {
   const code = t('brd.empty.code');
   const msg  = slug
@@ -1362,21 +1362,21 @@ function renderEmpty(root, slug) {
     </div>`;
 }
 
-// --- main canvas setup ---
+//  --- 主画布设置 ---
 function mountCanvas(containerEl, board) {
   containerEl.innerHTML = '';
 
   const partCount = (board.parts || []).length;
   const pinCount  = (board.pins  || []).length;
 
-  // Canvas element — fills container absolutely
+  //  Canvas 元素 — 完全填充容器
   canvas = document.createElement('canvas');
   canvas.className = 'brd-canvas';
   canvas.style.cursor = 'grab';
   containerEl.appendChild(canvas);
   ctx = canvas.getContext('2d');
 
-  // Toolbar — top-right floating glass
+  //  工具栏 — 右上角浮动玻璃
   const toolbar = document.createElement('div');
   toolbar.className = 'brd-toolbar';
   toolbar.innerHTML = `
@@ -1406,7 +1406,7 @@ function mountCanvas(containerEl, board) {
     <span class="brd-zoom" style="font-family:var(--mono);font-size:11px;color:var(--text-2);min-width:42px;text-align:right">1.00×</span>`;
   containerEl.appendChild(toolbar);
 
-  // Badge — bottom-left floating glass
+  //  徽章 — 左下浮动玻璃
   const badge = document.createElement('div');
   badge.className = 'brd-badge';
   badge.innerHTML = `
@@ -1414,13 +1414,13 @@ function mountCanvas(containerEl, board) {
     <span style="font-family:var(--mono);font-size:10.5px;color:var(--text-3)">${t('brd.badge.summary', { parts: partCount, pins: pinCount })}</span>`;
   containerEl.appendChild(badge);
 
-  // Inspector — top-right floating glass (below toolbar)
+  //  检查器 - 右上角浮动玻璃（工具栏下方）
   const inspector = document.createElement('aside');
   inspector.className = 'brd-inspector';
   inspector.hidden = true;
   containerEl.appendChild(inspector);
 
-  // Layer-flip buttons
+  //  图层翻转按钮
   toolbar.querySelectorAll('.brd-seg-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       toolbar.querySelectorAll('.brd-seg-btn').forEach(b => b.classList.remove('active'));
@@ -1430,10 +1430,10 @@ function mountCanvas(containerEl, board) {
     });
   });
 
-  // Fit button
+  //  适合按钮
   toolbar.querySelector('#brd-fit-btn').addEventListener('click', fitToBoard);
 
-  // Annotations toggle
+  //  注释切换
   const annotBtn = toolbar.querySelector('#brd-annot-btn');
   annotBtn.addEventListener('click', () => {
     showAnnotations = !showAnnotations;
@@ -1441,18 +1441,18 @@ function mountCanvas(containerEl, board) {
     annotBtn.classList.toggle('active', showAnnotations);
     requestRedraw();
   });
-  annotBtn.classList.add('active');  // default ON
+  annotBtn.classList.add('active');  //  默认开启
 
-  // Schematic-relations minimap toggle — reflects localStorage so user
-  // preference persists across reloads. State is broadcast to the
-  // schematic_minimap module via a CustomEvent so the two files stay
-  // decoupled (no shared globals or imports).
+  //  示意图关系 minimap 切换 — 反映 localStorage，因此用户
+  //  偏好在重新加载后仍然存在。状态被广播到
+  //  schematic_minimap 通过 CustomEvent 模块，因此两个文件保留
+  //  解耦（没有共享全局变量或导入）。
   const mmBtn = toolbar.querySelector('#brd-mm-btn');
   let mmEnabled = true;
   try {
     const stored = localStorage.getItem('bvMinimapEnabled');
     if (stored === 'false') mmEnabled = false;
-  } catch (_) { /* ignore */ }
+  } catch (_) { /*  忽略  */ }
   mmBtn.setAttribute('aria-pressed', String(mmEnabled));
   mmBtn.classList.toggle('active', mmEnabled);
   mmBtn.addEventListener('click', () => {
@@ -1463,10 +1463,10 @@ function mountCanvas(containerEl, board) {
     window.dispatchEvent(new CustomEvent('bv:minimap-toggle', { detail: { enabled: mmEnabled } }));
   });
 
-  // ResizeObserver — keeps canvas sharp on window resize. Also flushes any
-  // focus request that was deferred while the canvas was hidden (e.g. a
-  // chat-chip click on refdes while the user was on #home) — once the
-  // canvas gains dimensions here, the pan math finally has real numbers.
+  //  ResizeObserver — 在调整窗口大小时保持画布清晰。还可以冲洗任何
+  //  画布隐藏时被推迟的焦点请求（例如
+  //  聊天-chip 当用户在 #home 时点击 refdes) — 一旦
+  //  画布在这里获得了维度，泛数学终于有了实数。
   const ro = new ResizeObserver(() => {
     if (pendingFocus && _computeFocusPan(pendingFocus.bbox, pendingFocus.zoom)) {
       pendingFocus = null;
@@ -1475,10 +1475,10 @@ function mountCanvas(containerEl, board) {
   });
   ro.observe(containerEl);
 
-  // Interaction (pan / zoom / cursor)
+  //  Inter动作（平移/缩放/光标）
   attachInteraction(containerEl, toolbar, badge);
 
-  // Initial fit + render
+  //  初始拟合+渲染
   fitToBoard();
 }
 
@@ -1488,9 +1488,9 @@ export async function initBoardview(containerEl) {
   const slug = resolveBoardSlug();
   const url = await resolveBoardUrl();
 
-  // No slug or backend has nothing for this slug → empty-state. The user
-  // can upload a boardview from the repair dashboard; the next mount
-  // reveals the new file via the backend endpoint.
+  //  没有 slug 或后端对此 slug → 空状态没有任何内容。用户
+  //  可以从维修仪表板上传boardview；下一个坐骑
+  //  通过后端端点显示新文件。
   if (!url) {
     state.board = null;
     renderEmpty(containerEl, slug);
@@ -1504,9 +1504,9 @@ export async function initBoardview(containerEl) {
   try {
     const res = await fetch(url, { cache: 'no-store' });
     if (!res.ok) throw { detail: 'FETCH_FAILED', message: t('brd.error.fetch_failed_msg', { status: res.status, url }) };
-    // Pull the filename out of Content-Disposition when the backend
-    // boardview endpoint serves it — the URL itself
-    // (`/pipeline/packs/{slug}/boardview`) carries no extension.
+    //  当后端将文件名从 Content-Disposition 中拉出
+    //  boardview 端点为其提供服务 — URL 本身
+    //  (`/pipeline/packs/{slug}/boardview`) 不带扩展名。
     const cd = res.headers.get('Content-Disposition') || '';
     const m = /filename="([^"]+)"/.exec(cd);
     if (m) serverFilename = m[1];

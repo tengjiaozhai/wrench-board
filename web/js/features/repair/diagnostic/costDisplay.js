@@ -1,8 +1,8 @@
-// 诊断ostic 聊天 — 会话 cost 累加器 + 状态栏 readout (Phase D.6
+//  Diagnosticostic 聊天 — 会话成本累加器 + 状态栏读数 (Phase D.6
 // 外部actionfromllm.js）。拥有每个会话的 cost 状态（re在每个会话上设置）
-// re连接；每 agent 推断ence 回合后，后面end emits `turn_cost`）。
+//  re连接；每个代理推断轮回，后面端发出`turn_cost`）。
 // 该模块是这些 ree 计数器的唯一所有者 — llm.js 驱动它
-// 通过 resetCost() / recordTurnCost() 和 reads 通过 fmtUsd 格式化值。
+//  通过resetCost() / recordTurnCost()并读取通过fmtUsd 清理值。
 
 // 会话 cost 累加器 — 在每个 (re) 连接上设置re。
 let sessionCostUsd = 0;
@@ -18,7 +18,7 @@ export function fmtUsd(amount) {
 
 // 将运行总计 Ren 放入状态栏chip (#llmCostTotal)。希德en
 // 直到第一个定价转弯落地；一旦会话或最后一轮“热”
-// crosses a spend threshold。
+//  跨越支出门槛。
 export function updateCostTotal() {
   const el2 = document.getElementById("llmCostTotal");
   if (!el2) return;

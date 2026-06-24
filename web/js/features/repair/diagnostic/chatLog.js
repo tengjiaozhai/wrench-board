@@ -1,35 +1,35 @@
-// Diagnostic 聊天 — 聊天日志 DOM rendering + 转块状态 machine （阶段
-// D.6 提取actionfromllm.js）。拥有落在 #llmLog: plain 中的每个节点
-// message/system 行、resume/context-lost 卡、protocol system chip 和
+//  Diagnostic 聊天 — 聊天日志 DOM 渲染 + 转块状态机 （阶段
+//  D.6 提取actionfromllm.js）。拥有胜利 #llmLog: plain 中的每个节点
+//  message/system 行、resume/context-lost 卡、协议系统 chip 和
 // 内联步骤卡，以及每回合 rail (thinking / 工具步骤 / 消息 /
 // cost 脚）。 llm.js中的WS消息调度程序驱动this模块——它操作ens
 // 通过 ensureTurn() 进行转弯，将步骤/消息输入其中，然后 closes 它。
 //
-// `currentTurn` 是单个可变状态 here：DOM 节点
-// re接收下一个传入的thinking / tool_use /消息event。 llm.js 没有
-// directly 持有时间更长 — 它re通过 getCurrentTurn() 将其收回（cost 脚）
-// re通过 (re)connect / replay-end / 终止上的 closeTurn() 设置它。
+//  `currentTurn` 是可变状态：DOM 节点
+//  重新接收下一个定型的思维 / tool_use /消息事件。 llm.js 没有
+//  directly 持有时间更长 — re通过 getCurrentTurn() 将其收回（成本脚）
+//  re通过 (re)connect / replay-end / 终止上的 closeTurn() 设置它。
 //
 // `t` re通过全局 window.t 求解（i18n.js，经典的非ESM脚本）
-// at CALL time so strings re-render on locale switch — 镜像工具短语
-// 转换ention。 window.marked / window.DOMPurify are 全局 CDN 脚本，read
-// bare。 escapeHTML 保护每个插值。
+//  在 CALL 时间，因此字符串在语言环境切换上重新渲染 — 镜像工具桌面
+//  window.marked / window.DOMPurify 是全局 CDN 脚本，请阅读
+//  裸露。 escapeHTML 每个保护插值。
 
 import { escapeHtml as escapeHTML } from '../../../shared/dom.js';
 import { renderAgentMarkup } from './chatMarkup.js';
 import { fmtUsd } from './costDisplay.js';
-// 相同的 ?v=quest4 查询 main.js / llm.js 使用 — ESM 通过 URL 键控模块，因此
+//  相同吗 ?v=quest4 查询 main.js / llm.js 使用 — ESM 通过 URL 按键控制模块，因此
 // bare './protocol.js' 会导致re创建第二个缺少 main.js 的实例
-// Protocol.init() 接线。
+//  Protocol.init() 互连。
 import * as Protocol from '../../../protocol.js?v=quest4';
 
 const t = (key, params) => (window.t ? window.t(key, params) : key);
 const el = (id) => document.getElementById(id);
 
-// 转块状态machine。
-// currentTurn 是接收下一个传入的 thinking / tool_use / 的 DOM 节点re
-// message event. A user.message closes it (set to null). An assistant.message
-// 到达 when currentTurn already 有一个 .turn-message opens 一个新回合
+//  转块状态机。
+//  currentTurn 是接收下一个确定的思维 / tool_use / 的 DOM 节点 re
+//  消息事件。 user.message 将其关闭（设置为 null）。助理消息
+//  当 currentTurn 已经有一个 .turn-message 时到达，打开一个新轮次
 // （agentemit连续发送两条消息，无需用户插入）。
 let currentTurn = null;
 
@@ -54,9 +54,9 @@ export function logMessage(role, text, isReplay = false) {
 }
 
 // 不同的卡 rendered when MA 放弃了之前的会话，并且我们有
-// 没有本地 JSONL 备份到 summarize from。 agent recreated from
+//  没有本地 JSONL 备份到摘要自。代理重新创建自
 // 划痕;它对先前回合的记忆为零。安珀警报（不同ent
-// from violet“resumed-with-summary”卡），以便技术人员知道他们的
+//  from violet“resume-with-summary”卡），方便技术人员知道他们的
 // 下一条消息hi是一个空白模型。
 export function renderContextLost(payload) {
   const oldId = payload?.old_session_id || "";
@@ -66,7 +66,7 @@ export function renderContextLost(payload) {
     : t('chat.context_lost.reason_generic');
   // `preserved` summ 产生与 MA 无关的endently 在磁盘上幸存的内容。
   // 后面end already 将这些事实推到了fresh agent（简介
-  // 阻止 resumed=False，合成 user.message resumed=True）。
+  //  阻止resumed=False，合成user.messageresumed=True）。
   // This UI只是告诉技术人员hich文物agent现在有，所以他们
   // 知道什么不应该re解释。
   const preserved = payload?.preserved || {};
@@ -104,7 +104,7 @@ export function renderContextLost(payload) {
   );
 }
 
-// 不同的卡 rendered when 过期red MA 会话必须recreated 并且
+//  当过渡红色 MA 会话必须重新创建时呈现不同的卡
 // Haikusumm出现了freshagent之前的对话。显示
 // 新的agent看到的是同一个区块，所以技术人员知道继承了什么。
 export function renderResumeSummary(payload) {
@@ -149,7 +149,7 @@ export function appendProtocolSystemEvent(kind, { protocol_id, reason } = {}) {
     ? (window.t?.("protocol.system_event.abandoned") || "Protocol abandoned")
     : (window.t?.("protocol.system_event.completed") || "Protocol completed");
   // 内联SVG匹配项目的图标转换ention（16/12px，
-  // stroke="currentColor", stroke-width=1.6) — 无字体图标 dependency。
+  //  笔划=“当前颜色”，笔画宽度= 1.6) — 无字体图标依赖。
   const icon = kind === "abandoned"
     ? `<svg class="pse-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6l-12 12"/></svg>`
     : `<svg class="pse-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>`;
@@ -164,8 +164,8 @@ export function appendProtocolSystemEvent(kind, { protocol_id, reason } = {}) {
   log.scrollTop = log.scrollHeight;
 }
 
-// 模式 C — 聊天中的内联 protocol 步骤卡ream en 没有 board loaded。
-// 仅 Renders 活动步骤（过去的步骤 are summarized 在 wizard 中）。
+//  模式 C — 聊天中的内联协议步骤卡没有加载板。
+//  仅渲染活动步骤（过去的步骤总结在向导中）。
 // 每个活动步骤 ID 一张卡；相同 id no-op 的子后续ent events。
 export function renderInlineProtocolCard(_ev) {
   const proto = Protocol.getProtocol?.();
@@ -237,17 +237,17 @@ function clearPendingNode(turn) {
   if (p) p.remove();
 }
 
-// 应用程序end .step 进入回合的rail。 kind ∈ {"thinking","mb","bv","mem",...}。
+//  应用程序end .step进入循环的rail。 kind ∈ {"thinking","mb","bv","mem",...}。
 // phraseHTML 是受信任的 HTML（调用者转义用户提供的 fragments
 // 它们本身 — 当前en仅工具名称 + refdes which are 已验证）。
 //
-// `group` (可选) = { key, item } en可合并：when agent fires
+//  `group` (可选) = { key, item } 可合并：当代理开火时
 // 同一个工具连续进行几次time（五次component查找，一系列
 // 内存re广告，re重复的球体）我们不堆叠五行——我们折叠每行新的
 // 将发生者ence的目标chip放入pre上一步的内联列表中并将其变暗
-// whole run. A lone call (no following same-key call) renders normally. Returns
+//  整个运行。单独的调用（没有后续的同键调用）会渲染 normally。退货
 // 任一方式的实时步骤节点（现有的 when 合并），因此调用者的
-// addExpandToStep() 将 payload 附加/累积到其上。
+//  addExpandToStep() 将有效负载附加/累积到其上。
 export function appendStep(turn, kind, phraseHTML, group = null) {
   clearPendingNode(turn);
   const rail = turn.querySelector(".turn-rail");
@@ -291,7 +291,7 @@ function mergeIntoGroup(step, group) {
       items.className = "step-items";
       phrase.appendChild(items);
     }
-    // group.item 是由 toolPhrases.js 构建的受信任 HTML（already 已转义）。
+    //  group.item 是由 toolPhrases.js 构建的受信任 HTML（已经已转义）。
     items.insertAdjacentHTML("beforeend", `<span class="step-item-sep">, </span>${group.item}`);
   } else {
     let badge = phrase.querySelector(".step-count");

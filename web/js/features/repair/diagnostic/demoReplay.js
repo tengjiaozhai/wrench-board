@@ -1,38 +1,38 @@
-// Demo session replayer — plays a RECORDED diagnostic session into the live
-// chat rendering path with no WebSocket and no LLM call. The onboarding demo
-// uses it to show the agent "in action" for free and deterministically.
+//  演示会话重放器 — 将录制的 diagnostic 会话播放到现场
+//  没有 WebSocket 也没有 LLM 调用的聊天渲染路径。 onboarding 演示
+//  使用它来免费且确定地显示代理“正在行动”。
 //
-// Played in small NARRATED BEATS (not one autoplay dump): the orchestrator in
-// coaching.js plays a slice of frames, pauses on an explainer bubble, then plays
-// the next slice on "Next". Recorded server→client frames are fed through
-// llm.js's `handleDiagnosticFrame` — the EXACT path a live frame takes — at a
-// capped cadence. Capture tool: scripts/capture_demo_session.py; fixtures in
-// web/demos/.
+//  以小型 NARRATED BEATS 播放（不是一个自动播放转储）：编排器
+//  coaching.js 播放一段帧，在解释气泡上暂停，然后播放
+//  “下一步”的下一个切片。记录的服务器→客户端帧被馈送
+//  llm.js 的 `handleDiagnosticFrame` — 实时帧所采取的确切路径 — 在
+//  限制节奏。捕获工具：scripts/capture_demo_session.py；固定装置在
+//  网络/演示/。
 
 import { handleDiagnosticFrame, openPanelForReplay, setDemoOffline } from "../../../llm.js";
 
-// Lifecycle / modal frames whose LIVE side-effects would break a passive replay:
-// session_ready re-aligns the tier and can close+reopen the socket; the protocol
-// confirmation frames pop a blocking modal; history/context frames wipe the log.
-// The agent's CONTENT — messages, thinking, tool calls, boardview.* visuals, the
-// protocol wizard (proposed/updated/completed) + steps, simulation overlays,
-// turn costs — all replays untouched.
+//  其实时副作用会破坏被动重播的生命周期/模态框架：
+//  session_ready重新对齐tier并可以关闭+重新打开套接字；协议
+//  确认框弹出阻塞模式；历史/上下文框架会擦除日志。
+//  代理的内容 — 消息、思考、工具调用、boardview.* 视觉效果、
+//  协议向导（建议/更新/完成）+步骤，模拟overlays，
+//  回合成本——所有重播均保持不变。
 const SKIP = new Set([
   "session_ready", "protocol_cleared", "context_loaded", "context_lost",
   "session_resumed", "session_resumed_summary", "history_replay_start",
   "history_replay_end", "memory_store_setup_failed",
   "protocol_pending_confirmation", "protocol_confirmation_timeout",
-  // `highlight` calls the viewer's selectItem, which pops the component
-  // INSPECTOR panel over the board (clutter). We keep the agent's arrows +
-  // labels (the capability worth showing) but drop highlight, and drive a clean
-  // deliberate zoom per beat (coaching.js). Arrows only render once the board's
-  // camera is ready — coaching.js waits for that before the board beat (else the
-  // projection yields `translate(NaN,NaN)`).
+  //  `highlight` 调用查看器的 selectItem，弹出组件
+  //  板上的检查面板（杂乱）。我们保留特工的箭头+
+  //  标签（值得展示的能力），但放弃突出显示，并保持干净
+  //  刻意缩放每个节拍（coaching.js）。箭头仅在板的一次渲染
+  //  相机已准备好 - coaching.js 在董事会击败之前等待（否则
+  //  投影产生“translate(NaN,NaN)”)。
   "boardview.highlight",
 ]);
 
-// Resolve once the board viewer has a board + camera ready (arrows/annotations
-// project through it). Bounded poll so the demo never wedges.
+//  一旦板查看器准备好板+相机（箭头/注释
+//  通过它进行项目）。有界投票，因此演示永远不会卡住。
 export function waitForBoard(timeoutMs = 6000) {
   return new Promise((resolve) => {
     const t0 = Date.now();
@@ -48,11 +48,11 @@ export function waitForBoard(timeoutMs = 6000) {
 let _cancel = false;
 const _sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Stop a running beat (e.g. the tech skips the tour mid-playback).
+//  停止正在运行的节拍（例如，技术人员在播放过程中跳过巡演）。
 export function cancelDemoReplay() { _cancel = true; }
 
-// Fetch a recorded session and return its server→client frames in order
-// ({ ms, dir, frame }). Indices into this array are what coaching.js slices by.
+//  获取记录的会话并按顺序返回其服务器→客户端帧
+//  ({ 毫秒，目录，帧 })。这个数组的索引是 coaching.js 进行切片的依据。
 export async function loadRecvFrames(url) {
   try {
     const res = await fetch(url);
@@ -65,8 +65,8 @@ export async function loadRecvFrames(url) {
   }
 }
 
-// Open the chat OFFLINE (no socket, no conversation fetch) and render the
-// opening user message. Call once before the first beat.
+//  离线打开聊天（无套接字，无对话获取）并渲染
+//  打开用户消息。在第一节拍前调用一次。
 export function beginDemoReplay({ userText = null } = {}) {
   _cancel = false;
   setDemoOffline(true);
@@ -74,7 +74,7 @@ export function beginDemoReplay({ userText = null } = {}) {
   if (userText) handleDiagnosticFrame({ type: "message", role: "user", text: userText });
 }
 
-// Play one beat: a slice of recv frames, paced by their captured deltas (capped).
+//  播放一个节拍：一段接收帧，由捕获的增量（上限）控制。
 export async function playFrames(slice, { gapCapMs = 700 } = {}) {
   const frames = slice.filter((f) => !SKIP.has(f.frame && f.frame.type));
   let prev = frames.length ? frames[0].ms : 0;
@@ -89,5 +89,5 @@ export async function playFrames(slice, { gapCapMs = 700 } = {}) {
   }
 }
 
-// Leave offline mode (live chat behaves normally again).
+//  离开离线模式（实时聊天再次表现normally）。
 export function endDemoReplay() { setDemoOffline(false); }

@@ -1,15 +1,15 @@
-// web/js/features/repair/workspace.js
-// Repair workspace shell. Given a parsed repair route { id, vue }, it mounts the
-// right view + side-effects. The DOM sections are the existing ones (the
-// homeSection dashboard for the diagnostic vue, the pcb stub, the schematic
-// section, the canvas/memoryBank for graph); this shell only SEQUENCES the
-// per-vue loaders — it owns no new DOM and no new styling. The active
-// device/repair context is already in the store (await syncContextFromUrl ran
-// upstream in main.js).
+//  网页/js/features/repair/workspace.js
+//  修复workspace外壳。给定一个已解析的修复路径 { id, vue }，它会挂载
+//  正见+副作用。 DOM 部分是现有的部分（
+//  diagnostic vue、PCB 存根、schematic 的 homeSection 仪表板
+//  部分，图形的画布/内存库）；这个 shell 只对
+//  per-vue 加载器——它不拥有新的 DOM 和新的样式。活跃的
+//  设备/维修上下文已在存储中（awaitsyncContextFromUrl运行
+//  main.js上游）。
 //
-// Import the schematic module with the SAME ?v=fitzoom query main.js uses — ESM
-// keys modules by URL, so a different (or missing) query would create a second
-// module instance with its own STATE.
+//  使用相同的 ?v=fitzoom 查询 main.js 使用 — ESM 导入 schematic 模块
+//  通过 URL 来键模块，因此不同的（或缺失的）查询将创建第二个
+//  具有自己的 STATE 的模块实例。
 import { currentSession, currentViewMode, applyMemoireMode } from "../../router.js";
 import { renderRepairDashboard } from "./diagnostic/dashboard.js";
 import { loadSchematic } from "../../schematic.js?v=fitzoom";
@@ -18,24 +18,25 @@ import { openLLMPanelIfRepairParam } from "../../llm.js";
 import { firstDiagTourPending } from "./diagnostic/coaching.js";
 
 /**
- * Mount the active repair vue. `deps.maybeLoadGraph` is injected by main.js to
- * avoid a circular import (main.js owns the graph-mount guard + window shim).
+ * 挂载主动修复vue。 `deps.maybeLoadGraph` 由 main.js 注入
+ * 避免循环导入（main.js拥有图形安装防护+窗口垫片）。
+ 
  */
 export async function mountRepairVue(route, { maybeLoadGraph }) {
   const session = currentSession();
   switch (route.vue) {
     case "diagnostic":
-      // The diagnostic vue is the repair dashboard (header / data grid /
-      // conversations / findings / timeline / pack) + the chat overlay.
+      //  diagnostic vue 是修复仪表板（标题/数据网格/
+      //  对话/发现/timeline/包）+聊天overlay。
       if (session) renderRepairDashboard(session);
-      // Hold the chat auto-open back while the first-run tour is playing/owed,
-      // so its early bubbles aren't covered; the tour's final step invites the
-      // tech to open the chat themselves.
+      //  当首轮游览正在播放/欠下时，保持聊天自动打开，
+      //  所以它的早期泡沫没有被掩盖；巡演的最后一步邀请
+      //  技术自己打开聊天。
       if (!firstDiagTourPending()) openLLMPanelIfRepairParam();
       break;
     case "pcb":
-      // Boardview init is handled by router.navigate()'s pcb branch
-      // (window.initBoardview), which fires on the DOM-visibility toggle.
+      //  Boardview init 由 router.navigate() 的 pcb 分支处理
+      //  (window.initBoardview)，在 DOM 可见性切换时触发。
       break;
     case "schematic":
       loadSchematic();

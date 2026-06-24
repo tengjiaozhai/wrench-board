@@ -1,18 +1,18 @@
-// Diagnostic chat — tool-call paraphrases (Phase D.6 extraction from llm.js).
-// Pure presentation: maps a tool name + its input object to {icon, phraseHTML}
-// for the turn-rail step line. No module state. Consumed by the WS message
-// dispatcher in llm.js (tool_use / memory_tool_use events).
+//  诊断聊天 — 工具调用释义（Phase D.6 从 llm.js 中提取）。
+//  纯粹的表示：将工具名称+其输入对象映射到{icon，phraseHTML}
+//  对于转rail阶梯线。无模块状态。由 WS 消息消耗
+//  llm.js（tool_use / memory_tool_use 事件）中的调度程序。
 //
-// `t` is resolved through the global window.t (set by i18n.js, a classic
-// non-ESM script) at CALL time so strings re-render on locale switch — mirrors
-// the memory_bank.js / graph.js convention. escapeHTML guards every
-// interpolated user/tool value.
+//  `t` 通过全局 window.t 解析（由i18n.js设置，一个经典的
+//  非ESM脚本）在调用时因此字符串在语言环境切换上重新渲染 - 镜像
+//  memory_bank.js / graph.js 约定。 escapeHTML 守护着每一个
+//  内插的用户/工具值。
 
 import { escapeHtml as escapeHTML } from '../../../shared/dom.js';
 
 const t = (key, params) => (window.t ? window.t(key, params) : key);
 
-// Family icons for tool-call steps. 12×12, inline SVG, stroke currentColor.
+//  工具调用步骤的系列图标。 12×12，内联 SVG，描边当前颜色。
 const ICON_MB =
   '<svg class="step-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" ' +
   'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" ' +
@@ -23,39 +23,39 @@ const ICON_BV =
   'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" ' +
   'aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/>' +
   '<circle cx="12" cy="12" r="1.2" fill="currentColor"/></svg>';
-// MEM = MA-native filesystem ops on the device's memory store (read / write /
-// edit / grep / glob), surfaced via the agent_toolset_20260401 toolset. Cylinder
-// = persistent storage. Distinct from MB (knowledge bank queries via mb_*).
+//  MEM = 设备内存存储上的 MA 本机文件系统操作（读/写/
+//  edit / grep / glob），通过 agent_toolset_20260401 工具集出现。气缸
+//  = 持久存储。与MB不同（知识库通过mb_*查询）。
 const ICON_MEM =
   '<svg class="step-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" ' +
   'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" ' +
   'aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="2.5"/>' +
   '<path d="M4 5v14c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5V5"/>' +
   '<path d="M4 12c0 1.4 3.6 2.5 8 2.5s8-1.1 8-2.5"/></svg>';
-// STOCK = donor inventory + parts harvest. Box / crate metaphor matches
-// the rail icon for #stock so the chat step is recognisable as the same
-// surface the technician sees in the workspace section.
+//  库存=捐赠者库存+零件收获。盒子/板条箱比喻匹配
+//  #stock 的 rail 图标，因此聊天步骤可被识别为相同
+//  技术人员在workspace部分看到的表面。
 const ICON_STOCK =
   '<svg class="step-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" ' +
   'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" ' +
   'aria-hidden="true"><rect x="3" y="6" width="18" height="13" rx="1.5"/>' +
   '<path d="M3 10h18M8 6v4M16 6v4"/></svg>';
 
-// Localized paraphrase + family icon for each known tool name. Each entry
-// is a function receiving the tool input object and returning
-// {icon, phraseHTML}. phraseHTML may embed a <span class="refdes"> or
-// <span class="net"> for typographic emphasis on the target; all user
-// input is passed through escapeHTML before interpolation. Strings come
-// from i18n via window.t() so they re-render on locale switch.
+//  每个已知工具名称的本地化释义 + 系列图标。每个条目
+//  是一个接收工具输入对象并返回的函数
+//  {图标，短语HTML}。 phraseHTML 可以嵌入 <span class="refdes"> 或
+//  <span class="net"> 用于强调目标的印刷效果；所有用户
+//  输入在插值之前通过 escapeHTML 传递。弦来了
+//  从 i18n 通过 window.t() ，因此它们在语言环境切换上重新渲染。
 export const TOOL_PHRASES = {
-  // --- MB (memory bank — perception / reading) ---
+  //  --- MB（记忆库——感知/阅读）---
   mb_get_component: (i) => {
     const refdes = escapeHTML(i?.refdes || "?");
     return {
       icon: ICON_MB,
       phraseHTML: t('chat.tool.mb_get_component', { refdes }),
-      // Coalesce a run of component lookups into one dimmed line (chatLog.js):
-      // the target chip is what gets appended to the inline list.
+      //  将一系列组件查找合并到一条暗线 (chatLog.js) 中：
+      //  目标 chip 是附加到内联列表中的内容。
       group: { key: 'tool:mb_get_component', item: `<span class="refdes">${refdes}</span>` },
     };
   },
@@ -90,7 +90,7 @@ export const TOOL_PHRASES = {
     phraseHTML: t('chat.tool.mb_schematic_graph'),
   }),
 
-  // --- BV (boardview — action) ---
+  //  --- BV (boardview — 动作) ---
   bv_highlight: (i) => {
     const r = Array.isArray(i?.refdes) ? i.refdes.join(", ") : (i?.refdes || "?");
     return {
@@ -166,7 +166,7 @@ export const TOOL_PHRASES = {
     };
   },
 
-  // --- Stock (donor inventory + part harvest) ---
+  //  --- 库存（捐赠者库存 + 部分收获） ---
   stock_search: (i) => {
     const tp = i?.type || "";
     const v = i?.value_canonical || i?.mpn || "";
@@ -205,8 +205,8 @@ export function toolFallback(name) {
   };
 }
 
-// Strip the `/mnt/memory/{slug}/` MA-mount prefix so memory paths read as
-// short relative paths (`outcomes/abc.json`) instead of full absolute ones.
+//  去掉 `/mnt/memory/{slug}/` MA-mount 前缀，以便内存路径读取为
+//  短相对路径（“outcomes/abc.json”）而不是完整的绝对路径。
 function memPath(p) {
   if (!p) return "";
   const m = String(p).match(/^\/mnt\/memory\/[^/]+\/(.+)$/);
@@ -217,17 +217,17 @@ function memPathChip(p) {
   return `<code class="mem-path">${escapeHTML(memPath(p))}</code>`;
 }
 
-// Glob/grep patterns are shown raw (not mount-stripped) — same chip styling.
+//  Glob/grep 模式以原始方式显示（未安装剥离）——与 chip 样式相同。
 function patternChip(p) {
   return `<code class="mem-path">${escapeHTML(String(p || ""))}</code>`;
 }
 
-// Localized paraphrase + ICON_MEM for each MA-native filesystem tool. Same
-// shape contract as TOOL_PHRASES — receives the tool input object and
-// returns {icon, phraseHTML}.
-// `group.item` is the inline target chip appended when the SAME memory op fires
-// again back-to-back (chatLog.js coalesces the run into one dimmed line). The
-// key is per-op so a `read` run and a `glob` run don't merge into each other.
+//  每个 MA 本机文件系统工具的本地化释义 + ICON_MEM。一样
+//  形状契约为 TOOL_PHRASES — 接收工具输入对象并
+//  返回 {icon,phraseHTML}。
+//  `group.item` 是 SAME 内存操作触发时附加的内联目标 chip
+//  再次背靠背（chatLog.js将运行合并为一条暗线）。的
+//  key 是每个操作的，因此“read”运行和“glob”运行不会相互合并。
 export const MEMORY_TOOL_PHRASES = {
   read: (i) => {
     const chip = memPathChip(i?.file_path || i?.path);

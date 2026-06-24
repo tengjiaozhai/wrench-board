@@ -1,12 +1,12 @@
-// 诊断ostic 聊天 — agent markdown rendering + clickable refdes/net chips
-// （Phase D.6 外部action from llm.js）。获取agent的原始文本，renders它
-// 通过 marked + DOMPurify （或en CDN 是 absent 的纯文本后备），
-// then 遍历 result 并将 board 验证的 refdes / net token 转换为
+//  Diagnosticostic 聊天 — 代理降价渲染 + 可点击 refdes/net chips
+//  （Phase D.6 来自llm.js的外部动作）。获取agent的原始文本，渲染它
+//  通过标记 + DOMPurify （或 en CDN 不存在的纯文本后备），
+//  then 运算结果放在板验证的 refdes / net token 转换为
 // 驱动boardview的click可用chip。无模块状态。
 //
-// Permanent耦合：re广告窗口。Boardview（经典的非ESMrenderer
+//  永久连接：re广告窗。Boardview（经典的非ESM渲染器）
 // 桥 — 请参阅 CLAUDE.md“Permanent 全局变量”）来验证 tokens 并采取行动
-// chipclick秒。 marked / DOMPurify are 全局 CDN 脚本，referenced bare。
+//  chip点击秒。标记/DOMPurify是全局CDN脚本，引用裸。
 
 import { escapeHtml as escapeHTML } from '../../../shared/dom.js';
 import { repairHash, parseRoute } from '../../../router.js';
@@ -14,14 +14,14 @@ import { getRepairId } from '../../../shared/context.js';
 
 // 正则表达式形状。保留 loose — 语义过滤器是 Boardview 查找。
 const RE_REFDES = /\b[A-Z]{1,3}\d{1,4}\b/g;
-// Nets：iPhone / Mac / Pi schematics 中使用的命名转换entions 的mm。
+//  Nets：iPhone / Mac / Pi schematics 中使用的命名转换entions 的mm。
 // purpose 上的比赛过多； Boardview.hasNet 是真理之门。
 const RE_NET = /\b(?:PP_[A-Z0-9_]+|[PN]P_[A-Z0-9_]+|L\d{1,3}|VCC(?:_[A-Z0-9_]+)?|VDD(?:_[A-Z0-9_]+)?|AVDD(?:_[A-Z0-9_]+)?|DVDD(?:_[A-Z0-9_]+)?|GND(?:_[A-Z0-9_]+)?|[A-Z][A-Z0-9_]{3,})\b/g;
 const RE_UNKNOWN_REFDES = /⟨\?([A-Z]{1,3}\d{1,4})⟩/g;
 
 // 解析 markdown → sanitize → 遍历文本节点 → re放置经过验证的 tokens
-// 与 clickable chips。如果 marked / DOMPurify aren 不在页面上，则后退
-// 为纯文本（defensive：network hiccup loading CDN）。
+//  与可点击chips。如果标记/DOMPurify 不在页面上，则后退
+//  为纯文本（防御：网络卡顿加载CDN）。
 export function renderAgentMarkup(container, text) {
   let html;
   if (typeof marked !== "undefined" && typeof DOMPurify !== "undefined") {
@@ -38,7 +38,7 @@ export function renderAgentMarkup(container, text) {
 }
 
 // 遍历 `root` 和 replace 验证的 refdes / net 下的所有文本节点
-// tokens 与 clickable chips，加上未知-refdes ⟨?U999⟩ 与 amber
+//  代币与可点击 chips，加上未知-refdes ⟨?U999⟩ 与琥珀
 // 跨度。 <code> 内的文本被跳过（agent 的逐字 intent）。
 function decorateChipsIn(root) {
   const hasBoard = !!(window.Boardview && window.Boardview.hasBoard && window.Boardview.hasBoard());
@@ -96,10 +96,10 @@ function decorateOneTextNode(textNode, hasBoard) {
 // then 运行boardview action。面板为推送模式，因此 board 显示
 // 在左侧，聊天在右侧保持可见（420 px 条）。瓦en
 // 我们必须导航，等待两个动画frames，这样该部分就变成了
-// 可见且 brd_viewer 的 ResizeObserver 看到非零 canvas 暗淡ensions —
+//  可见且 brd_viewer 的 ResizeObserver 看到非零画布暗淡场景 —
 // 否则 focus 平移将针对 0×0 canvas 和 end 进行计算
-// screen（ResizeObserver现在会自行刷新任何 pending focus，但是
-// nav-then-apply 排序还可以让非 focus action 看到real DOM）。
+//  屏幕（ResizeObserver但是现在会自行刷新任何待处理的焦点，
+//  nav-then-apply 看到排序还可以让焦点动作不真实的 DOM）。
 function gotoBoardviewThen(fn) {
   const route = parseRoute();
   if (route.level === "repair" && route.vue === "pcb") {

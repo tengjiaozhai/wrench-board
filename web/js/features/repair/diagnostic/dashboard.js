@@ -1,9 +1,9 @@
-// Repair dashboard — the #repair/:id/diagnostic vue (Phase D.3: relocated here
-// from web/js/home.js, which is now gone). Renders the focused session hub:
-//   - renderRepairDashboard() : header / data grid / conversations / findings /
-//     timeline / pack, mounted by the workspace shell on the diagnostic vue.
-//   - initHome() : wires the dashboard's locale re-render on EN/FR toggle.
-//   - loadTaxonomy() : brand>model>version index used by the dashboard header.
+//  修复仪表板 — #repair/:id/diagnostic vue（Phase D.3：移至此处
+//  来自 web/js/home.js，现在已经消失了）。渲染聚焦的会话中心：
+//      - renderRepairDashboard() ：标题/数据网格/对话/结果/
+//          timeline / pack，由 workspace shell 安装在 diagnostic vue 上。
+//      - initHome() ：在 EN/FR 切换上连接仪表板的区域设置重新渲染。
+//      - loadTaxonomy() ：仪表板标题使用的品牌>型号>版本索引。
 
 import { leaveSession, repairHash } from '../../../router.js';
 import { openPanel, closePanelIfConv } from '../../../llm.js';
@@ -30,9 +30,9 @@ function humanizeSlug(slug) {
   return slug.replace(/-/g, " ").replace(/^./, c => c.toUpperCase());
 }
 
-// Strip a trailing form_factor ("motherboard", "logic board") from a label
-// that was typed with the form_factor glued on. Used when we don't have a
-// taxonomy.model to fall back on.
+//  从标签中剥离 trailing form_factor (“主板”、“逻辑板”)
+//  这是在粘贴了 form_factor 的情况下键入的。当我们没有时使用
+//  可以依靠的taxonomy.model。
 function stripFormFactor(label, formFactor) {
   if (!label || !formFactor) return label;
   const ff = formFactor.trim();
@@ -41,11 +41,11 @@ function stripFormFactor(label, formFactor) {
   return label.replace(re, "").trim() || label;
 }
 
-// The device NAME — what the board is, not what form it takes. Prefer the
-// clean `taxonomy.model` (set by the Registry Builder from the dump) over
-// the raw user-typed `device_label` which usually glues the form_factor on.
-// Brand is included by default so the name reads standalone; set
-// `includeBrand: false` inside brand-grouped UI sections.
+//  设备名称——板是什么，而不是它的形式。更喜欢
+//  清理`taxonomy.model`（由转储中的Registry构建器设置）
+//  原始用户输入的“device_label”通常将 form_factor 粘合在一起。
+//  默认情况下包含品牌，因此名称独立显示；设置
+//  品牌分组 UI 部分内的“includeBrand: false”。
 function deviceName(entry, { includeBrand = true } = {}) {
   const brand = entry.brand || "";
   const model = entry.model || "";
@@ -54,8 +54,8 @@ function deviceName(entry, { includeBrand = true } = {}) {
   return stripFormFactor(entry.device_label || humanizeSlug(entry.device_slug), entry.form_factor);
 }
 
-// Index the taxonomy so each repair can be resolved to {brand, model,
-// form_factor, version} without an extra fetch per card.
+//  为分类建立索引，以便每次维修都可以解析为{品牌、型号、
+//  form_factor, version}，无需对每张卡进行额外的获取。
 function indexTaxonomyBySlug(taxonomy) {
   const index = new Map();
   for (const [brand, models] of Object.entries(taxonomy.brands || {})) {
@@ -83,29 +83,29 @@ function statusBadgeHTML(status) {
   return `<span class="badge ${cls}">${escapeHtml(label)}</span>`;
 }
 
-// Phase D.1: the dense #home journal grid (renderHome + repairCardHTML /
-// deviceBlockHTML / brandBlockHTML) was removed — the landing overlay is the
-// global home and lists all repairs via its sidebar. The repair dashboard below
-// (renderRepairDashboard) is the #repair/:id/diagnostic vue and stays. Helpers
-// kept for the dashboard: humanizeSlug / stripFormFactor / deviceName /
-// indexTaxonomyBySlug / statusLabel / statusBadgeHTML.
+//  Phase D.1：密集的#home 日志网格（renderHome + RepairCardHTML /
+//  deviceBlockHTML / BrandBlockHTML) 已删除 — landing overlay 是
+//  全局主页并通过其 sidebar 列出所有维修。下面是修复仪表板
+//  (renderRepairDashboard) 是 #repair/:id/diagnostic vue 并保留。帮手
+//  为仪表板保留： humanizeSlug / stripFormFactor / deviceName /
+//  indexTaxonomyBySlug / statusLabel / statusBadgeHTML。
 
 // ───────────────────────────────────────────────────────────────
-// Repair dashboard — the focused "session hub" state of #home.
-// Activated when currentSession() returns non-null.
+//  修复仪表板 — #home 的重点“会话中心”状态。
+//  当 currentSession() 返回非空时激活。
 // ───────────────────────────────────────────────────────────────
 
 export async function renderRepairDashboard(session) {
   const { device: slug, repair: rid } = session;
 
-  // Toggle visibility: hide list states, show dashboard.
+  //  切换可见性：隐藏列表状态，显示仪表板。
   document.getElementById("homeSections")?.classList.add("hidden");
   document.getElementById("homeEmpty")?.classList.add("hidden");
   document.getElementById("repairDashboard")?.classList.remove("hidden");
-  // Also hide the list's H1 / CTA while in dashboard mode.
+  //  在仪表板模式下还隐藏列表的 H1/CTA。
   document.querySelector("#homeSection .home-head")?.classList.add("hidden");
 
-  // Fetch in parallel — list of Promise results, each tolerates failure.
+  //  并行获取 - Promise 结果列表，每个结果都可以容忍失败。
   const [repair, convs, pack, findings, taxonomy, sourcesData] = await Promise.all([
     fetchJSON(`/pipeline/repairs/${encodeURIComponent(rid)}`, null),
     fetchJSON(`/pipeline/repairs/${encodeURIComponent(rid)}/conversations`, { conversations: [] }),
@@ -131,20 +131,20 @@ export async function renderRepairDashboard(session) {
   wireFixButton(slug, rid);
   maybeAutoResumeBuildWatch(slug, rid, pack);
 
-  // Permanent "?" → the replayable "How a repair works" explainer.
+  //  永恒的 ”？” → 可重播的“维修工作原理”解释器。
   const infoBtn = document.getElementById("rdInfoHint");
   if (infoBtn) infoBtn.onclick = () => openInfoModal("repair");
-  // One-shot guided tour of the workspace the first time a dashboard opens.
-  // Consume the example-handoff hook one-shot (cleared on read so a later,
-  // unrelated first-diag render never picks up a stale return-to-landing).
+  //  仪表板第一次打开时，一次性引导浏览 workspace。
+  //  一次性使用 example-handoff 钩子（稍后读取时清除，
+  //  不相关的第一诊断渲染永远不会拾取陈旧的返回landing）。
   const exampleOnDone = window.__wbExampleTourOnDone || null;
   window.__wbExampleTourOnDone = null;
   maybeShowFirstDiagCoaching(rid, { onDone: exampleOnDone, slug });
 }
 
-// Mid-dashboard re-render after an upload completes — same payload as the
-// initial mount, but we don't touch conversations / findings / timeline
-// because those are unaffected by a boardview/schematic upload.
+//  上传完成后仪表板中段重新渲染 - 与
+//  初始安装，但我们不接触对话/发现/timeline
+//  因为这些不受 boardview/schematic 上传的影响。
 async function refreshDashboardData(slug, rid) {
   const [pack, sourcesData] = await Promise.all([
     fetchJSON(`/pipeline/packs/${encodeURIComponent(slug)}`, null),
@@ -152,12 +152,12 @@ async function refreshDashboardData(slug, rid) {
   ]);
   renderDashboardData(slug, rid, pack, sourcesData);
   renderCapabilities(pack);
-  // After an upload of a schematic_pdf, the backend kicks the vision
-  // pipeline in `asyncio.create_task` but doesn't push WS events for
-  // it. Resume the polling watcher here so the spinner / ETA / final
-  // toast all happen without a manual reload. No-op when (a) a watcher
-  // is already running, (b) no PDF on disk, or (c) electrical_graph
-  // already compiled.
+  //  上传schematic_pdf后，后端踢出视觉
+  //  `asyncio.create_task` 中的管道，但不推送 WS 事件
+  //  它。在此处恢复轮询观察程序，以便旋转器/预计到达时间/最终结果
+  //  一切都发生在无需手动重新加载的情况下。当 (a) 是观察者时无操作
+  //  已在运行，(b) 磁盘上没有 PDF，或 (c) electric_graph
+  //  已经编译了。
   maybeAutoResumeBuildWatch(slug, rid, pack);
   renderDashboardPack(pack, slug, rid);
 }
@@ -187,9 +187,9 @@ function renderDashboardHeader(repair, taxEntry, slug, rid) {
   const badgesEl = document.getElementById("rdBadges");
   if (!slugEl || !deviceEl || !symptomEl || !badgesEl) return;
 
-  // The example/demo repair carries a hard-coded FR symptom in its record, which
-  // can't follow the UI locale — show a localized one instead, and flag demo mode
-  // on <body> so the centered topbar DEMO badge shows across every view.
+  //  示例/演示修复在其记录中带有硬编码的 FR 症状，该症状
+  //  无法遵循 UI 区域设置 — 显示本地化区域设置，并标记演示模式
+  //  在 <body> 上，因此居中的 topbar DEMO 徽章会显示在每个视图中。
   const isDemo = !!rid && rid.startsWith("example-");
   document.body.classList.toggle("wb-demo-mode", isDemo);
 
@@ -216,8 +216,8 @@ const ICONS = {
   upload:     '<svg viewBox="0 0 24 24"><path d="M12 17V5"/><path d="M5 12l7-7 7 7"/><path d="M5 19h14"/></svg>',
 };
 
-// Pretty file-size formatter — KB/MB with one decimal. Used in card metas
-// after an upload so the tech sees "iphone-x.brd · 2.4 MB" not raw bytes.
+//  漂亮的文件大小格式化程序 - KB/MB，带一位小数。用于卡元
+//  上传后，技术人员看到“iphone-x.brd·2.4 MB”而不是原始字节。
 function fmtBytes(n) {
   if (!Number.isFinite(n) || n <= 0) return "…";
   const units = ["B", "KB", "MB", "GB"];
@@ -228,13 +228,13 @@ function fmtBytes(n) {
 }
 
 // ───────────────────────────────────────────────────────────────
-// Data-aware dashboard — per-input cards + per-derived-data cards.
-// Each card boils down to one of: on / off / building / loading / error.
+//  数据感知仪表板 - 每个输入卡 + 每个派生数据卡。
+//  每张卡片都归结为以下之一：开/关/构建/加载/错误。
 // ───────────────────────────────────────────────────────────────
 
-// Click-toggle handler for the diagnostic-ready badge popover.
-// Bound once per session — re-calling _wireDiagPopover() after the
-// first time is a no-op thanks to the `_diagWired` guard.
+//  diagnostic 就绪徽章 popover 的点击切换处理程序。
+//  每个会话绑定一次 - 在之后重新调用 _wireDiagPopover()
+//  第一次是 no-op 感谢`_diagWired`守卫。
 let _diagWired = false;
 function _wireDiagPopover() {
   if (_diagWired) return;
@@ -260,11 +260,11 @@ function _wireDiagPopover() {
 }
 
 function renderDashboardData(slug, rid, pack, sourcesData) {
-  // Intra-dashboard links navigate into the repair's vues (canonical hash route).
+  //  仪表板内链接导航到修复的 vue（规范哈希路径）。
   const schemVersions = sourcesData?.schematic_pdf?.versions || [];
   const bvVersions = sourcesData?.boardview?.versions || [];
 
-  // ── INPUT 1 — Schematic PDF ────────────────────────────────────────
+  //  ── 输入 1 — 原理图 PDF ──────────────────────────────────────────
   setCardState("rdCardSchematic", pack?.has_schematic_pdf ? "on" : "off");
   setCardField("rdCardSchematicState", pack?.has_schematic_pdf
     ? (pack.has_electrical_graph
@@ -287,8 +287,8 @@ function renderDashboardData(slug, rid, pack, sourcesData) {
     if (pack?.has_schematic_pdf) {
       schemActions.appendChild(linkButton(repairHash(rid, "schematic"),
         ICONS.arrowRight + " " + escapeHtml(t("home.dashboard.schematic.open")), "is-primary"));
-      // Plan free (mode managé, cloud_hints) : pas d'import de fichier — le
-      // serveur refuse l'upload (402), donc l'affordance disparaît.
+      //  免费计划（模式管理、cloud_hints）：pas d'import de fichier — le
+      //  服务器拒绝上传 (402)，请勿提供不同的服务。
       if (!hideUploads()) {
         schemActions.appendChild(actionButton(
           ICONS.upload + " " + escapeHtml(t("home.dashboard.schematic.import_version")), () => {
@@ -308,7 +308,7 @@ function renderDashboardData(slug, rid, pack, sourcesData) {
       : null,
   });
 
-  // ── INPUT 2 — Boardview ─────────────────────────────────────────────
+  //  ── 输入 2 — Boardview ──────────────────────────────────────────────
   setCardState("rdCardBoardview", pack?.has_boardview ? "on" : "off");
   setCardField("rdCardBoardviewState", pack?.has_boardview
     ? t("home.dashboard.boardview.state_imported")
@@ -327,11 +327,11 @@ function renderDashboardData(slug, rid, pack, sourcesData) {
     : t("home.dashboard.boardview.meta_missing"));
   toggleEl("rdCardBoardviewLoss", !pack?.has_boardview);
 
-  // Diagnostic-ready badge — visible only when the loaded boardview
-  // ships manufacturer-tagged net references (XZZ post-v6 resistance
-  // / voltage section). Lazy-fetched via /api/board/render so we
-  // don't pay the parse cost on devices without a boardview. Click
-  // the badge to open a localized FR popover (i18n-driven body).
+  //  诊断就绪徽章 — 仅在加载 boardview 时可见
+  //  船舶制造商标记的网络参考（XZZ v6 后阻力
+  //  /电压部分）。通过 /api/board/render 延迟获取，所以我们
+  //  不要在没有 boardview 的设备上支付解析成本。点击
+  //  打开本地化 FR popover（i18n 驱动体）的徽章。
   const diagWrapEl = document.getElementById("rdCardBoardviewDiagWrap");
   if (diagWrapEl) diagWrapEl.hidden = true;
   if (pack?.has_boardview && diagWrapEl) {
@@ -346,7 +346,7 @@ function renderDashboardData(slug, rid, pack, sourcesData) {
           _wireDiagPopover();
         }
       })
-      .catch(() => { /* fail-quiet — the badge just stays hidden */ });
+      .catch(() => { /*  fail-quiet — 徽章保持隐藏状态  */ });
   }
 
   const bvActions = document.getElementById("rdCardBoardviewActions");
@@ -355,7 +355,7 @@ function renderDashboardData(slug, rid, pack, sourcesData) {
     if (pack?.has_boardview) {
       bvActions.appendChild(linkButton(repairHash(rid, "pcb"),
         ICONS.arrowRight + " " + escapeHtml(t("home.dashboard.boardview.open")), "is-primary"));
-      // Plan free (mode managé, cloud_hints) : pas d'import — voir card schématique.
+      //  免费计划（管理模式、cloud_hints）：导入 — 查看卡示意图。
       if (!hideUploads()) {
         bvActions.appendChild(actionButton(
           ICONS.upload + " " + escapeHtml(t("home.dashboard.boardview.import_version")), () => {
@@ -371,7 +371,7 @@ function renderDashboardData(slug, rid, pack, sourcesData) {
   }
   renderVersionList("rdCardBoardview", "boardview", bvVersions, slug, rid);
 
-  // ── DERIVED 1 — Knowledge graph (causal pack) ──────────────────────
+  //  ── DERIVED 1 — 知识图谱（因果包）──────────────────────
   const packComplete = !!(pack && pack.has_registry && pack.has_knowledge_graph
     && pack.has_rules && pack.has_dictionary && pack.has_audit_verdict);
   const packPartial = !!(pack && (pack.has_registry || pack.has_knowledge_graph
@@ -396,7 +396,7 @@ function renderDashboardData(slug, rid, pack, sourcesData) {
     }
   }
 
-  // ── DERIVED 2 — Electrical graph (compiled from schematic PDF) ──────
+  //  ── DERIVED 2 — 电气图（由schematic PDF 编译）──────
   const electricalState = pack?.has_electrical_graph
     ? "on"
     : (pack?.has_schematic_pdf ? "building" : "off");
@@ -420,7 +420,7 @@ function renderDashboardData(slug, rid, pack, sourcesData) {
     }
   }
 
-  // ── DERIVED 3 — Memory bank (rules + findings + dictionary) ────────
+  //  ── DERIVED 3 — 记忆库（规则+发现+字典）────────
   const memoryState = pack?.has_rules ? "on" : (pack?.has_registry ? "building" : "off");
   setCardState("rdCardMemory", memoryState);
   setCardField("rdCardMemoryState", pack?.has_rules
@@ -444,8 +444,8 @@ function renderDashboardData(slug, rid, pack, sourcesData) {
   }
 }
 
-// Capability banner — single ribbon at the top showing what the AI has
-// access to right now. Reads as a mission-status header.
+//  能力横幅 — 顶部的单个丝带显示人工智能的功能
+//  立即访问。读取为任务状态标题。
 function renderCapabilities(pack) {
   const cap = document.getElementById("rdCap");
   const title = document.getElementById("rdCapTitle");
@@ -455,14 +455,14 @@ function renderCapabilities(pack) {
   if (!cap || !title || !body || !score || !list) return;
 
   const flags = {
-    // The "electrical graph" capability (simulator + hypothesize) is gated on
-    // the GRAPH being resolved, NOT on a local schematic PDF: the agent's tools
-    // (mb_schematic_graph / mb_hypothesize) run off has_electrical_graph
-    // server-side (manifest.py:_has_electrical_graph). In the cloud the graph
-    // can be available from the shared cache (resolved per-owner by PDF hash)
-    // without this tenant re-uploading a PDF — so gating on has_schematic_pdf
-    // wrongly showed the tools disabled while the graph was in fact live. The
-    // PDF stays a SOURCE (its own data card below), not a capability.
+    //  “电图”功能（模拟器+假设）被门控
+    //  正在解析的图表，而不是本地 schematic PDF：代理的工具
+    //  (mb_schematic_graph / mb_假设) 运行 has_electrical_graph
+    //  服务器端（manifest.py：_has_electrical_graph）。在云中的图表
+    //  可以从共享缓存中获取（通过 PDF 哈希解析每个所有者）
+    //  如果没有该租户重新上传 PDF，则对 has_schematic_pdf 进行门控
+    //  错误地显示工具被禁用，而图表实际上是实时的。的
+    //  PDF 仍然是一个来源（下面是它自己的数据卡），而不是一种功能。
     schematic: !!pack?.has_electrical_graph,
     boardview: !!pack?.has_boardview,
     graph:     !!(pack && pack.has_knowledge_graph && pack.has_rules),
@@ -517,10 +517,10 @@ function renderCapabilities(pack) {
   wireCapInfoButtons(list);
 }
 
-// ── Capability tool-list popover ───────────────────────────────────────
-// Maps each capability to its agent tool surface. The strings live in i18n
-// (home.dashboard.cap.tools.<cap>.<idx>.{name,desc}) so they translate.
-// Source of truth for the tool inventory: api/agent/manifest.py.
+//  ── 能力工具列表popover ────────────────────────────────────────
+//  将每个功能映射到其代理工具表面。字符串位于 i18n
+//  (home.dashboard.cap.tools.<cap>.<idx>.{name,desc}) 所以它们会翻译。
+//  工具清单的真实来源：api/agent/manifest.py。
 const CAP_TOOLS = {
   schematic: ["mb_schematic_graph", "mb_hypothesize"],
   boardview: [
@@ -560,8 +560,8 @@ function openCapPopover(cap, anchorBtn) {
   }
   _capPopoverAnchor = anchorBtn;
   titleEl.textContent = t(`home.dashboard.cap.row.${cap}_label`);
-  // Lead with a one-line "what this source is + what it unlocks" so the
-  // grouping reads as a dependency (import → unlock), not a taxonomy.
+  //  以一行“这个源是什么+它解锁什么”开头，这样
+  //  分组读取为依赖项（导入→解锁），而不是分类法。
   const descEl = document.getElementById("rdCapPopoverDesc");
   if (descEl) descEl.textContent = t(`home.dashboard.cap.desc.${cap}`);
   const tools = CAP_TOOLS[cap] || [];
@@ -571,12 +571,12 @@ function openCapPopover(cap, anchorBtn) {
       <span class="rd-cap-popover-tool-desc">${escapeHtml(t(`home.dashboard.cap.tool_desc.${toolName}`))}</span>
     </li>
   `).join("");
-  // Position under the anchor button in viewport coords (fixed). CSS
-  // `right: Xpx` measures from the right edge of the viewport, so we
-  // align the popover's right edge with the button's right edge and
-  // clamp to a minimum gutter. With body.llm-open the chat panel
-  // occupies the rightmost 420px — the gutter jumps to 420+12 so the
-  // popover never slides under the chat.
+  //  位于视口坐标中的锚点按钮下方（固定）。 CSS
+  //  `right: XPx` 从视口的右边缘开始测量，所以我们
+  //  将 popover 的右边缘与按钮的右边缘对齐，然后
+  //  夹到最小的排水沟。用body.llm-打开聊天面板
+  //  占据最右边的 420px — 装订线跳到 420+12，所以
+  //  popover 永远不会在聊天下方滑动。
   const llmOpen = document.body.classList.contains("llm-open");
   const minRight = llmOpen ? 432 : 12;
   const btnRect = anchorBtn.getBoundingClientRect();
@@ -596,9 +596,9 @@ function closeCapPopover() {
   _capPopoverAnchor = null;
 }
 
-// One-shot wiring — close handlers don't depend on which capability is
-// active, so they're attached once. Click outside or Escape dismisses;
-// the [×] inside the popover routes to the same close path.
+//  一次性接线——近距离处理程序不依赖于哪种功能
+//  活跃，所以它们连接一次。单击外部或 Escape 关闭；
+//  popover 内的 [×] 路由至相同的闭合路径。
 document.addEventListener("click", (ev) => {
   const pop = document.getElementById("rdCapPopover");
   if (!pop || pop.hidden) return;
@@ -611,15 +611,15 @@ document.addEventListener("keydown", (ev) => {
 });
 document.getElementById("rdCapPopoverClose")?.addEventListener("click", () => closeCapPopover());
 
-// Render the list of uploaded versions inside a card (rendered as soon as
-// 1 version exists — even a single version is worth surfacing so the tech
-// can see which file is loaded and delete it if it's wrong).
-// Each row: radio + filename · timestamp · size + status (active schematic
-// only) + trash (hover). Click the row to switch the active pin via
-// PUT /sources/{kind}; click the trash to drop via DELETE.
-// When 5+ versions, the inner list scrolls and the header stays fixed.
-// opts.graphStatus is `compiled | building | null` and only affects the
-// active row of a schematic card — boardview rows ignore it.
+//  在卡片内呈现已上传版本的列表（一旦
+//  存在 1 个版本 - 即使是单个版本也值得浮出水面，因此技术
+//  可以看到加载了哪个文件，如果错误则删除它）。
+//  每行：广播+文件名·时间戳·大小+状态（活动schematic
+//  仅）+垃圾箱（悬停）。单击该行可通过以下方式切换活动引脚
+//  PUT /来源/{种类};单击垃圾箱以通过删除删除。
+//  当 5+ 版本时，内部列表滚动并且标题保持固定。
+//  opts.graphStatus 为“已编译 |”建筑 | null`并且只影响
+//  schematic 卡的活动行 — boardview 行忽略它。
 function renderVersionList(cardId, kind, versions, slug, rid, opts = {}) {
   const card = document.getElementById(cardId);
   if (!card) return;
@@ -686,8 +686,8 @@ function renderVersionList(cardId, kind, versions, slug, rid, opts = {}) {
   }
 }
 
-// Parse the ISO-like upload timestamp `20260424T130000Z` into a short
-// fr-locale label `24 avr · 13:00`. Falls back to the raw string on parse fail.
+//  将类似 ISO 的上传时间戳 `20260424T130000Z` 解析为简短的
+//  fr-区域设置标签“24 avr·13:00”。解析失败时回退到原始字符串。
 function formatVersionDate(ts) {
   if (!ts) return "…";
   const m = ts.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
@@ -701,11 +701,11 @@ function formatVersionDate(ts) {
   }).replace(",", " ·");
 }
 
-// ─── Build watcher (schematic recompile spinner + ETA + polling) ───────
-// One global state because at most one schematic rebuild can run on a
-// device at a time (the backend serialises). Frontend keeps a 1-second
-// countdown for ETA display, and a slower 8s poll on /pipeline/packs/{slug}
-// to detect completion (has_electrical_graph flips back to true).
+//  ──── 构建观察程序（schematic 重新编译微调器 + ETA + 轮询）────────
+//  一种全局状态，因为最多可以在一个 schematic 重建上运行
+//  一次设备（后端序列化）。前端保持1秒
+//  ETA 显示倒计时，以及 /pipeline/packs/{slug} 上较慢的 8 秒轮询
+//  检测完成（has_electrical_graph 翻转回 true）。
 let _buildState = null;
 
 function startBuildWatch(slug, rid, etaSeconds, pageCount) {
@@ -789,19 +789,19 @@ function formatRemaining(sec) {
   return t("home.dashboard.build.remaining_sec", { n: sec });
 }
 
-// Demo cache-hit animation for schematic re-imports. Fired by
-// handleUpload when `has_electrical_graph` was already true BEFORE
-// the POST — typical when the tech re-uploads the same PDF during a
-// demo run. We fake the visible pipeline side (spinner + ETA on
-// Schematic + Electrical cards) for ~12s, then refreshDashboardData
-// syncs reality. Boardview is intentionally NOT covered here:
-// re-import is cheap (no pipeline) and the instant flip is fine.
+//  演示 schematic 重新导入的缓存命中动画。被解雇
+//  在“has_electrical_graph”为 true 之前处理Upload
+//  POST — 典型情况是技术人员在某个时间段内重新上传相同的 PDF
+//  演示运行。我们伪造可见的管道侧（旋转器+ ETA
+//  原理图 + 电气卡）约 12 秒，然后刷新仪表板数据
+//  同步现实。这里故意不涵盖Boardview：
+//  重新导入很便宜（没有管道）并且即时翻转也很好。
 async function playFakeIngestTimeline(slug, rid) {
   const TOTAL_SEC = 12;
   setCardState("rdCardSchematic", "building");
   setCardState("rdCardElectrical", "building");
-  // Reuse the real watcher's renderer so the visible chrome
-  // (spinner + ETA text) is identical to a true rebuild.
+  //  重用真实观察者的渲染器，以便可见的镶边
+  //  （旋转器 + ETA 文本）与真正的重建相同。
   const fakeState = {
     slug, rid,
     pageCount: null,
@@ -820,11 +820,11 @@ async function playFakeIngestTimeline(slug, rid) {
   await refreshDashboardData(slug, rid);
 }
 
-// Auto-resume: if we land on the dashboard while the schematic PDF exists
-// but the electrical graph is missing, a rebuild is in flight from a prior
-// session — start the watcher with no countdown (just polling).
+//  自动恢复：如果我们在 schematic PDF 存在时登陆仪表板
+//  但电气图丢失了，重建工作正在进行中
+//  session — 启动观察者，没有倒计时（只是轮询）。
 function maybeAutoResumeBuildWatch(slug, rid, pack) {
-  if (_buildState) return; // already watching
+  if (_buildState) return; //  已经在观看
   if (!pack?.has_schematic_pdf) return;
   if (pack.has_electrical_graph) return;
   startBuildWatch(slug, rid, 0, null);
@@ -838,8 +838,8 @@ async function switchSource(slug, rid, kind, version) {
     t("home.toast.switch_in_progress", { kind: label }),
     `${version.original_name} · ${fmtBytes(version.size_bytes)}`);
 
-  // Pre-flight UX: flip the relevant card to building so the technician
-  // sees something happening even before the PUT response lands.
+  //  飞行前用户体验：将相关卡片翻转至建筑物，以便技术人员
+  //  甚至在 PUT 响应到达之前就看到发生了一些事情。
   if (kind === "schematic_pdf") {
     setCardState("rdCardSchematic", "building");
     setCardState("rdCardElectrical", "building");
@@ -856,7 +856,7 @@ async function switchSource(slug, rid, kind, version) {
     );
     if (!res.ok) {
       let detail = "";
-      try { detail = (await res.json()).detail || ""; } catch (_) { /* noop */ }
+      try { detail = (await res.json()).detail || ""; } catch (_) { /*  努普  */ }
       showToast("warn",
         t("home.toast.switch_failed_title"),
         t("home.toast.switch_failed_sub", {
@@ -887,10 +887,10 @@ async function switchSource(slug, rid, kind, version) {
         t("home.toast.pin_updated_title"),
         t("home.toast.pin_updated_sub", { name: version.original_name }));
     }
-    // Drop the PCB viewer's payload cache so the next #pcb visit
-    // refetches /api/board/render and parses the freshly-pinned file
-    // — without this, the bridge's slug cache would serve the stale
-    // version because the slug itself didn't change.
+    //  删除 PCB 查看器的有效负载缓存，以便下一次 #pcb 访问
+    //  重新获取 /api/board/render 并解析新固定的文件
+    //  — 如果没有这个，桥的 slug 缓存将服务于陈旧的
+    //  版本，因为 slug 本身没有改变。
     if (kind === "boardview"
         && window.Boardview
         && typeof window.Boardview.invalidate === "function") {
@@ -910,9 +910,9 @@ async function deleteVersion(slug, rid, kind, version) {
   const confirmMsg = t("home.version.delete_confirm", { name: version.original_name });
   if (!window.confirm(confirmMsg)) return;
 
-  // Pre-flight: if we're deleting the active schematic, the backend will
-  // switch to the next newest. Either way the card flips to building until
-  // the cache decision lands.
+  //  飞行前：如果我们删除活动的schematic，后端将
+  //  切换到下一个最新的。无论哪种方式，卡片都会翻转到建筑物，直到
+  //  缓存决策落地。
   if (version.is_active && kind === "schematic_pdf") {
     setCardState("rdCardSchematic", "building");
     setCardState("rdCardElectrical", "building");
@@ -926,7 +926,7 @@ async function deleteVersion(slug, rid, kind, version) {
     );
     if (!res.ok) {
       let detail = "";
-      try { detail = (await res.json()).detail || ""; } catch (_) { /* noop */ }
+      try { detail = (await res.json()).detail || ""; } catch (_) { /*  努普  */ }
       showToast("warn",
         t("home.toast.delete_failed_title"),
         t("home.toast.delete_failed_sub", {
@@ -953,8 +953,8 @@ async function deleteVersion(slug, rid, kind, version) {
         t("home.toast.version_deleted_title"),
         t("home.toast.version_deleted_sub", { name: version.original_name }));
     }
-    // For boardview deletes, the PCB viewer cache holds the previous file's
-    // payload — invalidate so the next visit refetches /api/board/render.
+    //  对于 boardview 删除，PCB 查看器缓存保存前一个文件的
+    //  Payload — 无效，以便下次访问重新获取 /api/board/render。
     if (kind === "boardview"
         && version.is_active
         && window.Boardview
@@ -971,7 +971,7 @@ async function deleteVersion(slug, rid, kind, version) {
   }
 }
 
-// Helpers ───────────────────────────────────────────────────────
+//  帮手────────────────────────────────────────────────────────
 function setCardState(id, state) {
   const el = document.getElementById(id);
   if (el) el.dataset.state = state;
@@ -1001,16 +1001,16 @@ function actionButton(html, onclick, extra = "") {
 }
 
 // ───────────────────────────────────────────────────────────────
-// Upload wiring — POST /pipeline/packs/{slug}/documents
-// Schematic = .pdf  →  kind=schematic_pdf
-// Boardview = parser-supported extensions  →  kind=boardview
+//  上传接线 — POST /pipeline/packs/{slug}/documents
+//  原理图 = .pdf → kind=schematic_pdf
+//  Boardview = 解析器支持的扩展 → kind=boardview
 // ───────────────────────────────────────────────────────────────
 let _uploadHandlersWired = false;
 function wireUploadHandlers(slug, rid) {
-  // Plan free (mode managé, cloud_hints) : aucune voie d'import — ni boutons
-  // (déjà non rendus) ni drag-drop. Le serveur refuse l'upload (402) pareil.
+  //  免费计划（管理模式、cloud_hints）：aucune voie d'import — ni boutons
+  //  (déjà non rendus) ni 拖放。 Le server 拒绝上传 (402) pareil。
   if (hideUploads()) return;
-  // Always re-bind the per-session slug/rid even on re-mount.
+  //  即使在重新安装时，也始终重新绑定每个会话 slug/rid。
   const schemInput = document.getElementById("rdUploadSchematic");
   const bvInput = document.getElementById("rdUploadBoardview");
   if (schemInput) {
@@ -1032,7 +1032,7 @@ function wireUploadHandlers(slug, rid) {
   if (_uploadHandlersWired) return;
   _uploadHandlersWired = true;
 
-  // Drag-drop on the off-state cards. Visual hint via .is-dragover.
+  //  拖放到关闭状态卡上。通过 .is-dragover 进行视觉提示。
   const wireDrop = (cardId, kind) => {
     const card = document.getElementById(cardId);
     if (!card) return;
@@ -1067,18 +1067,18 @@ async function handleUpload(slug, rid, file, kind) {
   const card = document.getElementById(cardId);
   if (card) card.dataset.state = "building";
 
-  // Snapshot `has_electrical_graph` BEFORE the upload — used to detect
-  // a "fake import" (re-upload of a schematic PDF on a device that
-  // already has the derived graph) so the demo plays an animated
-  // rebuild instead of an instant flip. Boardview has no derived
-  // artefact that survives a source delete, and a re-import is cheap
-  // anyway (no pipeline behind it), so we skip the fake path for it.
+  //  上传之前的快照 `has_electrical_graph` — 用于检测
+  //  “假导入”（在设备上重新上传 schematic PDF）
+  //  已经有了派生图），因此演示会播放动画
+  //  重建而不是立即翻转。 Boardview没有派生
+  //  源删除后仍然存在的人工制品，并且重新导入的成本很低
+  //  无论如何（它后面没有管道），所以我们跳过它的假路径。
   let preExisting = false;
   if (kind === "schematic_pdf") {
     try {
       const pre = await fetchJSON(`/pipeline/packs/${encodeURIComponent(slug)}`, null);
       if (pre) preExisting = Boolean(pre.has_electrical_graph);
-    } catch (_) { /* fall through to normal flow */ }
+    } catch (_) { /*  落入normal流  */ }
   }
 
   const kindLabel = kind === "schematic_pdf"
@@ -1099,14 +1099,14 @@ async function handleUpload(slug, rid, file, kind) {
     });
     if (!res.ok) {
       let detail = "";
-      try { detail = (await res.json()).detail || ""; } catch (_) { /* noop */ }
+      try { detail = (await res.json()).detail || ""; } catch (_) { /*  努普  */ }
       showToast("warn",
         t("home.toast.import_failed"),
         t("home.toast.switch_failed_sub", {
           status: res.status,
           detail: detail || t("home.toast.import_failed_retry"),
         }));
-      // Restore previous state on failure.
+      //  失败时恢复之前的状态。
       await refreshDashboardData(slug, rid);
       return;
     }
@@ -1114,9 +1114,9 @@ async function handleUpload(slug, rid, file, kind) {
       t("home.toast.import_done"),
       `${file.name} · ${fmtBytes(file.size)}`);
     if (preExisting) {
-      // Demo cache-hit path: backend short-circuits (cache-hashed PDF)
-      // and we simulate ~12s of visible vision-pipeline activity on
-      // the Schematic + Electrical cards before refreshing.
+      //  演示缓存命中路径：后端短路（缓存散列 PDF）
+      //  我们模拟了大约 12 秒的可见视觉管道活动
+      //  刷新之前的原理图+电气卡。
       await playFakeIngestTimeline(slug, rid);
     } else {
       await refreshDashboardData(slug, rid);
@@ -1147,24 +1147,24 @@ function showToast(tone, title, sub) {
     : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" opacity=".3"/><path d="M21 12a9 9 0 00-9-9"><animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="1s" repeatCount="indefinite"/></path></svg>';
   toast.classList.remove("hidden");
   if (_toastTimer) clearTimeout(_toastTimer);
-  // "info" stays until the next showToast (upload-in-progress); ok/warn auto-clear.
+  //  “info”保留到下一个 showToast（正在进行上传）；确定/警告自动清除。
   if (tone !== "info") {
     _toastTimer = setTimeout(() => toast.classList.add("hidden"), 3600);
   }
 }
 
 // ───────────────────────────────────────────────────────────────
-// Board-delta card — revision-specific overlay surfacing what the
-// agent knows about this exact board number: signature ICs, notable
-// rails, repair pitfalls, kinship hints (cousin boards). Hidden when
-// no board_number on the repair or when the delta endpoint 404s / returns
-// coverage "none".
+//  Board-delta 卡 — 特定修订版 overlay 表面处理什么
+//  代理知道这个确切的板号：签名 IC，值得注意
+//  rails，修复陷阱，亲属提示（表弟板）。隐藏时
+//  修复时或增量端点 404s/ 返回时没有 board_number
+//  覆盖范围“无”。
 // ───────────────────────────────────────────────────────────────
 async function renderBoardDeltaCard(slug, boardNumber) {
   const card = document.getElementById("rdCardBoardDelta");
   if (!card) return;
 
-  // No board number on this repair — hide card and bail.
+  //  这次维修没有板号——隐藏卡和保释金。
   if (!boardNumber) {
     card.classList.add("hidden");
     return;
@@ -1176,18 +1176,18 @@ async function renderBoardDeltaCard(slug, boardNumber) {
       `/pipeline/packs/${encodeURIComponent(slug)}/board-delta/${encodeURIComponent(boardNumber)}`,
     );
   } catch (_) {
-    // 404 or network error — hide the card.
+    //  404 或网络错误 — 隐藏该卡。
     card.classList.add("hidden");
     return;
   }
 
-  // Coverage "none" means the delta exists as a record but carries no data.
+  //  覆盖率“无”意味着增量作为记录存在但不携带数据。
   if (!delta || delta.coverage === "none") {
     card.classList.add("hidden");
     return;
   }
 
-  // De-duplicate ICs by (part, role) — same logic as the approved mockup.
+  //  按（部分、角色）删除重复 IC — 与批准的模型相同的逻辑。
   const seen = new Set();
   const ics = [];
   for (const ic of (delta.signature_ics || [])) {
@@ -1337,7 +1337,7 @@ function renderDashboardConvs(conversations, rid) {
         `<span class="rd-conv-title">${title}</span>` +
         `<span class="rd-conv-meta">${escapeHtml(meta)}</span>`;
       open.addEventListener("click", () => {
-        openPanel(c.id);  // single connect targeting the right conv
+        openPanel(c.id);  //  针对正确转化的单一连接
       });
 
       const del = document.createElement("button");
@@ -1366,7 +1366,7 @@ function renderDashboardConvs(conversations, rid) {
   newBtn.className = "rd-conv-new";
   newBtn.textContent = t("home.dashboard.convs.new");
   newBtn.addEventListener("click", () => {
-    openPanel("new");  // single connect; backend lazy-materializes on first message
+    openPanel("new");  //  单连接；后端延迟实现第一条消息
   });
   body.appendChild(newBtn);
 }
@@ -1510,17 +1510,17 @@ let _fixBtnResetUnsub = null;
 function wireFixButton(slug, rid) {
   const btn = document.getElementById("dashboardFixBtn");
   if (!btn) return;
-  // resetBtn clears the pending state when the validation flow fails (agent
-  // refuses, MA tool missing, error event). Wired to llm.js via the store
-  // "fixButtonReset" key below.
+  //  当验证流程失败时，resetBtn 会清除挂起状态（代理
+  //  拒绝、MA 工具丢失、错误事件）。通过商店有线连接到llm.js
+  //  下面的“fixButtonReset”键。
   const resetBtn = () => {
     btn.disabled = false;
     btn.innerHTML = ICON_CHECK + " " + escapeHtml(t("home.dashboard.fix_btn"));
     btn.classList.remove("is-validated");
     if (btn._fixTimeoutId) { clearTimeout(btn._fixTimeoutId); btn._fixTimeoutId = null; }
   };
-  // Drop any prior subscription so only the latest button is wired (mirrors
-  // the single-handler semantics of the former window global).
+  //  放弃任何先前的订阅，以便仅连接最新的按钮（镜像
+  //  前一个窗口全局的单处理程序语义）。
   if (_fixBtnResetUnsub) _fixBtnResetUnsub();
   _fixBtnResetUnsub = store.subscribe("fixButtonReset", resetBtn);
   btn.classList.remove("hidden");
@@ -1537,9 +1537,9 @@ function wireFixButton(slug, rid) {
     ws.send(JSON.stringify({ type: "validation.start", repair_id: rid }));
     btn.disabled = true;
     btn.textContent = t("home.dashboard.fix_btn_validating");
-    // Safety timeout: if the agent never fires simulation.repair_validated
-    // (MA tool missing, refusal, error), reset after 25s so the button
-    // isn't permanently stuck.
+    //  安全超时：如果代理从不触发simulation.repair_validated
+    //  （MA工具缺失、拒绝、错误），25秒后重置，所以按钮
+    //  并没有永久卡住。
     btn._fixTimeoutId = setTimeout(() => {
       btn.textContent = t("home.dashboard.fix_btn_failed");
       setTimeout(resetBtn, 2200);
@@ -1547,9 +1547,9 @@ function wireFixButton(slug, rid) {
   };
 }
 
-// Re-render the imperatively-built repair dashboard when the user toggles
-// language. Only fires when the dashboard is actually showing — otherwise the
-// next renderRepairDashboard call picks up the new locale naturally.
+//  当用户切换时重新渲染强制构建的修复仪表板
+//  语言。仅当仪表板实际显示时才会触发 - 否则
+//  下一个 renderRepairDashboard 调用自然会选择新的语言环境。
 async function refreshHomeOnLocaleChange() {
   const homeSection = document.getElementById("homeSection");
   if (!homeSection || homeSection.classList.contains("hidden")) return;
@@ -1557,10 +1557,10 @@ async function refreshHomeOnLocaleChange() {
   const slug = getDeviceSlug();
   const rid = getRepairId();
 
-  // Dashboard mode only — re-render the focused session view on locale toggle.
-  // There is no journal grid anymore (the landing is the global home and handles
-  // its own i18n via data-i18n); when there's no active repair, nothing here is
-  // imperatively built, so we just return.
+  //  仅仪表板模式 - 在区域设置切换时重新渲染聚焦的会话视图。
+  //  不再有日记网格（landing是全局主页和句柄
+  //  它自己的i18n通过数据-i18n）；当没有主动修复时，这里什么都没有
+  //  势在必行，所以我们就返回。
   if (slug && rid) {
     try {
       await renderRepairDashboard({ device: slug, repair: rid });
@@ -1570,10 +1570,10 @@ async function refreshHomeOnLocaleChange() {
   }
 }
 
-// Wire the home/dashboard locale refresh. The new-repair modal was removed in
-// D.2 (the landing form is the single creation entry, and it is a strict superset
-// — device + symptom + device_kind + schematic-at-creation); only the dashboard's
-// imperative re-render on EN/FR toggle remains here.
+//  连接主页/仪表板区域设置刷新。新的修复模式已被删除
+//  D.2（landing形式是单一创建条目，它是一个严格的超集
+//  — 设备 + 症状 + device_kind + schematic-创建时）；仅仪表板的
+//  EN/FR 切换上的强制重新渲染仍保留在这里。
 export function initHome() {
   if (window.i18n && typeof window.i18n.onChange === "function") {
     window.i18n.onChange(() => { refreshHomeOnLocaleChange(); });
