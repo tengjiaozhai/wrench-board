@@ -299,3 +299,36 @@ landing 表单加 `<input type="file" accept=".md">`，multipart submit。`POST 
 **缺点**：landing 接口从 JSON 变 multipart，破坏现有调用方；前端 fetch 改造面大
 
 **推荐 A**：和现有 `POST /pipeline/repairs` 兼容（`raw_dump` 字段可选，None 时行为不变），UI 改动小，符合 YAGNI。B 和 C 在用户实际操作 dump 频繁后再做。
+
+## Cadence Allegro .brd → KiCad .kicad_pcb 转换流程
+
+场景：
+- 收到一个 Cadence Allegro 格式的 `.brd` 文件（二进制，文件头 `0205 1400`），wrench-board 不支持直接解析
+
+规则：
+1. **不要在命令行转换** — 第三方转换工具生成的 `.kicad_pcb` 文件可能与 pcbnew 解析器不兼容（层数、零尺寸焊盘等）
+2. **用 KiCad PCB Editor 导入**：
+   - 打开 KiCad → **PCB Editor**
+   - 菜单：**文件 → 导入 → 非 KiCad 板文件...**
+   - 选择原始 `.brd` 文件
+   - 导入后 **另存为 → .kicad_pcb**
+3. **版本兼容性**：KiCad 10.0 的 pcbnew API 与旧版不同（`GetBoardPolygonOutlines` 新增 `aInferOutlineIfNecessary` 参数）
+4. **wx 调试信息**：wxPython 初始化会向 stdout 输出调试信息，提取 JSON 前必须重定向
+5. **pcbnew 不在 pip** — 必须通过 KiCad.app 安装，macOS 路径：`/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/3.9/bin/python3.9`
+6. **安装注意**：`brew install --cask kicad` 需要在稳当的目录执行（`cd ~`），避免因 CWD 不存在导致 `cp: current working directory: No such file or directory`
+
+验证：
+```bash
+# 测试 pcbnew 是否可用
+/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/3.9/bin/python3.9 \
+  -c "import pcbnew; print(pcbnew.Version())"
+
+# 测试提取脚本
+python3 -c "from api.board.parser.kicad import _find_kicad_python; print(_find_kicad_python())"
+# 期望输出：/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/3.9/bin/python3.9
+
+# 测试文件解析
+/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/3.9/bin/python3.9 \
+  api/board/parser/_kicad_extract.py "path/to/file.kicad_pcb" 2>/dev/null | head -c 200
+# 期望输出：{"outline": [{"x": ..., ...}]
+```

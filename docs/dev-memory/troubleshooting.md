@@ -1,4 +1,44 @@
-## 2026-06-05 mimo-v2.5 不能直接替代 Claude 4.7：pipeline 卡 26/49 页、每页全 5 次重试失败
+## 2026-06-24 Cadence Allegro .brd → KiCad .kicad_pcb 解析全流程
+
+现象：
+- 上传一个 Cadence Allegro 格式的 BRD 文件（`P628A_SUB_V0D20_20250403_17.2.brd`），调用 `/api/board/render?slug=smt-v551` 返回 422 Unprocessable Entity
+- 错误信息：`InvalidBoardFile: unknown encoding or not a .brd Test_Link file`
+- 文件头 `0205 1400` 不匹配任何已支持的 BRD 格式魔数
+
+排查过程：
+
+| 步骤 | 问题 | 发现 |
+|------|------|------|
+| 1. 检查上传的文件 | 文件在 `uploads/` 目录，但解析失败 | 文件是 Cadence Allegro 二进制格式，非 OpenBoardView Test_Link |
+| 2. 尝试 KiCad 格式 | pcbnew 未安装 | `brew install --cask kicad` 需要在交互式终端中输密码 |
+| 3. 安装 KiCad 10.0.4 | macOS 上成功安装 | `cd ~ && brew install --cask kicad`（不能在已删除的 CWD 中执行） |
+| 4. KiCad Python 发现 | python3（conda）没有 pcbnew | KiCad.app 自带的 Python 3.9 才有 |
+| 5. 原始 .brd 不能直接导入 KiCad | pcbnew 不读 Allegro .brd | 需要先用 Cadence 或其他工具导出为 KiCad 格式 |
+| 6. 文件用第三方工具转成 .kicad_pcb | 文件格式合法，但 pcbnew 返回 None | 文件有 CRLF 换行符（Windows 风格）|
+| 7. CRLF 转 LF | 仍然返回 None | `pcbnew.LoadBoard()` 内部用 S-expression 解析器，不依赖换行符 |
+| 8. 用 `PCB_IO_KICAD_SEXPR.LoadBoard()` 获得详细错误 | 抛出 `PARSE_ERROR: 7 is not a valid layer count` | 转换工具的层数定义与 pcbnew 不一致 |
+| 9. 用 KiCad PCB Editor 重新导入后导出 | 加载成功！ | 但 wx 调试信息被写入 stdout，污染了 json 输出 |
+| 10. 重定向 wx 输出到 stderr | 成功解析 | 但 `GetBoardPolygonOutlines()` 缺少 `aInferOutlineIfNecessary` 参数 |
+
+最终修复（共修改 3 个文件）：
+
+| 文件 | 修改 |
+|------|------|
+| `api/board/parser/kicad.py` | 添加 `_find_kicad_python()` — 自动发现 KiCad.app 内置 Python |
+| `api/board/parser/_kicad_extract.py` | wxApp 初始化前重定向 stdout → stderr；`GetBoardPolygonOutlines(outlines, True)` |
+| `api/main.py` | 预热逻辑改用 `_find_kicad_python()` 检查 pcbnew 可用性 |
+
+经验教训：
+- KiCad pcbnew 不是 pip 包，必须通过 KiCad.app 安装（自带 Python 3.9）
+- KiCad 10.0 的 pcbnew API 与旧版不同（`GetBoardPolygonOutlines` 新增必需参数）
+- wx 初始化时会向 stdout 输出调试信息，必须重定向后才会输出 JSON
+- Allegro .brd 文件需要用 KiCad PCB Editor 的「导入 → 非 KiCad 板文件」转换，不能直接用命令行转换工具
+- 下载 KiCad 后执行 `cd ~ && brew install --cask kicad`，避免因 CWD 不存在导致 `cp: current working directory: No such file or directory`
+
+最终结果：
+- 解析成功：159 元件、417 引脚、99 网络
+- 渲染缓存预热成功：`[prewarm] 2 cached, 0 failed`
+- 板尺寸：96 × 16 mm
 
 现象：
 - wrbench-board 从 Claude 4.7 切换到 mimo-v2.5（token-plan 代理，mimo-v2.5 是唯一可用模型）后，schematic 子 pipeline 只能生成 26/49 个 page JSON，随后进度卡住
