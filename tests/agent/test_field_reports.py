@@ -51,7 +51,7 @@ async def test_record_writes_markdown_file(tmp_path: Path, monkeypatch):
 
 async def test_list_returns_newest_first(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("MA_MEMORY_STORE_ENABLED", "false")
-    # Two reports, the second filename-lex-greater so it sorts first.
+    # 两个re端口，第二个ename-lex-greater，因此它首先排序。
     await record_field_report(
         client=None,
         device_slug="demo-pi",
@@ -60,8 +60,8 @@ async def test_list_returns_newest_first(tmp_path: Path, monkeypatch):
         confirmed_cause="c1",
         memory_root=tmp_path,
     )
-    # Monkeypatch the timestamp so the second file lands after the first without
-    # needing to sleep the real clock.
+    # Monkeypatch time标记，以便第二个文件在第一个文件之后着陆，而无需
+    # 需要让real时钟睡觉。
     from api.agent import field_reports as fr_module
 
     class _LaterDatetime:
@@ -101,8 +101,8 @@ async def test_list_filter_by_refdes(tmp_path: Path, monkeypatch):
     filtered = list_field_reports(
         device_slug="demo-pi", memory_root=tmp_path, filter_refdes="U7"
     )
-    # Two U7 reports (same second, same filename → one file in practice).
-    # We just assert every returned refdes matches the filter.
+    # 两个 U7 re 端口（同一秒，相同的en同一个文件 → 实际上是一个文件）。
+    # 我们只是断言每个 returned refdes 与过滤器匹配。
     assert all(r["refdes"] == "U7" for r in filtered)
     assert len(filtered) >= 1
 
@@ -158,7 +158,7 @@ async def test_ma_mirror_failure_does_not_block_json_write(
     monkeypatch.setattr("api.agent.field_reports.ensure_memory_store", fake_ensure)
 
     async def failing_upsert(_client, **_kwargs):
-        return None  # matches the shared helper's failure contract
+        return None  # 匹配shared helper的failure合约
 
     monkeypatch.setattr("api.agent.field_reports.upsert_memory", failing_upsert)
 
@@ -195,7 +195,7 @@ async def test_mb_record_finding_writes_to_disk(tmp_path: Path, monkeypatch):
     )
     assert write_status["json_status"] == "written"
 
-    # Verify directly via the disk-backed reader (server-side helper).
+    # 通过磁盘支持的reader（服务器端帮助程序）验证directly。
     read = list_field_reports(device_slug="demo-pi", memory_root=tmp_path)
     assert len(read) == 1
     assert read[0]["refdes"] == "U7"

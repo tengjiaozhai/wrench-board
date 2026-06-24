@@ -154,12 +154,12 @@ async def test_persistent_transport_failure_exhausts_reconnects(
     from api.agent import runtime_managed as rm
     from api.session.state import SessionState
 
-    # Small budget so the test stays fast; empty catch-up history.
+    # 预算小，所以测试保持fast；空洞的追赶hi故事。
     _stale_settings(monkeypatch, rm, max_reconnects=2)
 
     boom = ConnectionError("simulated TLS reset")
-    # Every (re)connect returns a stream that immediately raises, so no event
-    # is ever delivered and the reconnect budget is never reset.
+    # 每个(re)连接re都会变成一个stream，imm立即引发，所以没有event
+    # 曾经交付过red，并且re连接预算从未设定过re。
     stream = _FakeStream(events=[], raise_after=boom)
     client = _make_client(stream)
     ws = _make_ws()
@@ -206,7 +206,7 @@ async def test_persistent_inactive_stream_exhausts_reconnects(
     from api.agent import runtime_managed as rm
     from api.session.state import SessionState
 
-    # 0.02 s watchdog + tiny reconnect budget → fast.
+    # 0.02 s 看门狗 + 微小的 re 连接预算 → fast。
     _stale_settings(monkeypatch, rm, timeout=0.02, max_reconnects=2)
 
     class _NeverEmits:
@@ -214,7 +214,7 @@ async def test_persistent_inactive_stream_exhausts_reconnects(
         async def __aexit__(self, *_): return False
         def __aiter__(self): return self
         async def __anext__(self):
-            await asyncio.sleep(10)  # longer than the watchdog
+            await asyncio.sleep(10)  # 比看门狗长
             raise StopAsyncIteration
 
     client = _make_client(_NeverEmits())
@@ -279,16 +279,16 @@ async def test_reconnect_recovers_pending_tool_from_catchup_history(
     )
     terminated = SimpleNamespace(type="session.status_terminated")
 
-    # Connect #1: drops immediately (TLS reset) — the tool_use + requires_action
-    # were emitted during the gap and never reached the live stream.
+    # 连接 #1：立即删除 imm（TLS reset） — tool_use + requires_action
+    # 我们在间隙期间进行了reemit比赛，但从未re到达直播re上午。
     first_stream = _FakeStream(
         events=[], raise_after=ConnectionError("drop mid-turn"),
     )
-    # Connect #2: live tail is quiet; the work happens via the catch-up pass.
-    # A terminated event on the second live tail ends the loop cleanly.
+    # 连接#2：活尾安静；通过追赶通行证，工作快乐ens。
+    # 第二个活动尾部 ent 上的终止 event 干净地结束了循环。
     second_stream = _FakeStream(events=[terminated])
 
-    # The catch-up history (served on the reconnect) carries the gap events.
+    # 追赶hi故事（在reconnect上提供）带有差距events。
     def _list_factory():
         return _FakeEventsList([tool_use, requires_action])
 
@@ -306,12 +306,12 @@ async def test_reconnect_recovers_pending_tool_from_catchup_history(
         environment_id="env_test", repair_id=None, conv_id=None,
     )
 
-    # The gap tool was dispatched exactly once after reconnect.
+    # 间隙工具在 reconnect 之后被调度一次。
     assert dispatch_calls == [("bv_highlight_component", {"refdes": "U7"})], (
         f"pending tool from catch-up history must be dispatched once, got "
         f"{dispatch_calls!r}"
     )
-    # Exactly one user.custom_tool_result reached MA — unblocking the session.
+    # 正好一个 user.custom_tool_result reached MA — 解锁会话。
     sent = client.beta.sessions.events.send.await_args_list
     tool_results = [
         ev for call in sent
@@ -360,16 +360,16 @@ async def test_reconnect_catchup_does_not_redispatch_answered_tool(
     )
     terminated = SimpleNamespace(type="session.status_terminated")
 
-    # Connect #1: delivers tool_use + requires_action live (we answer it),
-    # THEN drops before any terminal event.
+    # 连接 #1：实时交付 tool_use + requires_action（我们回答），
+    # 然后在任何终端 event 之前删除re。
     first_stream = _FakeStream(
         events=[tool_use, requires_action],
         raise_after=ConnectionError("drop after answering"),
     )
-    # Connect #2: quiet tail that terminates cleanly.
+    # 连接＃2：安静的尾巴，干净地终止。
     second_stream = _FakeStream(events=[terminated])
 
-    # Catch-up history re-serves the SAME already-answered events.
+    # 追赶hi故事re-提供相同的ready-answered events。
     def _list_factory():
         return _FakeEventsList([tool_use, requires_action])
 
@@ -387,7 +387,7 @@ async def test_reconnect_catchup_does_not_redispatch_answered_tool(
         environment_id="env_test", repair_id=None, conv_id=None,
     )
 
-    # Dispatched exactly once (live), not again on catch-up.
+    # 仅发送一次（实时），不会在追赶时再次发送。
     assert len(dispatch_calls) == 1, (
         f"answered tool must not re-dispatch on catch-up, got {dispatch_calls!r}"
     )
@@ -418,7 +418,7 @@ async def test_requires_action_dedup_skips_second_dispatch(
 
     _stale_settings(monkeypatch, rm)
 
-    # Stub the dispatcher so we can count invocations without touching the
+    # 存根调度程序，以便我们可以计算调用次数，而无需接触hing
     # full bv_* / mb_* tool surface.
     dispatch_calls: list[tuple[str, dict]] = []
 
@@ -428,8 +428,8 @@ async def test_requires_action_dedup_skips_second_dispatch(
 
     monkeypatch.setattr(rm, "_dispatch_tool", fake_dispatch)
 
-    # Build a sequence: a custom_tool_use, then status_idle requires_action,
-    # then a SECOND status_idle with the same event_ids (the re-emit).
+    # 构建一个sequence：一个custom_tool_use，thenstatus_idlerequires_action，
+    # then 具有相同 event_ids 的第二个 status_idle（re-emit）。
     tool_use = SimpleNamespace(
         type="agent.custom_tool_use",
         id="sevt_tool_001",
@@ -447,7 +447,7 @@ async def test_requires_action_dedup_skips_second_dispatch(
         type="session.status_idle",
         stop_reason=SimpleNamespace(
             type="requires_action",
-            event_ids=["sevt_tool_001"],  # same id — must be skipped
+            event_ids=["sevt_tool_001"],  # 相同的 id — 必须被跳过
         ),
     )
     end_turn = SimpleNamespace(
@@ -474,7 +474,7 @@ async def test_requires_action_dedup_skips_second_dispatch(
         f"dispatcher must run exactly once for a deduped tool use, got "
         f"{len(dispatch_calls)} calls: {dispatch_calls!r}"
     )
-    # Exactly one user.custom_tool_result must hit the wire.
+    # 恰好有一个 user.custom_tool_result 必须hit wire。
     sent_events = client.beta.sessions.events.send.await_args_list
     tool_results = [
         ev for call in sent_events
@@ -516,9 +516,9 @@ async def test_processed_at_logs_consumption_delay(
             type="requires_action", event_ids=["sevt_pat_42"],
         ),
     )
-    # Echo back the user.custom_tool_result with processed_at populated —
-    # this is what MA would send on the second pass after the agent
-    # consumed our response.
+    # 回显 user.custom_tool_result，并填充processed_at —
+    # this 是 MA 在 agent 之后的第二遍中 send 的值
+    # 消耗了我们的re响应。
     echo = SimpleNamespace(
         type="user.custom_tool_result",
         custom_tool_use_id="sevt_pat_42",
@@ -634,14 +634,14 @@ async def test_full_turn_flow_message_tool_result_complete(
 
     _stale_settings(monkeypatch, rm)
 
-    # Capture the dispatcher invocation so we can assert on its inputs.
+    # Capture 调度程序调用，以便我们可以对其 input 进行断言。
     dispatch_calls: list[tuple[str, dict]] = []
 
     async def fake_dispatch(name, payload, *_a, **_kw):
         dispatch_calls.append((name, payload))
-        # The runtime strips `event` / `events` keys from the result
-        # before serializing into user.custom_tool_result, so include
-        # one to verify the strip behavior end-to-end.
+        # runtime 从 result 中剥离 `event` / `events` 键 fr
+        # before 序列化为 user.custom_tool_result，因此包含
+        # 用于验证条带行为end-to-end。
         return {
             "ok": True,
             "highlighted": payload.get("refdes"),
@@ -650,7 +650,7 @@ async def test_full_turn_flow_message_tool_result_complete(
 
     monkeypatch.setattr(rm, "_dispatch_tool", fake_dispatch)
 
-    # Full turn sequence, in order MA would emit it.
+    # 整转序列ence，以便 MA emit 它。
     intro_message = SimpleNamespace(
         type="agent.message",
         content=[
@@ -695,9 +695,9 @@ async def test_full_turn_flow_message_tool_result_complete(
         environment_id="env_test", repair_id=None, conv_id=None,
     )
 
-    # ---- Assertions ----------------------------------------------------
+    # ---- 断言----------------------------------------------------
 
-    # 1. Both agent.message texts reached the WS as `message` frames, in order.
+    # 1. 两个agent.消息文本re都将WS按顺序设置为“消息”frames。
     payloads = [call.args[0] for call in ws.send_json.await_args_list]
     message_frames = [p for p in payloads if p.get("type") == "message"]
     assert len(message_frames) == 2, (
@@ -708,19 +708,19 @@ async def test_full_turn_flow_message_tool_result_complete(
     assert "U7" in message_frames[0]["text"]
     assert "mesures" in message_frames[1]["text"]
 
-    # 2. tool_use frame announced to the WS so the UI chat can show it.
+    # 2. tool_use frame 已发布到WS，以便UI 聊天可以显示它。
     tool_use_frames = [p for p in payloads if p.get("type") == "tool_use"]
     assert len(tool_use_frames) == 1
     assert tool_use_frames[0]["name"] == "bv_highlight_component"
     assert tool_use_frames[0]["input"] == {"refdes": "U7"}
 
-    # 3. Dispatcher ran exactly once with the right inputs.
+    # 3. 调度程序以正确的 input 运行了一次。
     assert dispatch_calls == [("bv_highlight_component", {"refdes": "U7"})], (
         f"dispatcher invocation mismatch: {dispatch_calls!r}"
     )
 
-    # 4. user.custom_tool_result was posted back to MA with the eid + JSON
-    #    body, and the `event` key was stripped from the agent-facing payload.
+    # 4. user.custom_tool_result 被 pos 发送回 MA，eid + JSON
+    #    主体，并且`event`密钥被从agent面向的支付load中剥离了fr。
     sent_events = client.beta.sessions.events.send.await_args_list
     tool_results = [
         ev for call in sent_events
@@ -736,7 +736,7 @@ async def test_full_turn_flow_message_tool_result_complete(
         f"got {body!r}"
     )
 
-    # 5. turn_complete WS frame was emitted at end_turn.
+    # 5.turn_complete WSframe 在end_turn emitted。
     turn_complete_frames = [p for p in payloads if p.get("type") == "turn_complete"]
     assert len(turn_complete_frames) == 1, (
         f"expected exactly one turn_complete frame, got {len(turn_complete_frames)}"

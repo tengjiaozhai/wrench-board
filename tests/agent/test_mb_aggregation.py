@@ -91,7 +91,7 @@ def test_case2_memory_only_no_session(seeded_memory: Path) -> None:
 
 
 def test_case2_memory_only_refdes_absent_from_board(seeded_memory: Path) -> None:
-    session = _session_with_parts(["C29"])  # no U7 on the board
+    session = _session_with_parts(["C29"])  # board 上没有 U7
     result = mb_get_component(
         device_slug="testdev", refdes="U7",
         memory_root=seeded_memory, session=session,

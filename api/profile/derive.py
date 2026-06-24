@@ -1,4 +1,4 @@
-"""Pure derivation helpers — no I/O, safe to call from prompt rendering / HTTP."""
+"""纯派生助手 — 无 I/O，可以安全地从提示渲染中调用 / HTTP。"""
 
 from __future__ import annotations
 

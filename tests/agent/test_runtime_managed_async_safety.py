@@ -35,7 +35,7 @@ import pytest
 from api.agent.runtime_managed import _SessionMirrors
 
 # ---------------------------------------------------------------------------
-# F1: _emit must route through session_mirrors so frames are awaited
+# F1：_emit 必须通过 session_mirrors 进行路由，因此 frames are awaited
 # ---------------------------------------------------------------------------
 
 
@@ -54,26 +54,26 @@ async def test_session_mirrors_spawn_drains_emitted_frames():
     sends_received: list[dict] = []
 
     async def slow_send(payload):
-        # Simulate a real WS send taking a tick to actually hit the wire.
+        # 模拟 real WS send 滴答，实际 hit wire。
         await asyncio.sleep(0.01)
         sends_received.append(payload)
 
     ws.send_json = slow_send
 
-    # Spawn 5 emits in rapid succession (mirrors what measurement /
-    # validation tools do during a turn).
+    # 快速连续生成 5 个emit（镜像measurement /
+    # 验证工具在回合期间执行）。
     for i in range(5):
         mirrors.spawn(ws.send_json({"type": "measurement", "i": i}))
 
-    # The pool must hold all 5 BEFORE drain.
+    # 排水之前，水池必须容纳全部 5 个。
     assert len(mirrors._pending) == 5
 
     await mirrors.wait_drain(timeout=2.0)
 
-    # All 5 frames must have landed by the time drain returns.
+    # 所有 5 个 fr 火焰必须通过 time 排水口 re 转弯着陆。
     assert len(sends_received) == 5
     assert {s["i"] for s in sends_received} == {0, 1, 2, 3, 4}
-    # Pool must be empty post-drain.
+    # 池必须是空的 post-drain。
     assert len(mirrors._pending) == 0
 
 
@@ -96,7 +96,7 @@ async def test_session_mirrors_drain_swallows_exceptions():
     mirrors.spawn(bad_send())
     mirrors.spawn(good_send())
 
-    # Must not raise.
+    # 一定不能提高。
     await mirrors.wait_drain(timeout=2.0)
     assert len(mirrors._pending) == 0
 
@@ -113,13 +113,13 @@ async def test_session_mirrors_drain_cancels_on_timeout():
 
     task = mirrors.spawn(hangs_forever())
     await mirrors.wait_drain(timeout=0.05)
-    # Give the cancel a tick to propagate.
+    # 给取消打勾以传播。
     await asyncio.sleep(0.01)
     assert task.cancelled() or task.done()
 
 
 # ---------------------------------------------------------------------------
-# F2: cam_capture dedup rollback on dispatch failure
+# F2：cam_capture 调度失败时进行重复数据删除回滚re
 # ---------------------------------------------------------------------------
 
 
@@ -156,12 +156,12 @@ async def test_cam_capture_dedup_holds_on_success():
         return None
 
     mirrors = _SessionMirrors()
-    responded.add(eid)  # mirrors the runtime: add BEFORE spawn
+    responded.add(eid)  # 镜像 runtime：在生成之前添加
     task = mirrors.spawn(successful_dispatch())
     task.add_done_callback(_build_cam_release_callback(responded, eid))
 
     await mirrors.wait_drain(timeout=2.0)
-    # done-callback runs via the loop, give it a tick.
+    # 完成回调通过循环运行，给它一个勾。
     await asyncio.sleep(0.01)
     assert eid in responded, "successful dispatch must keep the dedup intact"
 
@@ -210,7 +210,7 @@ async def test_cam_capture_dedup_releases_on_cancel():
     task = mirrors.spawn(hanging_dispatch())
     task.add_done_callback(_build_cam_release_callback(responded, eid))
 
-    # Force the cancel path via a tight drain.
+    # 通过紧密的排水管强制取消路径。
     await mirrors.wait_drain(timeout=0.05)
     await asyncio.sleep(0.05)
     assert task.cancelled() or task.done()
@@ -218,7 +218,7 @@ async def test_cam_capture_dedup_releases_on_cancel():
 
 
 # ---------------------------------------------------------------------------
-# F8: Cancelled forwarder tasks must finish unwinding before teardown
+# F8：取消的转发器任务必须在re拆卸之前完成展开
 # ---------------------------------------------------------------------------
 
 
@@ -240,12 +240,12 @@ async def test_cancelled_forwarder_unwinds_before_teardown_proceeds():
         await asyncio.sleep(0.01)
 
     async def recv_task_blocks_on_receive():
-        # Mimics ws.receive_text() that's stuck waiting for client input.
+        # 模仿 ws.receive_text()，卡住等待 client input。
         try:
             await asyncio.sleep(60)
         except asyncio.CancelledError:
-            # Real recv_task does cleanup here (close iter, etc) — give
-            # it a measurable tick so the test catches a missing await.
+            # Real recv_task 会清理 here （close iter 等） — 给出
+            # 它是一个可测量的刻度，因此测试捕获缺失的 await。
             await asyncio.sleep(0.01)
             raise
 
@@ -261,8 +261,8 @@ async def test_cancelled_forwarder_unwinds_before_teardown_proceeds():
     for task in pending:
         task.cancel()
 
-    # Without the gather, this assertion would fail because the cancel
-    # has only been requested, not observed.
+    # 如果没有 gather，this 断言将会失败，因为取消
+    # 仅被enrequested，未被观察到。
     if pending:
         await asyncio.wait_for(
             asyncio.gather(*pending, return_exceptions=True),
@@ -289,25 +289,25 @@ async def test_post_cancel_gather_swallows_cancelled_error():
         await asyncio.sleep(60)
 
     task = asyncio.create_task(will_be_cancelled())
-    await asyncio.sleep(0)  # let it start
+    await asyncio.sleep(0)  # 让它开始
     task.cancel()
 
-    # This is the runtime's post-cancel pattern.
+    # This 是 runtime 的 post 取消模式。
     results = await asyncio.gather(task, return_exceptions=True)
     assert len(results) == 1
     assert isinstance(results[0], asyncio.CancelledError)
 
 
 # ---------------------------------------------------------------------------
-# F1 (post-cancel asymmetry follow-up): per-task cancel + bounded wait
+# F1（post-cancel asymmetry后续）：每个任务取消+有界等待
 # ---------------------------------------------------------------------------
 #
-# These two tests pin the new orchestration in runtime_managed where the
-# `await asyncio.gather(*pending, return_exceptions=True)` global call
-# was replaced by a per-task `task.cancel()` + bounded `asyncio.wait`.
-# The replacement gives each forwarder its own unwind window and logs by
-# name when a task ignores its cancel, so a single misbehaving task can
-# no longer starve a clean-finishing sibling out of the shared timeout.
+# 这两个测试将新编排固定在 runtime_managed 和re 中
+# `await asyncio.gather(*pending, return_exceptions=True)` 全局调用
+# re由每个任务 `task.cancel()` + 有界的 `asyncio.wait` 放置。
+# replacement 为每个转发器提供了自己的展开窗口并记录
+# 命名 when 任务忽略re其取消，因此单个行为不当的任务可以
+# 不再让干净完成的hing兄弟姐妹从shared timeout中挨饿。
 
 
 def _drive_pending_unwind(
@@ -383,14 +383,14 @@ async def test_post_cancel_task_ignoring_cancel_logs_warning_with_name(
         try:
             await asyncio.sleep(60)
         except asyncio.CancelledError:
-            # Misbehaving forwarder: swallows the cancel and keeps
-            # running well past the per-task budget. Real-world example
-            # is a forwarder stuck in a `try: ... except Exception: pass`
-            # loop that catches CancelledError as a side effect.
+            # 行为不端的货代：吞下取消订单并保留
+            # 远远超出了每个任务的预算。现实世界的例子
+            # 转发器陷入“尝试：...除了异常：通过”的困境
+            # 捕获 CancelledError 作为副作用的循环。
             await asyncio.sleep(60)
 
     task = asyncio.create_task(ignores_cancel(), name="session->ws")
-    await asyncio.sleep(0)  # let it start
+    await asyncio.sleep(0)  # 让它开始
     pending = {task}
 
     fake_logger = logging.getLogger(
@@ -408,8 +408,8 @@ async def test_post_cancel_task_ignoring_cancel_logs_warning_with_name(
         "Task ignoring cancel must be reported as timeout, not silently "
         "marked clean."
     )
-    # The warning record must mention the task name so an operator can
-    # tell recv vs emit apart.
+    # 警告record 必须包含任务名称ention，以便操作员可以
+    # 区分 recv 和 emit。
     matching = [
         r for r in caplog.records
         if r.levelno == logging.WARNING
@@ -421,7 +421,7 @@ async def test_post_cancel_task_ignoring_cancel_logs_warning_with_name(
         f"records={[r.getMessage() for r in caplog.records]}"
     )
 
-    # Cleanup so pytest doesn't surface a leaked-task warning.
+    # 进行清理，以便 pytest 不会出现泄漏任务警告。
     task.cancel()
     try:
         await asyncio.wait({task}, timeout=0.05)
@@ -449,7 +449,7 @@ async def test_post_cancel_clean_task_not_penalized_by_slow_sibling():
         try:
             await asyncio.sleep(60)
         except asyncio.CancelledError:
-            # Real recv_task close path: cleans up an iterator quickly.
+            # 真正的recv_task close路径：快速清理迭代器。
             await asyncio.sleep(0)
             raise
 
@@ -461,7 +461,7 @@ async def test_post_cancel_clean_task_not_penalized_by_slow_sibling():
 
     clean = asyncio.create_task(cancels_cleanly(), name="ws->session")
     slow = asyncio.create_task(ignores_cancel(), name="session->ws")
-    await asyncio.sleep(0)  # let both start
+    await asyncio.sleep(0)  # 让两者都开始
     pending = {clean, slow}
 
     fake_logger = logging.getLogger(
@@ -477,11 +477,11 @@ async def test_post_cancel_clean_task_not_penalized_by_slow_sibling():
     )
     elapsed = time.monotonic() - start
 
-    # Clean task observed as cancelled, slow one as timeout — handled
-    # independently. The order in which the runtime visits `pending`
-    # is set-iteration order, which is deterministic per process but
-    # not specified across runs; we assert on the per-task outcome,
-    # not on log ordering.
+    # 清理任务被观察为已取消，慢任务为 timeout — 已处理
+    # 独立endently。 which runtime 中的顺序访问`pending`
+    # 是集合迭代顺序，which 每个进程都是确定性的，但是
+    # 未指定 across 运行；我们断言每个任务的结果，
+    # 不在日志排序上。
     assert outcomes == {
         "ws->session": "cancelled",
         "session->ws": "timeout",
@@ -490,15 +490,15 @@ async def test_post_cancel_clean_task_not_penalized_by_slow_sibling():
         "the sibling's behaviour."
     )
 
-    # Wall time must be bounded by 2 * per_task_timeout (worst case the
-    # clean task is visited second and waits ~zero before being seen as
-    # cancelled). Generous upper bound to absorb scheduler jitter on
-    # busy CI hardware.
+    # Wall time 必须以 2 * per_task_timeout 为界（最坏的情况
+    # 第二次访问 clean 任务，并在 sere 之前等待 ~0 为 seen 作为
+    # 取消）。 Gen吸收调度程序抖动的危险上限
+    # 繁忙的 CI 硬件re。
     assert elapsed < 0.5, (
         f"Per-task wait should not balloon past 2*budget; got {elapsed:.3f}s"
     )
 
-    # Cleanup the misbehaving task to avoid pytest warning.
+    # 清理行为不当的任务以避免 pytest 警告。
     slow.cancel()
     try:
         await asyncio.wait({slow}, timeout=0.05)
@@ -507,7 +507,7 @@ async def test_post_cancel_clean_task_not_penalized_by_slow_sibling():
 
 
 # ---------------------------------------------------------------------------
-# Integration: _emit + session_mirrors interplay (the real F1 scenario)
+# 集成：_emit + session_mirrors 相互作用（real F1 scenario）
 # ---------------------------------------------------------------------------
 
 
@@ -529,19 +529,19 @@ async def test_emit_pattern_drains_under_simulated_session_close():
 
     mirrors = _SessionMirrors()
 
-    # Reproduce _emit closure shape from runtime_managed.
+    # 再现_emit closure形状from runtime_managed。
     def _emit(event: dict) -> None:
         mirrors.spawn(ws.send_json(event))
 
-    # Simulate three measurement events arriving in quick succession,
-    # then an immediate session close (no time for the loop to round-trip).
+    # 模拟 ree measurement event 快速连续到达，
+    # then immediate 会话 close（循环到 round-trip 时没有 time）。
     _emit({"type": "measurement", "rail": "PP3V0", "voltage": 3.0})
     _emit({"type": "measurement", "rail": "PP1V8", "voltage": 1.79})
     _emit({"type": "validation", "step_id": "s1", "ok": True})
 
-    # The session teardown awaits the drain — without F1 fix the
-    # asyncio.create_task tasks would be unrelated to mirrors and the
-    # drain would return instantly with `delivered` still empty.
+    # 会话拆卸 awaits 耗尽 — 无需 F1 修复
+    # asyncio.create_task 任务不会re关联到镜像，并且
+    # 排水管会立即 re 转动，而 `deliverred` 仍然是空的。
     await mirrors.wait_drain(timeout=2.0)
 
     assert len(delivered) == 3

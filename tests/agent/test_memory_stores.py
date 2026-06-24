@@ -62,14 +62,14 @@ class _FakeHttpClient:
 
 def _client_without_surface() -> MagicMock:
     """Return a client whose `.beta` has no `memory_stores` attribute."""
-    # Using a class instance rather than MagicMock — MagicMock auto-vivifies.
+    # 使用类实例而不是 MagicMock — MagicMock 自动激活。
     class _Beta:
         pass
 
     class _Client:
         beta = _Beta()
 
-    return _Client()  # type: ignore[return-value]
+    return _Client()  # 类型：ignore[re转值]
 
 
 async def test_ensure_creates_store_via_http_when_sdk_absent(tmp_path, monkeypatch):
@@ -86,7 +86,7 @@ async def test_ensure_creates_store_via_http_when_sdk_absent(tmp_path, monkeypat
     assert call["url"].endswith("/memory_stores")
     assert call["headers"]["anthropic-beta"] == "managed-agents-2026-04-01"
     assert call["json"]["name"] == "wrench-board-demo-pi"
-    # The id is persisted so the next call doesn't hit the network.
+    # id 被保留，因此下一次调用不会 hit net 工作。
     meta = (tmp_path / "demo-pi" / "managed.json").read_text()
     assert "memstore_abc123" in meta
 
@@ -111,7 +111,7 @@ async def test_ensure_prefers_sdk_surface_when_present(monkeypatch):
     client = MagicMock()
     client.beta.memory_stores.create = sdk_create
 
-    # HTTP path must NOT be hit when the SDK surface works.
+    # SDK 表面工作时，HTTP 路径不得为 hit。
     fake_http = _FakeHttpClient(_FakeHttpResponse(500, "unreachable"))
     monkeypatch.setattr(httpx, "AsyncClient", lambda **_kw: fake_http)
 
@@ -128,7 +128,7 @@ async def test_ensure_returns_none_on_http_failure(tmp_path, monkeypatch):
     client = _client_without_surface()
     store_id = await memory_stores.ensure_memory_store(client, "denied-device")
     assert store_id is None
-    # No managed.json persisted on failure — the next call can retry.
+    # managed.json 不会在失败re 时持续存在 — 下一次调用可以re 尝试。
     assert not (tmp_path / "denied-device" / "managed.json").exists()
 
 
@@ -158,7 +158,7 @@ async def test_upsert_via_http_when_sdk_absent(monkeypatch):
 async def test_upsert_prefers_sdk_write_method(monkeypatch):
     sdk_write = AsyncMock(return_value=MagicMock(content_sha256="sha_from_sdk"))
     client = MagicMock()
-    # .write is the public-beta canonical name — must be tried first.
+    # .write 是公共测试版规范名称 - 必须首先尝试。
     client.beta.memory_stores.memories.write = sdk_write
 
     fake_http = _FakeHttpClient(_FakeHttpResponse(500, "unreachable"))
@@ -245,7 +245,7 @@ async def test_upsert_falls_back_to_update_on_409_path_conflict(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Layered architecture: ensure_global_store + ensure_repair_store
+# Layered弧hitecture：ensure_global_store + ensure_repair_store
 # ---------------------------------------------------------------------------
 
 

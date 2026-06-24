@@ -1,4 +1,4 @@
-"""Auto-generator of benchable scenarios from device knowledge packs."""
+"""从设备知识包自动生成可测试场景。"""
 
 from api.pipeline.bench_generator.orchestrator import generate_from_pack
 

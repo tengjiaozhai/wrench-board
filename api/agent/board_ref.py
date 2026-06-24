@@ -1,19 +1,17 @@
-"""诊断代理的每个会话板号上下文。
+"""诊断 agent 的每会话板号上下文。
 
-板号（例如“820-02016”）标识 PCB 版本
-诊断并确定代理加载哪个板增量包。这是
-在诊断会话顶部从``?board=`` query
-parameter on the ⟦PRESERVE2⟧ handshake, and read by board-delta-aware tools to
-inject the revision-specific delta into the session context.
+板号（如「820-02016」）标识 PCB 修订版，决定 agent 加载哪个
+board delta 包。在诊断 WS 握手时从 `?board=` 查询参数绑定一次，
+供 board-delta 感知工具将修订版特定增量注入会话上下文。
 
-A ContextVar (not a module global) so concurrent sessions — each a
-separate ⟦PRESERVE0⟧ task per ⟦PRESERVE2⟧ connection — stay isolated: ``⟦PRESERVE0⟧.create_task``
-copies the context, so child tasks of a session inherit the board_ref set at
-its top, while a different session's task carries its own value. The engine
-treats board_ref as an opaque string; no trust or gating logic lives here.
+使用 ContextVar（非模块全局）以隔离并发会话 — 每个 WebSocket 连接
+的 asyncio Task 各自独立：`asyncio.create_task` 复制上下文，子任务
+继承顶部设置的 board_ref，不同会话互不影响。引擎将 board_ref 视为
+不透明字符串；此处无信任或门控逻辑。
 
-Default ``None`` so STANDALONE / SELF-⟦PRESERVE1⟧ (no ``?board=``参数绑定一次）是完全
-功能性——Delta 根本没有被注入，保留了今天的行为。"""
+默认 `None`：STANDALONE / SELF-HOST（未绑定 `?board=`）时 delta 不注入，
+保持现有行为。
+"""
 
 from __future__ import annotations
 
@@ -23,10 +21,10 @@ _board_ref: ContextVar[str | None] = ContextVar("agent_board_ref", default=None)
 
 
 def set_board_ref(value: str | None) -> None:
-    """将当前诊断会话绑定到板号（在顶部调用一次）。"""
+    """将当前诊断会话绑定到板号（在会话顶部调用一次）。"""
     _board_ref.set(value or None)
 
 
 def current_board_ref() -> str | None:
-    """当前会话的板号，或无（不提供/独立）。"""
+    """当前会话的板号；未提供/独立模式时为 None。"""
     return _board_ref.get()

@@ -11,7 +11,7 @@ from api.session.state import SessionState
 @pytest.mark.asyncio
 async def test_dispatch_propose_protocol(tmp_path):
     session = SessionState()
-    # No board = valid_refdes is None = no refdes validation
+    # 否 board = valid_refdes 无 = 没有 refdes 验证
     out = await _dispatch_tool(
         name="bv_propose_protocol",
         payload={
@@ -56,7 +56,7 @@ async def test_dispatch_record_step_result(tmp_path, monkeypatch):
         device_slug="demo", memory_root=tmp_path, client=None,
         session=session, repair_id="r1",
     )
-    # (For test simplicity SessionState.board is None so refdes validation skipped.)
+    # （为了测试简单性，SessionState。board为 None，因此跳过refdes验证。）
     out = await _dispatch_tool(
         name="bv_record_step_result",
         payload={"step_id": "s_1", "value": 24.5, "unit": "V"},
@@ -64,7 +64,7 @@ async def test_dispatch_record_step_result(tmp_path, monkeypatch):
         session=session, repair_id="r1",
     )
     assert out["outcome"] == "pass"
-    assert out["current_step_id"] is None  # only 1 step
+    assert out["current_step_id"] is None  # 只需 1 步
 
 
 def test_get_protocol_endpoint(tmp_path, monkeypatch):
@@ -74,7 +74,7 @@ def test_get_protocol_endpoint(tmp_path, monkeypatch):
     from api.main import app
     from api.tools.protocol import StepInput, propose_protocol
 
-    # Reset module-level _settings singleton so MEMORY_ROOT env var is re-read.
+    # 重置模块级 _settings 单例，使 MEMORY_ROOT env var 为 re-read。
     config_mod._settings = None
     monkeypatch.setenv("MEMORY_ROOT", str(tmp_path))
 
@@ -96,5 +96,5 @@ def test_get_protocol_endpoint(tmp_path, monkeypatch):
     assert res404.status_code == 200
     assert res404.json()["active"] is False
 
-    # Restore singleton for sibling tests.
+    # Restore 单例用于兄弟测试。
     config_mod._settings = None

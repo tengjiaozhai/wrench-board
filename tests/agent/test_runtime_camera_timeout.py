@@ -22,19 +22,19 @@ async def test_cam_capture_timeout_returns_is_error(tmp_path: Path):
     ws = MagicMock()
     ws.send_json = AsyncMock()
 
-    # Don't simulate any client.capture_response — let it time out.
+    # 不要simulate任何client.capture_response——让time出去。
     await _dispatch_cam_capture(
         client=client, session=session, ws=ws,
         memory_root=tmp_path, slug="iphone-x", repair_id="R1",
         ma_session_id="sesn_xyz", tool_use_id="sevt_tool123",
         tool_input={"reason": "test timeout"},
-        timeout_s=0.2,  # short for fast test
+        timeout_s=0.2,  # fast 测试的缩写
     )
 
-    # Files API never called
+    # 文件API从未被调用
     client.beta.files.upload.assert_not_awaited()
 
-    # Tool result sent with is_error
+    # 工具 result sent 带有 is_error
     client.beta.sessions.events.send.assert_awaited_once()
     send_call = client.beta.sessions.events.send.call_args
     sent = (send_call.kwargs.get("events")
@@ -47,5 +47,5 @@ async def test_cam_capture_timeout_returns_is_error(tmp_path: Path):
     text = [c for c in event["content"] if c.get("type") == "text"]
     assert text and "timeout" in text[0]["text"].lower()
 
-    # Future cleaned up even on timeout
+    # Future 清理了 timeout 上的 even
     assert len(session.pending_captures) == 0

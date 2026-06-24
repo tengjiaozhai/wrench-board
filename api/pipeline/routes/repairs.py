@@ -48,9 +48,8 @@
 【HTTP 与 WS 如何「关联」】
   slug（device_slug）是唯一 join key；RepairResponse 字段见 models.py。
 
-Also re-exports `_run_pipeline_with_events` via the package
-`__init__.py` — `tests/pipeline/test_pipeline_events_narration.py`
-imports it directly under that name.
+也通过包 `__init__.py` 再导出 `_run_pipeline_with_events` —
+`tests/pipeline/test_pipeline_events_narration.py` 直接以该名导入。
 """
 
 from __future__ import annotations
@@ -92,7 +91,7 @@ router = APIRouter()
 
 
 # ---------------------------------------------------------------------------
-# Board-delta auto-generation helpers
+# Board-delta 自动生成辅助
 # ---------------------------------------------------------------------------
 
 def _should_autogenerate_delta(
@@ -118,7 +117,7 @@ def _should_autogenerate_delta(
         return False
     if not allow_expand:
         return False
-    # Lazy import keeps the cold-path fast when board_delta is not needed.
+    # 惰性导入：不需要 board_delta 时保持冷路径快速。
     from api.pipeline.board_delta.store import normalize_board_number, read_delta
     norm = normalize_board_number(board_number)
     if not norm:
@@ -194,7 +193,7 @@ def _register_running(slug: str, task: asyncio.Task) -> None:
     _RUNNING[slug] = task
 
     def _done(t: asyncio.Task, s: str = slug) -> None:
-        # Only drop our own entry — a newer run on the same slug must survive.
+        # 仅移除本 task 的登记 — 同 slug 上更新的 run 必须保留。
         if _RUNNING.get(s) is t:
             _RUNNING.pop(s, None)
 
@@ -280,7 +279,7 @@ def _drain_queue() -> None:
         _register_build(item["slug"], asyncio.create_task(item["launch"]()))
         launched = True
     if launched and _build_queue:
-        # The survivors all shifted up one slot → refresh their positions.
+        # 幸存者均前移一位 → 刷新各自的 queue_position。
         asyncio.create_task(_publish_queue_positions())
 
 
@@ -346,7 +345,7 @@ def _persist_repair(
                 continue
             if (payload.get("symptom") or "").strip().lower() != norm_symptom:
                 continue
-            # Owner-scoped: never reuse another owner's repair (cross-tenant guard).
+            # 按 owner 限定：永不复用其他 owner 的 repair（跨租户守卫）。
             if payload.get("owner_ref") != owner_ref:
                 continue
             existing_id = payload.get("repair_id")
@@ -391,8 +390,8 @@ async def list_repairs() -> list[RepairSummary]:
         repairs_dir = pack_dir / "repairs"
         if not repairs_dir.exists():
             continue
-        # Build state is per-PACK (per device_slug), shared by every repair on
-        # that device — read it once per pack_dir, not once per repair file.
+        # build_state 按 PACK（per device_slug）共享，该设备上每个 repair
+        # 共用 — 每个 pack_dir 读一次，而非每个 repair 文件读一次。
         marker = read_build_state(pack_dir)
         build_state = marker.get("status") if marker else None
         for path in repairs_dir.glob("*.json"):
@@ -482,7 +481,7 @@ async def delete_repair(repair_id: str) -> dict:
         raise HTTPException(status_code=404, detail=f"No repair {repair_id!r}")
 
     # 1. MA cleanup (best-effort). Drives off the on-disk marker so that a
-    # repair which never opened a session simply no-ops here.
+    # 从未开过 session 的 repair 在此仅为 no-op。
     store_deleted = False
     try:
         client = AsyncAnthropic(api_key=settings.anthropic_api_key or "missing", max_retries=settings.anthropic_max_retries)  # noqa: E501
@@ -497,8 +496,8 @@ async def delete_repair(repair_id: str) -> dict:
         )
 
     # 2. Disk cleanup. Remove subdir first (best-effort), then the metadata
-    # JSON. Order matters — list_repairs scans the JSONs, so wiping the
-    # metadata last is what makes the repair disappear from the library.
+    # JSON。顺序重要 — list_repairs 扫描 JSON，故最后擦除
+    # metadata 才会让 repair 从库中消失。
     subdir = metadata_file.parent / repair_id
     dir_deleted = False
     if subdir.exists() and subdir.is_dir():
@@ -836,11 +835,11 @@ async def create_repair(
 
     settings = _pkg.get_settings()
     memory_root = Path(settings.memory_root)
-    # T9a device alias registry: when the slug isn't explicitly pinned, resolve
-    # the free label to a canonical device identity so aliases of the same board
-    # (board# / Apple model / EMC / marketing) land on ONE pack instead of N.
-    # Best-effort: any registry hiccup degrades to the naive slugify (today's
-    # behavior), so resolution can never block a repair.
+    # T9a 设备别名注册表：slug 未显式 pin 时，将自由 label 解析为
+    # canonical 设备身份，使同板别名（board# / Apple model / EMC / 营销名）
+    # 落到同一 pack 而非 N 个。
+    # best-effort：注册表任何故障降级为朴素 slugify（当前行为），
+    # 解析不得阻塞 repair。
     # 【slug 赋值】见函数顶部；此处展开说明 slug 的含义与用途。
     # slug = 设备 canonical ID，例如 smt-v551、macbook-pro-13-m1。
     # 与 repair_id（单次工单 UUID）不同：同一 slug 可有多份 repair，但共享一份 pack。
@@ -908,17 +907,15 @@ async def create_repair(
     #               （mb_expand_knowledge），不在 create_repair 时自动烧 token
     # =========================================================================
 
-    # Every "new repair" IS a repair session — persist the record
-    # whether the pack is fresh or already on disk. Two repairs on the same
-    # iPhone X are two separate sessions with two separate contexts; both
-    # must be reopenable later from the library.
+    # 每次「新建 repair」即一个 repair session — 无论 pack 是新建还是
+    # 已在磁盘，都持久化记录。同一 iPhone X 上的两次 repair 是两个独立
+    # session、两份上下文；二者都必须能从库中重新打开。
     repair_id, is_new = _persist_repair(
         memory_root, slug, request.device_label, request.symptom, request.owner_ref
     )
-    # Persist board_number on the repair record when supplied. Only on a new
-    # repair (is_new=True): a reused ticket keeps the board_number it was
-    # created with so older sessions stay consistent. Normalised via
-    # normalize_board_number (strips whitespace, canonical separator).
+    # 提供时在 repair 记录上持久化 board_number。仅新建 repair（is_new=True）：
+    # 复用工单保留创建时的 board_number，旧 session 保持一致。
+    # 经 normalize_board_number 规范化（去空白、canonical 分隔符）。
     if board_number and is_new:
         from api.pipeline.board_delta.store import normalize_board_number as _nbn
         repair_path = memory_root / slug / "repairs" / f"{repair_id}.json"
@@ -931,9 +928,8 @@ async def create_repair(
         except (OSError, json.JSONDecodeError, ValueError) as exc:
             logger.warning("[API] could not persist board_number on repair=%s: %s", repair_id, exc)
 
-    # Auto-generate board delta when a board_number is supplied on a NEW repair
-    # and the plan allows it. Fire-and-forget: the POST returns immediately;
-    # the delta lands on disk in the background without blocking the tech.
+    # 新建 repair 且提供 board_number、套餐允许时自动生成 board delta。
+    # fire-and-forget：POST 立即返回；delta 后台落盘，不阻塞技师。
     if _should_autogenerate_delta(
         is_new=is_new,
         board_number=board_number,
@@ -986,11 +982,10 @@ async def create_repair(
             slug,
         )
 
-    # Stash an attached schematic — either a fresh repair or a retry that is about
-    # to re-fire the build (a complete-pack dedup hit returned above). Done BEFORE
-    # the generation kickoff so the orchestrator's inline-ingest picks it up; we
-    # deliberately do NOT trigger the documents-endpoint auto-pin/background ingest
-    # here (it would race the inline-ingest).
+    # 暂存附带的原理图 — 新建 repair 或即将重触发构建的重试
+    # （完整 pack dedup 命中已在上方返回）。在 generation 启动前完成，
+    # 以便 orchestrator 内联摄取拾取；此处故意不触发 documents 端点
+    # 的 auto-pin/后台摄取（会与内联摄取竞态）。
     if file is not None and file.filename:
         await persist_upload(pack_dir / "uploads", "schematic_pdf", file)
 

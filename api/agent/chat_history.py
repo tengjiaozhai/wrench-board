@@ -1,39 +1,38 @@
-"""Per-repair chat history persistence for diagnostic sessions.
+"""诊断会话的每次修复聊天历史记录持久性。
 
-Each repair_id owns a set of *conversations* under
-`memory/{device_slug}/repairs/{repair_id}/conversations/{conv_id}/`. Every
-conversation holds its own `messages.jsonl` (one `{ts, event}` record per
-line, Anthropic Messages API shape) and, for the managed-agent runtime, its
-own `ma_session_{tier}.json` session pointer. A sibling `index.json` lists
-the conversations chronologically with lightweight metadata (tier, title,
-turns, cost) for the frontend switcher.
+每个repair_id都拥有一组*对话*
+⟦保留6⟧。每一个
+对话拥有自己的`messages.jsonl`（每个对话有一个`{ts, event}`记录）
+线，Anthropic消息API形状），并且对于托管代理运行时，其
+自己的`ma_session_{tier}.json`会话指针。兄弟姐妹`index.json`列出
+对话按时间顺序与轻量级元数据（层级、标题、
+前端切换器的匝数、成本）。
 
-Legacy repairs predate conversations and stored the flat file at
-`repairs/{repair_id}/messages.jsonl`. The first call to
-`ensure_conversation(conv_id=None, …)` for such a repair migrates the file
-into a new conversation directory and writes a fresh `index.json`.
+旧版修复早于对话并将平面文件存储在
+⟦保留11⟧。第一次致电
+`ensure_conversation(conv_id=None, …)` 对于此类修复会迁移文件
+进入新的对话目录并写入新的`index.json`。
 
-Backend is feature-flagged (`chat_history_backend` in settings):
+后端带有功能标记（设置中的`chat_history_backend`）：
 
-- **jsonl (default)** — append-only local files. Works today without any
-  Anthropic feature gate, survives restarts, is grep-able / git-diffable
-  for debugging.
-- **managed_agents (future)** — when the MA sessions Research Preview lands,
-  each conversation will map to a persistent MA session_id; replay will be
-  handled natively by the MA runtime. This module becomes a no-op in that
-  mode — the backend will query MA for history instead.
+- **jsonl（默认）** — 仅附加本地文件。今天可以工作，没有任何
+  Anthropic 功能门，重启后仍然存在，可 grep / git-diffable
+  用于调试。
+- ** Managed_agents （未来） ** — 当 MA 会议研究预览落地时，
+  每个会话都会映射到一个持久的MA session_id；重播将是
+  由 MA 运行时本地处理。该模块成为no-op，因为
+  模式 — 后端将查询 MA 的历史记录。
 
-Same design pattern as the field_reports module: JSON-first, MA as a mirror
-when access lands. Zero migration when flipping.
+与field_reports模块相同的设计模式：JSON-first，MA作为镜像
+当访问着陆时。翻转时零迁移。
 
-Two signals are persisted for UI consumption:
+为 UI 消耗保留两个信号：
 
-- **messages.jsonl** carries the Anthropic-shaped trail (user.content,
-  assistant.content, tool_use, tool_result blocks).
-- **status.json** tracks the repair's lifecycle — `open` at creation,
-  `in_progress` at first exchange, `closed` when the technician signals
-  completion (button or agent confirmation). Updated by `touch_status` below.
-"""
+- **messages.jsonl** 带有 Anthropic 形状的踪迹（user.content，
+  Assistant.content、tool_use、tool_result 块）。
+- **status.json** 跟踪修复的生命周期 - 创建时的 `open`，
+  第一次交换时`in_progress`，技术人员发出信号时`closed`
+  完成（按钮或代理确认）。由下面的`touch_status`更新。"""
 
 from __future__ import annotations
 
@@ -76,7 +75,7 @@ def _history_file(
 def _legacy_history_file(
     memory_root: Path, device_slug: str, repair_id: str
 ) -> Path:
-    """Pre-conversations flat file path — used only for migration."""
+    """预对话平面文件路径 - 仅用于迁移。"""
     return _repair_dir(memory_root, device_slug, repair_id) / "messages.jsonl"
 
 
@@ -94,7 +93,7 @@ def _ma_session_file(
 
 
 def _metadata_file(memory_root: Path, device_slug: str, repair_id: str) -> Path:
-    # The pre-existing metadata lives one level up: memory/{slug}/repairs/{id}.json
+    # 预先存在的元数据位于上一级：memory/{slug}/repairs/{id}.json
     return memory_root / device_slug / "repairs" / f"{repair_id}.json"
 
 
@@ -134,19 +133,18 @@ def append_event(
     cost: dict[str, Any] | None = None,
     memory_root: Path | None = None,
 ) -> None:
-    """Append one Anthropic-format message event to a conversation's JSONL.
+    """将一个 Anthropic 格式的消息事件附加到对话的 JSONL。
 
-    Optional `cost` attaches the per-turn token cost alongside an assistant
-    event so the conversation's lifetime spend survives WS close/reopen. The
-    record shape is `{ts, event, cost?}` — `cost` is only surfaced on the
-    record (not inside `event`) so the Anthropic-facing `messages` list stays
-    clean when load_events reads it back.
+    可选的`cost`将每回合代币成本与助手一起附加
+    事件，以便对话的生命周期花费继续存在WS关闭/重新打开。这
+    记录形状是 `{ts, event, cost?}` — `cost` 仅出现在
+    记录（不在`event`内），因此Anthropic面向`messages`列表保持不变
+    当 load_events 读回它时清理它。
 
-    No-ops silently when `repair_id` is missing (anonymous session), when
-    `event` is falsy, or when the feature flag is set to a non-jsonl backend.
-    Errors here must NEVER take down the diagnostic session — persistence is
-    best-effort.
-    """
+    当 `⟦PRESERVE2⟧` 丢失（匿名会话）时，静默无操作，当
+    `event` 为假，或者当功能标志设置为非 jsonl 后端时。
+    这里的错误决不能导致诊断会话中断——持久性是
+    best-effort."""
     if not repair_id or not event:
         return
     settings = get_settings()
@@ -180,7 +178,7 @@ def load_events(
     conv_id: str,
     memory_root: Path | None = None,
 ) -> list[dict[str, Any]]:
-    """Return the list of Anthropic-format events, in write order."""
+    """按写入顺序返回 Anthropic 格式事件的列表。"""
     return [event for event, _cost in load_events_with_costs(
         device_slug=device_slug, repair_id=repair_id, conv_id=conv_id,
         memory_root=memory_root,
@@ -194,11 +192,10 @@ def load_events_with_costs(
     conv_id: str,
     memory_root: Path | None = None,
 ) -> list[tuple[dict[str, Any], dict[str, Any] | None]]:
-    """Like load_events but also returns each record's attached cost.
+    """与 load_events 类似，但也返回每个记录的附加成本。
 
-    Used by the replay path so the turn_cost chip + running-total accumulator
-    can rebuild visually on reopen, matching what the tech saw live.
-    """
+    由重放路径使用，因此turn_cost芯片+运行总计累加器
+    可以在重新打开时进行视觉重建，与技术人员实时看到的内容相匹配。"""
     if not repair_id:
         return []
     settings = get_settings()
@@ -247,15 +244,14 @@ def save_ma_session_id(
     tier: str,
     memory_root: Path | None = None,
 ) -> None:
-    """Persist the MA session_id for this conversation AND tier combo.
+    """保留此对话和层组合的 MA session_id。
 
-    Each tier (fast / normal / deep) has its own MA agent, therefore its
-    own session_id. Storing a single ma_session_id at the conv level
-    would confuse tier switches (resuming a fast session on the normal
-    agent, etc.). The per-(conv, tier) file keeps them isolated.
+    每个层（快速/正常/深度）都有自己的 MA 代理，因此其
+    自己的session_id。在转换级别存储单个 ma_session_id
+    会混淆层交换机（在正常网络上恢复快速会话）
+    代理等）。每个（转换，层）文件使它们保持隔离。
 
-    Silent no-op on any error.
-    """
+    对任何错误保持沉默 no-op。"""
     if not repair_id or not session_id or not tier or not conv_id:
         return
     settings = get_settings()
@@ -290,7 +286,7 @@ def load_ma_session_id(
     tier: str,
     memory_root: Path | None = None,
 ) -> str | None:
-    """Return the persisted MA session_id for a (conv, tier) pair, or None."""
+    """返回 (conv, tier) 对的持久 MA session_id，或无。"""
     if not tier or not repair_id or not conv_id:
         return None
     settings = get_settings()
@@ -319,7 +315,7 @@ def load_repair_metadata(
     repair_id: str | None,
     memory_root: Path | None = None,
 ) -> dict[str, Any] | None:
-    """Return the JSON payload of memory/{slug}/repairs/{repair_id}.json, or None."""
+    """返回 memory/{slug}/repairs/{repair_id}.json 的 JSON 负载，或 None。"""
     if not repair_id:
         return None
     settings = get_settings()
@@ -350,15 +346,14 @@ def build_session_intro(
     agent can immediately consult its mounts (grep field_reports/, lookup
     matching playbooks) and query mb_get_rules_for_symptoms without asking
     "which device are you on?". Returns None when there's nothing to tell
-    (no repair_id given).
-    """
+    (no repair_id given)."""
     if not repair_id:
         return None
     meta = load_repair_metadata(
         device_slug=device_slug, repair_id=repair_id, memory_root=memory_root
     )
     if not meta:
-        # Still worth surfacing the device slug even if the repair file is gone.
+        # 即使修复文件消失了，仍然值得安装设备slug。
         return f"[New diagnostic session · device_slug: {device_slug}]"
     label = meta.get("device_label") or device_slug
     symptom = (meta.get("symptom") or "").strip()
@@ -385,25 +380,24 @@ def build_ctx_tag(
     repair_id: str | None,
     memory_root: Path | None = None,
 ) -> str | None:
-    """Compose a single-line context tag prepended to every user turn.
+    """在每个用户回合之前编写一个单行上下文标签。
 
-    Smaller models (Haiku especially) don't reliably scan the full session
-    history when greeted with a fresh terse message — they treat "salut" as
-    a context-free hello and forget the device + symptom carried by the
-    bootstrap intro on turn 1. Restating both as a stable prefix on every
-    user message keeps that context in the foreground for ~25 tokens/turn,
-    which is also a stable cache hit after the first turn.
+    较小的模型（尤其是Haiku）无法可靠地扫描整个会话
+    当收到新鲜简洁的信息时，他们将“致敬”视为历史
+    与上下文无关的问候并忘记设备+所携带的症状
+    第 1 回合的 bootstrap 介绍。在每个回合中将两者重申为稳定的前缀
+    用户消息将该上下文保持在前台约 25 个令牌/回合，
+    这也是第一回合后稳定的缓存命中。
 
-    The wording is deliberately **passive** — `initial_complaint`, not
-    `symptom`, with the value quoted so the tag is visibly
-    self-delimiting. The system prompt instructs the agent to treat
-    this tag as intake-sheet metadata, never as a fresh symptom
-    declaration that should re-trigger `mb_get_rules_for_symptoms` /
-    `mb_expand_knowledge` on a resumed session.
+    措辞故意是**被动**——`initial_complaint`，而不是
+    `symptom`，带引号的值使标签可见
+    自我界定。系统提示指示坐席处理
+    该标签作为摄入表元数据，从来不作为新症状
+    应该重新触发 `mb_get_rules_for_symptoms` / 的声明
+    `⟦PRESERVE0⟧` 在恢复的会话上。
 
-    Returns None when no repair_id is given (anonymous sessions don't
-    have a known initial_complaint to restate).
-    """
+    当没有给出 repair_id 时返回 None （匿名会话不
+    有一个已知的初始投诉需要重述）。"""
     if not repair_id:
         return None
     meta = load_repair_metadata(
@@ -417,19 +411,18 @@ def build_ctx_tag(
 
 
 def build_board_refresh_note(board: Any, source: Path | None = None) -> str:
-    """One-line status note for a boardview that appeared or changed mid-session.
+    """会话中出现或更改的boardview的一行状态注释。
 
-    In both runtimes the board is a snapshot taken at WS open; a boardview
-    imported afterwards is reloaded by `refresh_board_if_changed()` but the
-    agent — told "no board" at session start — has no reason to ever call a
-    `bv_*` tool and discover it. This line rides on the next user turn to
-    close that gap.
+    在两个运行时中，板都是在WS打开时拍摄的快照； ⟦保留0⟧
+    之后导入的内容由`refresh_board_if_changed()`重新加载，但是
+    代理人——在会议开始时被告知“没有董事会”——没有理由打电话给董事会
+    `bv_*` 工具并发现它。这条线路会在下一个用户转向时行驶
+    缩小这个差距。
 
-    Starts with CTX_TAG_PREFIX so the replay paths' `strip_ctx_tag` drops it
-    from the chat panel exactly like the per-turn ctx tag: alone it matches
-    the prefix; stacked under the ctx tag (single newline between them, blank
-    line after) the two form one leading block that strip removes whole.
-    """
+    以 CTX_TAG_PREFIX 开头，因此重播路径的 `strip_ctx_tag` 会删除它
+    从聊天面板与每回合 ctx 标签完全相同：单独匹配
+    前缀；堆叠在 ctx 标签下（它们之间有一个换行符，空白
+    行后）这两个形成一个前导块，将其全部删除。"""
     name = source.name if source is not None else getattr(board, "board_id", "?")
     n_parts = len(getattr(board, "parts", []) or [])
     n_nets = len(getattr(board, "nets", []) or [])
@@ -441,17 +434,16 @@ def build_board_refresh_note(board: Any, source: Path | None = None) -> str:
 
 
 def strip_ctx_tag(text: str) -> str:
-    """Peel a leading `[ctx · …]` line from `text`, if present.
+    """从 `text` 剥离前导 `[ctx · …]` 线（如果存在）。
 
-    Keeps the chat panel replay clean — without this, the per-turn ctx
-    prefix would show up in front of every replayed user message. Safe
-    no-op when no tag is present.
-    """
+    保持聊天面板重播干净——没有这个，每回合的 ctx
+    前缀将显示在每条重播的用户消息前面。安全的
+    no-op 当没有标签时。"""
     if not text.startswith(CTX_TAG_PREFIX):
         return text
     nl = text.find("\n\n")
     if nl < 0:
-        # Tag-only message with no content — surface as empty.
+        # 仅包含标签的消息，没有内容 — 表面上是空的。
         return ""
     return text[nl + 2 :]
 
@@ -463,10 +455,9 @@ def touch_status(
     status: str,
     memory_root: Path | None = None,
 ) -> None:
-    """Update the repair's `status` field in memory/{slug}/repairs/{id}.json.
+    """更新 memory/{slug}/repairs/{id}.json 中修复的 `status` 字段。
 
-    Swallows all errors — metadata drift is acceptable, session crash is not.
-    """
+    吞并所有错误——元数据漂移是可以接受的，但会话崩溃是不可以接受的。"""
     if not repair_id or not status:
         return
     settings = get_settings()
@@ -490,11 +481,11 @@ def touch_status(
         )
 
 
-# ------------ Conversations (multi-thread per repair) ------------
-# A repair holds N conversations under `conversations/{conv_id}/`, each with
-# its own messages.jsonl and optional MA session pointer. An ordered index
-# at `conversations/index.json` lists them chronologically with metadata
-# for the UI popover.
+# ------------ 对话（每次修复多线程） ------------
+# 一次修复在`conversations/{conv_id}/`下保存了N个对话，每个对话都有
+# 它自己的 messages.jsonl 和可选的 MA 会话指针。有序索引
+# 在 `conversations/index.json` 按时间顺序列出它们和元数据
+# 用于 UI 弹出窗口。
 
 
 def list_conversations(
@@ -503,7 +494,7 @@ def list_conversations(
     repair_id: str,
     memory_root: Path | None = None,
 ) -> list[dict[str, Any]]:
-    """Return the ordered list of conversations for a repair (oldest first)."""
+    """返回要修复的有序对话列表（最旧的在前）。"""
     root = memory_root or Path(get_settings().memory_root)
     return _read_index(root, device_slug, repair_id)
 
@@ -516,15 +507,14 @@ def _create_index_entry(
     conv_id: str,
     tier: str,
 ) -> bool:
-    """Append a fresh entry for `conv_id` to index.json, closing the previous
-    open one. Idempotent — returns False (and writes nothing) when an entry
-    with `conv_id` is already in the index. Returns True when a new entry
-    was actually created.
+    """将 `conv_id` 的新条目附加到 index.json，关闭之前的条目
+    打开一个。幂等 — 当输入一个条目时返回 False（并且不写入任何内容）
+    其中 `conv_id` 已在索引中。当有新条目时返回 True
+    实际上被创建了。
 
-    Shared by `create_conversation` (which auto-generates the id) and
-    `materialize_conversation` (which persists a pre-allocated pending id
-    that was returned by `ensure_conversation(materialize=False)`).
-    """
+    由 `create_conversation` 共享（自动生成 id）和
+    `materialize_conversation`（保留预先分配的挂起 ID
+    由`ensure_conversation(materialize=False)`返回）。"""
     index = _read_index(root, device_slug, repair_id)
     if any(entry.get("id") == conv_id for entry in index):
         return False
@@ -549,12 +539,12 @@ def _create_index_entry(
         parents=True, exist_ok=True
     )
     _write_index(root, device_slug, repair_id, index)
-    # One-shot migration of the legacy per-repair `ma_sessions` dict into
-    # the first conversation's per-tier files. Pre-T1, MA session ids were
-    # stored under `memory/{slug}/repairs/{id}.json::ma_sessions[{tier}]`;
-    # after the refactor they live at `conversations/{conv}/ma_session_{tier}.json`.
-    # Without this hop, the first conv created on a legacy repair loses the
-    # real agent memory and the tech sees the model start from scratch.
+    # 将旧的每次修复 `ma_sessions` 字典一次性迁移到
+    # 第一个对话的每层文件。 T1 之前，MA 会话 ID 为
+    # 存储在`memory/{⟦PRESERVE0⟧}/repairs/{id}.json::ma_sessions[{tier}]`下；
+    # 重构后，它们位于`conversations/{conv}/ma_session_{tier}.json`。
+    # 如果没有此跃点，在遗留修复中创建的第一个转换将丢失
+    # 真正的代理记忆和技术看到模型从头开始。
     if len(index) == 1:
         _seed_legacy_ma_sessions(
             root=root, device_slug=device_slug, repair_id=repair_id,
@@ -570,9 +560,9 @@ def create_conversation(
     tier: str,
     memory_root: Path | None = None,
 ) -> str:
-    """Create a fresh conversation, close the previous active one, return its id."""
+    """创建一个新对话，关闭前一个活动对话，返回其 ID。"""
     root = memory_root or Path(get_settings().memory_root)
-    conv_id = secrets.token_hex(4)  # 8 hex chars
+    conv_id = secrets.token_hex(4)  # 8 个十六进制字符
     _create_index_entry(
         root=root, device_slug=device_slug, repair_id=repair_id,
         conv_id=conv_id, tier=tier,
@@ -598,8 +588,7 @@ def delete_conversation(
     The per-tier MA session ids stored under the conv directory are dropped
     along with it; the upstream Anthropic sessions are left to expire on
     their own (the repair-scoped memory store is shared across convs and
-    must outlive any single deletion).
-    """
+    must outlive any single deletion)."""
     import shutil
 
     root = memory_root or Path(get_settings().memory_root)
@@ -632,12 +621,11 @@ def get_conversation_tier(
     conv_id: str,
     memory_root: Path | None = None,
 ) -> str | None:
-    """Return the tier the conv was originally opened with, per the index
-    entry. Used by the runtime to auto-align the WS tier with the conv on
-    default landings (no explicit `?tier=` from the tech) so a Sonnet
-    thread isn't silently resumed as Haiku because of the URL default.
-    Returns None when the conv isn't in the index (pending or unknown).
-    """
+    """根据索引返回最初打开转换的层
+    入口。运行时使用它来自动对齐 WS 层与转换
+    默认着陆（技术方面没有明确的`?tier=`），因此Sonnet
+    由于 URL 默认值，线程不会以 Haiku 的方式静默恢复。
+    当转换不在索引中（待处理或未知）时，返回 None。"""
     root = memory_root or Path(get_settings().memory_root)
     index = _read_index(root, device_slug, repair_id)
     for entry in index:
@@ -655,15 +643,14 @@ def materialize_conversation(
     tier: str,
     memory_root: Path | None = None,
 ) -> bool:
-    """Persist a previously-pending `conv_id` to disk (index entry + dir).
+    """将先前挂起的 `conv_id` 保留到磁盘（索引条目 + 目录）。
 
-    The companion to `ensure_conversation(materialize=False)`: at WS open we
-    pre-allocate an id but skip the disk write so the index doesn't pile up
-    with 0-turn conversations from sessions the tech opens and never sends
-    a message in. This call materializes the slot when real content is
-    about to land. Idempotent — returns False if `conv_id` is already in
-    the index, True when a new entry was actually appended.
-    """
+    `ensure_conversation(materialize=False)`的同伴：在WS打开我们
+    预分配一个 id 但跳过磁盘写入，这样索引就不会堆积
+    通过会话中的 0 轮对话，技术打开但从不发送
+    一条消息。当实际内容出现时，此调用会具体化插槽
+    即将着陆。幂等 — 如果 `conv_id` 已经存在，则返回 False
+    索引，当实际附加新条目时为 True。"""
     root = memory_root or Path(get_settings().memory_root)
     return _create_index_entry(
         root=root, device_slug=device_slug, repair_id=repair_id,
@@ -674,12 +661,11 @@ def materialize_conversation(
 def _seed_legacy_ma_sessions(
     *, root: Path, device_slug: str, repair_id: str, conv_id: str
 ) -> None:
-    """Copy `ma_sessions` dict from repair metadata into per-tier files.
+    """将修复元数据中的 `ma_sessions` 字典复制到每层文件中。
 
-    Idempotent: if a `ma_session_{tier}.json` already exists for this conv,
-    it wins (never overwrite a deliberately-saved id). Swallows all errors —
-    this is best-effort backfill, not a hard precondition.
-    """
+    幂等：如果此转换已存在 `ma_session_{tier}.json`，
+    它获胜（永远不要覆盖故意保存的 ID）。吞掉所有错误——
+    这是best-effort回填，不是硬性前提条件。"""
     meta_path = _metadata_file(root, device_slug, repair_id)
     if not meta_path.exists():
         return
@@ -726,29 +712,28 @@ def ensure_conversation(
     memory_root: Path | None = None,
     materialize: bool = True,
 ) -> tuple[str, bool]:
-    """Resolve a conv_id to the right target, creating / migrating when needed.
+    """将 conv_id 解析为正确的目标，并在需要时创建/迁移。
 
-    Semantics:
-      - `conv_id is None` → active (most recent). If none exist, migrate
-        from legacy messages.jsonl if present, else create a fresh one.
-      - `conv_id == "new"` → always create a fresh conversation.
-      - `conv_id` matches an existing entry → pass through untouched.
-      - Unknown `conv_id` → raise KeyError.
+    语义：
+      - `conv_id is None` → 活动（最新）。如果不存在，则迁移
+        来自旧版 messages.jsonl（如果存在），否则创建一个新的。
+      - `conv_id == "new"` → 始终创建新的对话。
+      - `conv_id` 匹配现有条目 → 不受影响地通过。
+      - 未知 `conv_id` → 引发 KeyError。
 
-    Returns `(resolved_id, created)` — `created` is True when this call
-    created (or pre-allocated, see below) a conversation, including the
-    legacy migration.
+    返回 `(resolved_id, created)` — 调用此函数时，`created` 为 True
+    创建（或预先分配，见下文）一个对话，包括
+    遗留迁移。
 
-    `materialize` (default True): when False, the create path returns a
-    freshly-generated id WITHOUT writing the index entry or making the conv
-    directory. The caller is then responsible for calling
-    `materialize_conversation` once real content is about to land — typically
-    on the first user message. This avoids spawning 0-turn entries when a
-    technician opens the diagnostic panel without sending anything. Has no
-    effect on the resolve-existing path (no write happens there anyway).
-    Migration of legacy `messages.jsonl` always materializes — moving a
-    file off disk is the whole point of that path.
-    """
+    `materialize`（默认True）：当False时，创建路径返回一个
+    新生成的 id，无需写入索引条目或进行转换
+    目录。然后调用者负责调用
+    `materialize_conversation` 一旦真正的内容即将登陆——通常
+    在第一条用户消息上。这可以避免在以下情况下产生 0 回合条目：
+    技术人员打开诊断面板而不发送任何内容。没有
+    对解析现有路径的影响（无论如何都不会发生写入）。
+    遗留的迁移`messages.jsonl`总是会实现——移动一个
+    文件离开磁盘是该路径的全部要点。"""
     root = memory_root or Path(get_settings().memory_root)
     if conv_id == "new":
         if materialize:
@@ -767,16 +752,16 @@ def ensure_conversation(
 
     if conv_id is None:
         if index:
-            # Active = the conv the technician most recently *touched*. The
-            # naive "last in index" pick was wrong: index order is
-            # `started_at` ascending, so a conv started 5 minutes ago that
-            # got 0 turns trumps a conv started 10 minutes ago that's still
-            # accumulating turns right now. Tier switches and reopens
-            # particularly hit this — they create a fresh conv even if the
-            # tech then keeps working in the previous one. Sort by
-            # `last_turn_at` (with `started_at` as tie-breaker for never-
-            # touched entries) so the default landing always lands on the
-            # thread the tech actually has live activity in.
+            # 活跃 = 技术人员最近*接触*的转化。这
+            # 天真的“索引最后”选择是错误的：索引顺序是
+            # `started_at` 升序，因此 5 分钟前开始了一次转换
+            # 获得 0 次转化胜过 10 分钟前开始的转化，但仍然如此
+            # 现在正在积累回合。层级切换并重新开放
+            # 尤其是这一点——他们创建了一个新的转换，即使
+            # 然后技术继续前一个工作。排序方式
+            # `last_turn_at`（与 `started_at` 作为决胜局，永远不会-
+            # 触摸的条目），因此默认着陆始终着陆在
+            # 技术线程实际上有实时活动。
             def _recency_key(entry: dict[str, Any]) -> str:
                 return entry.get("last_turn_at") or entry.get("started_at") or ""
             return max(index, key=_recency_key)["id"], False
@@ -804,7 +789,7 @@ def ensure_conversation(
             )
         return secrets.token_hex(4), True
 
-    # Explicit id — must exist.
+    # 显式 ID — 必须存在。
     if not any(entry["id"] == conv_id for entry in index):
         raise KeyError(
             f"unknown conversation {conv_id!r} for repair {repair_id!r}"
@@ -815,15 +800,15 @@ def ensure_conversation(
 def _migrate_legacy(
     *, root: Path, device_slug: str, repair_id: str, tier: str
 ) -> str:
-    """Move repair-root messages.jsonl into a new conversation."""
+    """将 Repair-root messages.jsonl 移至新对话中。"""
     legacy = _legacy_history_file(root, device_slug, repair_id)
     conv_id = secrets.token_hex(4)
     conv_dir = _conv_dir(root, device_slug, repair_id, conv_id)
     conv_dir.mkdir(parents=True, exist_ok=True)
-    # Move atomically (rename inside same fs).
+    # 原子移动（在同一文件系统内重命名）。
     target = conv_dir / "messages.jsonl"
     legacy.rename(target)
-    # Derive title from first user message if readable.
+    # 如果可读，则从第一条用户消息中获取标题。
     title: str | None = None
     turns = 0
     try:
@@ -877,7 +862,7 @@ def touch_conversation(
     model: str | None = None,
     memory_root: Path | None = None,
 ) -> None:
-    """Update the conversation's metadata in index.json — title, cost, turns, last_turn_at."""
+    """更新 index.json 中对话的元数据 — 标题、成本、轮次、last_turn_at。"""
     root = memory_root or Path(get_settings().memory_root)
     index = _read_index(root, device_slug, repair_id)
     updated = False

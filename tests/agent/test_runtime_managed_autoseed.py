@@ -21,7 +21,7 @@ async def test_auto_seed_triggered_when_pack_drifted(tmp_path, monkeypatch):
         ma_memory_store_enabled = True
     monkeypatch.setattr(rm, "get_settings", lambda: FakeSettings())
 
-    # No marker yet — everything stale.
+    # 还没有标记——一切hing都陈旧了。
     triggered = asyncio.Event()
     seeded_files: list[str] = []
 
@@ -66,7 +66,7 @@ async def test_auto_seed_noop_when_pack_clean(tmp_path, monkeypatch):
     monkeypatch.setattr(ms, "seed_memory_store_from_pack", fake_seed)
 
     await rm.maybe_auto_seed(client=MagicMock(), device_slug=slug, memory_root=tmp_path)
-    # Give any stray task a chance to run.
+    # 给任何杂散任务一个运行的机会。
     await asyncio.sleep(0.05)
     assert calls == []
 
@@ -99,7 +99,7 @@ async def test_auto_seed_uses_session_mirrors_when_provided(tmp_path, monkeypatc
         session_mirrors=mirrors,
     )
     assert task is not None
-    # The task must be tracked by the mirrors instance.
+    # 该任务必须由镜像实例跟踪。
     assert task in mirrors._pending
     await mirrors.wait_drain(timeout=2.0)
     assert task.done()
@@ -154,7 +154,7 @@ async def test_auto_seed_noop_when_pack_dir_missing(tmp_path, monkeypatch):
         return {}
     monkeypatch.setattr(ms, "seed_memory_store_from_pack", fake_seed)
 
-    # Note: no pack dir created — slug is "nonexistent".
+    # 注意：没有包目录 created — slug 是“不存在ent”。
     task = await rm.maybe_auto_seed(
         client=MagicMock(), device_slug="nonexistent", memory_root=tmp_path,
     )

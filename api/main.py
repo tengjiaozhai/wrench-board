@@ -1,4 +1,4 @@
-"""FastAPI application entrypoint for wrench-board."""
+"""wrench-board 的 FastAPI 应用入口。"""
 
 from __future__ import annotations
 
@@ -35,18 +35,17 @@ WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
 
 async def _prewarm_active_boardviews(memory_root: Path) -> None:
-    """Parse every device's active boardview into the /render cache.
+    """将各设备当前活跃的 boardview 解析进 /render 缓存。
 
-    Boardview parsing is the heaviest sync work the API does (a 5 MB .tvw
-    is ~5 s of CPU); without warming, the first dashboard open for each
-    device pays that 5 s up front. Runs in a background task so the
-    server is answering requests during the warm — each parse is offloaded
-    to a worker thread so the event loop stays responsive.
+    boardview 解析是 API 最重的同步工作（5 MB .tvw 约 5 s CPU）；
+    不预热则每个设备首次打开仪表盘都要 upfront 付这 5 s。在后台 task
+    中运行，预热期间服务仍可响应 — 每次解析 offload 到 worker 线程，
+    保持事件循环响应。
 
-    Resolution mirrors `_find_boardview`: `active_sources.json` pin first,
-    then `board_assets/{slug}.<ext>`, then any `uploads/*-boardview-*`.
+    解析顺序镜像 `_find_boardview`：先 `active_sources.json` pin，
+    再 `board_assets/{slug}.<ext>`，最后任意 `uploads/*-boardview-*`。
     """
-    import asyncio  # local — keep startup imports cheap
+    import asyncio  # 局部导入 — 保持启动导入轻量
 
     from api.board.parser.base import parser_for
     from api.board.render import to_render_payload
@@ -56,8 +55,8 @@ async def _prewarm_active_boardviews(memory_root: Path) -> None:
     if not memory_root.exists():
         return
 
-    # Check if pcbnew is available (required for KiCad files)
-    # KiCad parser shells out to system Python, so check that
+    # 检查 pcbnew 是否可用（KiCad 文件需要）
+    # KiCad parser 调用系统 Python，故在此检查
     import subprocess
     try:
         result = subprocess.run(
@@ -84,7 +83,7 @@ async def _prewarm_active_boardviews(memory_root: Path) -> None:
         path = _find_boardview(slug, pack_dir)
         if path is None:
             continue
-        # Skip KiCad files if pcbnew is not available
+        # pcbnew 不可用时跳过 KiCad 文件
         if not pcbnew_available and path.suffix == ".kicad_pcb":
             logger.debug("[prewarm] skipping %s (pcbnew not available)", slug)
             continue
@@ -101,7 +100,7 @@ async def _prewarm_active_boardviews(memory_root: Path) -> None:
             _render_cache[cache_key] = payload
             parsed += 1
             logger.info("[prewarm] %s cached (%s)", slug, path.name)
-        except Exception:  # noqa: BLE001 — fire-and-forget; any failure logs + skips
+        except Exception:  # noqa: BLE001 — fire-and-forget；任意失败仅记录并跳过
             failed += 1
             logger.warning("[prewarm] failed for %s (%s)", slug, path.name, exc_info=True)
     logger.info("[prewarm] done: %d cached, %d failed", parsed, failed)
@@ -109,8 +108,8 @@ async def _prewarm_active_boardviews(memory_root: Path) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Startup / shutdown hooks."""
-    import asyncio  # local — only needed for the prewarm task
+    """启动 / 关闭钩子。"""
+    import asyncio  # 局部 — 仅 prewarm task 需要
 
     settings = get_settings()
     configure_logging(settings.log_level)
@@ -124,10 +123,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "every request until it's set in .env. Pure-data endpoints "
             "(/health, /pipeline/packs read, board parsing) keep working."
         )
-    # Fail-fast : en contexte EXPLICITEMENT production (ENV=production) SANS
-    # service-token, le moteur serait ouvert à tout Internet → on REFUSE de
-    # démarrer (symétrie avec le fail-fast cloud). Le self-host (ENV non-prod,
-    # même en docker 0.0.0.0) n'est pas touché.
+    # Fail-fast：在显式 production 上下文（ENV=production）且
+    # 无 service-token 时，引擎将对全网开放 → 拒绝启动（与 cloud fail-fast 对称）。
+    # 自托管（非 prod ENV，即使 docker 0.0.0.0）不受影响。
     if should_fail_unprotected(
         token=settings.engine_service_token,
         env=os.getenv("ENV", ""),
@@ -138,8 +136,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "ENGINE_SERVICE_TOKEN (identique à celui du cloud) et garde le moteur "
             "sur un réseau privé. Cf. DEPLOYMENT.md."
         )
-    # Filet plus souple : WARN si prod-like par heuristique (bind 0.0.0.0) SANS
-    # token — ne crash pas (le self-host légitime en docker reste silencieux).
+    # 更松的网：prod-like 启发式（bind 0.0.0.0）且无 token 时 WARN — 不崩溃
+    #（合法 docker 自托管保持安静）。
     if should_warn_unprotected(
         token=settings.engine_service_token,
         host=os.getenv("HOST", "127.0.0.1"),
@@ -150,19 +148,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             "(toutes les routes accessibles sans auth). En managé : set le token + "
             "réseau privé (cf. DEPLOYMENT.md)."
         )
-    # Seed shipped demo packs (e.g. MNT Reform) so the first-run example tour
-    # has a fully-analyzed device to walk. Idempotent + non-destructive.
+    # 播种随附 demo pack（如 MNT Reform），使首次示例导览有完整分析设备可走。
+    # 幂等且非破坏性。
     try:
         from api.pipeline.demo_seed import seed_demo_packs
 
         seeded = seed_demo_packs(Path(settings.memory_root))
         if seeded:
             logger.info("demo packs seeded: %d", seeded)
-    except Exception as exc:  # noqa: BLE001 — seeding must never block startup
+    except Exception as exc:  # noqa: BLE001 — 播种不得阻塞启动
         logger.warning("demo-pack seeding skipped: %s", exc)
-    # Kick off boardview pre-warm in background — don't await. The server
-    # is answering requests immediately; per-thread parse populates the
-    # /render cache so the first dashboard open for each device is instant.
+    # 后台启动 boardview 预热 — 不 await。服务立即可响应；
+    # 每线程解析填充 /render 缓存，使各设备首次打开仪表盘即时。
     asyncio.create_task(_prewarm_active_boardviews(Path(settings.memory_root)))
     yield
     logger.info("wrench-board shutting down")
@@ -175,9 +172,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS: drop "*" + credentials (browsers reject that combo anyway) in favor
-# of an explicit allowlist from settings. Default list covers local dev; set
-# CORS_ALLOW_ORIGINS in .env to widen.
+# CORS：放弃 "*" + credentials（浏览器反正拒绝该组合），改用
+# settings 的显式白名单。默认列表覆盖本地开发；在 .env 设
+# CORS_ALLOW_ORIGINS 可放宽。
 _cors_raw = get_settings().cors_allow_origins
 _cors_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()]
 _cors_wildcard = _cors_origins == ["*"]
@@ -189,9 +186,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Gate HTTP du service-token : exige le bearer en mode managé, no-op en
-# self-host (token vide). Ajouté APRÈS CORS → plus externe → s'exécute avant
-# la logique applicative ; laisse passer OPTIONS (préflight) + /health.
+# HTTP service-token 门控：托管模式要求 bearer，自托管（token 空）为 no-op。
+# 加在 CORS 之后 → 更外层 → 在应用逻辑前执行；放行 OPTIONS（预检）+ /health。
 app.add_middleware(
     ServiceTokenMiddleware,
     expected_token=get_settings().engine_service_token,
@@ -205,7 +201,7 @@ app.include_router(stock_router)
 
 @app.get("/health")
 async def health() -> JSONResponse:
-    """Liveness probe."""
+    """存活探针。"""
     return JSONResponse({"status": "ok", "version": __version__})
 
 
@@ -219,15 +215,15 @@ _MACRO_MIME = {
 
 @app.get("/api/macros/{slug}/{repair_id}/{filename}")
 async def get_macro(slug: str, repair_id: str, filename: str) -> FileResponse:
-    """Serve a stored macro image for chat replay rendering.
+    """为聊天回放渲染提供已存 macro 图片。
 
-    Both Flow A (tech upload) and Flow B (agent cam_capture) write under
-    `memory/{slug}/repairs/{repair_id}/macros/`. This route resolves
-    `image_ref.path` references stored in `messages.jsonl` so the frontend
-    can re-render image bubbles when the chat history reloads.
+    Flow A（技师上传）与 Flow B（agent cam_capture）均写入
+    `memory/{slug}/repairs/{repair_id}/macros/`。本路由解析
+    `messages.jsonl` 中存的 `image_ref.path`，供前端在聊天记录
+    重载时重新渲染图片气泡。
 
-    Path validation delegates to `api.agent.macros.macro_path_for` which
-    blocks traversal (`..`, `/`, leading dot, escape via resolve()).
+    路径校验委托 `api.agent.macros.macro_path_for`，阻止遍历
+    （`..`、`/`、前导点、经 resolve() 逃逸）。
     """
     settings = get_settings()
     try:
@@ -248,27 +244,23 @@ _VALID_TIERS = {"fast", "normal", "deep"}
 
 @app.websocket("/ws/diagnostic/{device_slug}")
 async def diagnostic_session(websocket: WebSocket, device_slug: str) -> None:
-    """Diagnostic conversation. `DIAGNOSTIC_MODE` env var picks the runtime.
+    """诊断对话。`DIAGNOSTIC_MODE` 环境变量选择 runtime。
 
-    - `managed` (default): Anthropic Managed Agents persistent session +
-      custom-tool dispatch. Requires a prior `bootstrap_managed_agent.py` run.
-    - `direct`: plain `messages.create` tool-use loop. No bootstrap needed;
-      used when the Managed Agents beta is unavailable.
+    - `managed`（默认）：Anthropic Managed Agents 持久 session +
+      custom-tool 派发。须先运行 `bootstrap_managed_agent.py`。
+    - `direct`：普通 `messages.create` tool-use 循环。无需 bootstrap；
+      Managed Agents beta 不可用时使用。
 
-    Query param `tier` selects the model: `fast` (Haiku), `normal` (Sonnet),
-    `deep` (Opus). Defaults to `deep` so demo traffic lands on Opus 4.8
-    without an explicit tier pick. Changing tier in the frontend reconnects
-    the WS — it's an explicit new conversation.
+    查询参数 `tier` 选择模型：`fast`（Haiku）、`normal`（Sonnet）、
+    `deep`（Opus）。默认 `deep`，使 demo 流量落在 Opus 4.8 而无需
+    显式选 tier。前端改 tier 会重连 WS — 即显式新对话。
 
-    Origin check runs first: the CORS middleware doesn't cover the WS
-    handshake, so without this guard any cross-origin browser page could
-    open a session and inject `message` frames. The service-token check runs
-    next: when the engine is deployed behind wrenchboard-cloud, only the cloud
-    relay (which carries the shared `Authorization: Bearer` token) may open a
-    session — a direct websocat against the engine URL is refused, so it can't
-    bypass the cloud's auth + quota and burn credits. Both are no-ops in the
-    standalone workbench (no allowlist / no token configured). See
-    ``api.ws_security``.
+    Origin 检查最先：CORS 中间件不覆盖 WS 握手，无此守卫时任意跨源
+    浏览器页可开 session 并注入 `message` 帧。service-token 检查其次：
+    引擎部署在 wrenchboard-cloud 后，仅携带共享 `Authorization: Bearer`
+    token 的 cloud 中继可开 session — 直接 websocat 引擎 URL 会被拒绝，
+    无法绕过 cloud auth + quota 烧 credits。独立工作台（无白名单 / 无 token）
+    上两者均为 no-op。见 ``api.ws_security``。
     """
     if not await enforce_ws_origin(websocket):
         return
@@ -278,28 +270,25 @@ async def diagnostic_session(websocket: WebSocket, device_slug: str) -> None:
     tier = websocket.query_params.get("tier", "deep").lower()
     if tier not in _VALID_TIERS:
         tier = "deep"
-    # Optional: scope the session to a specific repair_id. When set, the
-    # backend loads past messages from memory/{slug}/repairs/{repair_id}/
-    # messages.jsonl and replays them; every new turn appends. Without it,
-    # each WS open starts a fresh (unpersisted) conversation.
+    # 可选：将 session 限定到特定 repair_id。设置时后端从
+    # memory/{slug}/repairs/{repair_id}/messages.jsonl 加载历史并回放；
+    # 每轮新消息追加。未设置则每次 WS 打开为全新（未持久化）对话。
     repair_id = websocket.query_params.get("repair") or None
-    # Optional: target a specific conversation within the repair. None = use
-    # the most recent (or migrate a legacy flat messages.jsonl on first open).
-    # "new" = always create a fresh conversation. Any other value must match
-    # an existing conversation id, otherwise ensure_conversation raises.
+    # 可选：指向 repair 内特定 conversation。None = 用最近一条
+    #（或首次打开时迁移旧版扁平 messages.jsonl）。
+    # "new" = 总是新建 conversation。其他值须匹配已有 conversation id，
+    # 否则 ensure_conversation 抛错。
     conv_id = websocket.query_params.get("conv") or None
-    # Multi-tenant: the cloud front-door injects X-Owner-Ref (the tenant id) on
-    # the handshake so the session's owner-sensitive tools (stock) write to the
-    # right tenant's private store. Absent in standalone/self-host.
+    # 多租户：cloud 前门在握手注入 X-Owner-Ref（tenant id），使 session
+    # 的 owner 敏感工具（stock）写入正确租户的私有 store。独立/自托管缺席。
     owner_ref = websocket.headers.get("X-Owner-Ref") or None
-    # Plan capability injected by the cloud (the only gatekeeper): may this
-    # session's tenant trigger a paid pack enrichment (mb_expand_knowledge)?
-    # Header absent → standalone/self-host → True (unrestricted). The cloud
-    # always sends an explicit "true"/"false"; only "false" disables it.
+    # cloud 注入的套餐能力（唯一守门人）：该 session 的租户能否触发
+    # 付费 pack 扩充（mb_expand_knowledge）？
+    # 头缺席 → 独立/自托管 → True（无限制）。cloud 总是显式发 "true"/"false"；
+    # 仅 "false" 禁用。
     can_expand = (websocket.headers.get("X-Wb-Can-Expand") or "true").strip().lower() != "false"
-    # Optional board number (PCB revision, e.g. "820-02016") supplied by the
-    # client as a query param. Absent → None → no board-delta injection. No
-    # trust logic here: the public engine carries this as an opaque key only.
+    # 客户端以查询参数提供的可选板号（PCB 修订，如 "820-02016"）。
+    # 缺席 → None → 无 board-delta 注入。此处无信任逻辑：公开引擎仅作 opaque key 携带。
     set_board_ref(websocket.query_params.get("board"))
 
     mode = os.environ.get("DIAGNOSTIC_MODE", "managed").lower()
@@ -320,19 +309,16 @@ async def diagnostic_session(websocket: WebSocket, device_slug: str) -> None:
 
 
 class _NoCacheStaticFiles(StaticFiles):
-    """StaticFiles subclass that disables browser caching for every served file.
+    """StaticFiles 子类，对提供的每个文件禁用浏览器缓存。
 
-    Why: the diagnostic chat panel is loaded as a tree of ES modules
-    (`js/main.js` → `js/llm.js` → `js/protocol.js` → …). Browsers cache
-    each module URL aggressively and ES module imports are NOT invalidated
-    by bumping the parent script's `?v=` query string — the relative
-    `import './foo.js'` resolves to the bare URL. In dev that means edits
-    to a sibling module silently no-op until the tech remembers to
-    Ctrl+Shift+R, and stale cached versions keep dropping unhandled WS
-    events through old code paths (the recurring `?{...}` raw-JSON dumps
-    in chat the user kept seeing). No-store is heavy-handed for a prod
-    CDN but exactly right for a local FastAPI dev server: every reload
-    pulls fresh code with no stale-module footguns.
+    原因：诊断聊天面板以 ES 模块树加载
+    （`js/main.js` → `js/llm.js` → `js/protocol.js` → …）。浏览器
+    积极缓存各模块 URL，ES 模块 import 不会因父脚本 `?v=` 查询串
+    失效 — 相对 `import './foo.js'` 解析为裸 URL。开发中意味着
+    改兄弟模块会静默 no-op，直到技师记得 Ctrl+Shift+R，且陈旧
+    缓存版本继续经旧代码路径丢未处理 WS 事件（用户反复看到的
+    聊天里 `?{...}` 原始 JSON）。no-store 对 prod CDN 过重，但对
+    本地 FastAPI 开发服务器刚好：每次重载拉新代码，无陈旧模块坑。
     """
 
     async def get_response(self, path, scope):  # type: ignore[override]

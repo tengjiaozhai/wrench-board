@@ -1,8 +1,7 @@
-"""Thin wrapper around `evaluator.compute_score`.
+"""`evaluator.compute_score` 周围有薄包装纸。
 
-The evaluator accepts `list[dict]` scenarios. Our accepted scenarios are
-typed `ProposedScenario`; this module just converts and delegates.
-"""
+评估者接受`list[dict]`场景。我们接受的场景是
+输入`ProposedScenario`；这个模块只是转换和委托。"""
 
 from __future__ import annotations
 
@@ -15,7 +14,7 @@ def score_accepted(
     graph: ElectricalGraph,
     scenarios: list[ProposedScenario],
 ) -> Scorecard:
-    """Feed accepted scenarios to the evaluator in its native dict shape."""
+    """以原生字典形式将接受的场景提供给评估器。"""
     dicts: list[dict] = []
     for s in scenarios:
         entry = {

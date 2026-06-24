@@ -1,11 +1,11 @@
-"""Per-repair append-only log of every hypothesize() call during a session.
+"""会话期间每个 Hypothesize() 调用的每次修复仅附加日志。
 
-JSONL store at memory/{slug}/repairs/{repair_id}/diagnosis_log.jsonl, same
-best-effort semantics as the measurement memory: IO errors are logged
-and swallowed so the diagnostic session never fails on a write miss.
+JSONL 存储在内存/{slug}/repairs/{repair_id}/diagnosis_log.jsonl，同上
+best-effort 语义作为测量内存：记录 IO 错误
+并吞下，因此诊断会话永远不会因写入未命中而失败。
 
-Used by the field-calibrated corpus builder to reconstruct how the
-solver's ranking evolved over the course of a repair.
+被现场校准的语料库构建器用来重建
+求解器的排名在修复过程中不断变化。
 """
 
 from __future__ import annotations
@@ -22,8 +22,8 @@ class DiagnosisLogEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     timestamp: str
-    observations: dict           # raw Observations.model_dump()
-    hypotheses_top5: list[dict]  # [{kill_refdes, kill_modes, score, narrative}]
+    observations: dict           # 原始 Observations.model_dump()
+    hypotheses_top5: list[dict]  # [{kill_refdes，kill_modes，得分，叙述}]
     pruning_stats: dict          # {single_candidates_tested, two_fault_pairs_tested, wall_ms}
 
 
@@ -40,10 +40,9 @@ def append_diagnosis(
     hypotheses_top5: list[dict],
     pruning_stats: dict,
 ) -> DiagnosisLogEntry | None:
-    """Append one DiagnosisLogEntry to the repair's log, return the entry.
+    """将一个 DiagnosisLogEntry 追加到修复日志中，返回该条目。
 
-    Returns None if the write fails (best-effort — never raises).
-    """
+    如果写入失败则返回 None （best-effort — 永远不会引发）。"""
     from datetime import UTC, datetime
 
     try:
@@ -75,7 +74,7 @@ def load_diagnosis_log(
     device_slug: str,
     repair_id: str,
 ) -> list[DiagnosisLogEntry]:
-    """Return the ordered list of DiagnosisLogEntries for a repair."""
+    """返回诊断日志条目的有序列表以进行修复。”"""
     path = _log_path(memory_root, device_slug, repair_id)
     if not path.exists():
         return []

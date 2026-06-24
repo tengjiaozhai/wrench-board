@@ -1,15 +1,14 @@
-"""Seed a device's Managed-Agents memory store from its on-disk knowledge pack.
+"""从设备的磁盘知识包中为设备的 Managed-Agents 内存存储播种。
 
-Called from the pipeline orchestrator right after an APPROVED verdict. The
-diagnostic conversation for this device can then consult the canonical
-knowledge (registry, rules, dictionary, knowledge graph) natively via the
-built-in memory tools instead of re-hydrating it from disk on every tool
-call.
+在批准判决后立即从管道编排器调用。这
+该设备的诊断对话可以参考规范
+知识（注册表、规则、字典、知识图）本地通过
+内置内存工具，而不是在每个工具上从磁盘重新水化它
+称呼。
 
-Feature-gated behind `settings.ma_memory_store_enabled`. Every error path
-degrades to a log warning: the pipeline must never fail because memory
-seeding failed.
-"""
+`settings.ma_memory_store_enabled` 背后的功能门控。每个错误路径
+降级为日志警告：管道绝不能失败，因为内存
+播种失败。"""
 
 from __future__ import annotations
 
@@ -37,19 +36,18 @@ _DELTA_MEMORY_PATH = "/knowledge/board_delta.md"
 def build_board_delta_block(
     *, memory_root: Path | str, device_slug: str, board_number: str | None
 ) -> str | None:
-    """Render the board delta as a seed context block, or None when absent/empty.
+    """将棋盘增量渲染为种子上下文块，或者在不存在/为空时渲染为“无”。
 
-    Returns None when board_number is not supplied (standalone / self-host),
-    when the stored delta has coverage='none', or when all lists are empty.
-    The returned text is injected into the agent's memory store at
-    ``_DELTA_MEMORY_PATH`` to surface revision-specific context.
-    """
+    当未提供 board_number 时返回 None（独立/self-host），
+    当存储的增量具有coverage='none'时，或者当所有列表为空时。
+    返回的文本被注入到代理的内存存储中
+    ``_DELTA_MEMORY_PATH`` 用于显示特定于修订版的上下文。"""
     if not board_number:
         return None
-    # Lazy import to avoid a circular import: api.pipeline.__init__ imports the
-    # orchestrator, which imports this module. Importing read_delta at module top
-    # would cycle when memory_seed is imported before api.pipeline is initialized.
-    from api.pipeline.board_delta.store import read_delta  # noqa: PLC0415
+    # 延迟导入以避免循环导入： api.pipeline.__init__ 导入
+    # Orchestrator，导入此模块。在模块顶部导入 read_delta
+    # 在初始化 api.pipeline 之前导入 memory_seed 时会循环。
+    from api.pipeline.board_delta.store import read_delta  # 编号：PLC0415
 
     delta = read_delta(
         memory_root=Path(memory_root),
@@ -72,7 +70,7 @@ def build_board_delta_block(
 
 
 def read_seed_marker(pack_dir: Path) -> dict | None:
-    """Return the seed marker dict, or None if missing/corrupt."""
+    """返回种子标记字典，如果丢失/损坏则返回 None。"""
     path = pack_dir / MARKER_FILENAME
     if not path.exists():
         return None
@@ -91,13 +89,12 @@ def write_seed_marker(
     store_id: str,
     seeded_files: dict[str, float],
 ) -> None:
-    """Write the marker. `seeded_files` maps filename → mtime-at-seed-time.
+    """写下标记。 `seeded_files` 映射文件名 → mtime-at-seed-time。
 
-    Merges with any existing `managed.json` so the `memory_store_id` +
-    `device_slug` keys written by `ensure_memory_store` survive a re-seed
-    — otherwise subsequent `ensure_memory_store` calls would recreate the
-    store and orphan the first one.
-    """
+    与任何现有的 `managed.json` 合并，因此 `memory_store_id` +
+    `⟦PRESERVE0⟧` 由 `ensure_memory_store` 写入的密钥在重新种子后仍然存在
+    — 否则后续的 `ensure_memory_store` 调用将重新创建
+    存储并孤立第一个。"""
     pack_dir.mkdir(parents=True, exist_ok=True)
     path = pack_dir / MARKER_FILENAME
     existing: dict = {}
@@ -116,17 +113,17 @@ def write_seed_marker(
     path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
 
 
-# Files we push into the store and the memory path they land on. Path scheme
-# `/knowledge/*` is reserved for pipeline-authored memories; `/field_reports/*`
-# is for write-backs from diagnostic sessions (see record_field_report).
+# 我们推送到存储中的文件以及它们所在的内存路径。路径方案
+# `/knowledge/*` 为管道创建的内存保留； ⟦保留1⟧
+# 用于诊断会话的写回（请参阅 record_field_report）。
 #
-# `electrical_graph.json` and `nets_classified.json` are deliberately NOT
-# seeded: both regularly exceed the MA per-memory cap (102_400 bytes — the
-# minified electrical graph for a real motherboard hits ~390 KiB). They are
-# instead surfaced via the `mb_schematic_graph` tool (api/tools/schematic.py)
-# which reads them server-side and projects per-query slices, so the agent
-# never needs the raw blob inside its memory store. Re-adding them here would
-# revert to the 400-on-every-WS-open noise we saw on 2026-04-28.
+# `⟦PRESERVE0⟧.json` 和 `nets_classified.json` 故意不
+# 种子：两者都定期超过 MA 每内存上限（102_400 字节 —
+# 真实主板的缩小电气图达到约 390 KiB）。他们是
+# 而是通过 `mb_schematic_graph` 工具 (api/tools/schematic.py) 出现
+# 它在服务器端读取它们并投影每个查询切片，因此代理
+# 永远不需要其内存存储中的原始 blob。在这里重新添加它们会
+# 恢复到我们在 2026 年 4 月 28 日看到的 400-on-every-WS-开放噪音。
 _SEED_FILES = (
     ("registry.json", "/knowledge/registry.json"),
     ("knowledge_graph.json", "/knowledge/knowledge_graph.json"),
@@ -138,15 +135,14 @@ _SEED_FILES = (
 
 
 def stale_files_for_pack(pack_dir: Path) -> list[str]:
-    """Return the filenames in `_SEED_FILES` that need re-seeding.
+    """返回`_SEED_FILES`中需要重新播种的文件名。
 
-    A file is stale when:
-      - it exists on disk AND
-      - either the marker is missing, or the marker's recorded mtime for
-        that file is older than the current on-disk mtime.
+    在以下情况下文件已过时：
+      - 它存在于磁盘上并且
+      - 标记丢失，或者标记的记录时间为
+        该文件比当前磁盘上的 mtime 旧。
 
-    Files absent from disk are ignored (nothing to seed).
-    """
+    磁盘中不存在的文件将被忽略（没有种子）。"""
     marker = read_seed_marker(pack_dir)
     marker_files = (marker or {}).get("files", {})
 
@@ -169,16 +165,15 @@ async def seed_memory_store_from_pack(
     pack_dir: Path,
     only_files: list[str] | None = None,
 ) -> dict[str, str]:
-    """Upsert the pack's JSON artefacts into the device's memory store.
+    """将包的 JSON 工件更新插入设备的内存存储中。
 
-    When `only_files` is supplied, only those filenames (matching names in
-    `_SEED_FILES`) are processed — used by the auto-seed path to re-push
-    just the files that drifted since the last seed.
+    当提供 `only_files` 时，仅那些文件名（与
+    `_SEED_FILES`) 已处理 — 由自动种子路径用于重新推送
+    只是自最后一个种子以来漂移的文件。
 
-    Returns a mapping `{memory_path: "seeded"|"skipped"|"error:<reason>"}`.
-    On full or partial successful upsert, a marker is written at
-    `pack_dir/managed.json` with the per-file mtimes as-read. Never raises.
-    """
+    返回映射`{memory_path: "seeded"|"skipped"|"error:<reason>"}`。
+    全部或部分成功更新插入时，将在以下位置写入一个标记
+    `pack_dir/managed.json` 与每个文件的读取次数。从不加注。"""
     settings = get_settings()
     targets = _SEED_FILES
     if only_files is not None:
@@ -202,10 +197,10 @@ async def seed_memory_store_from_pack(
             status[path] = "skipped:no_store"
         return status
 
-    # One round-trip up front to learn the existing memory ids for this
-    # store, so we can update-by-id directly instead of round-tripping
-    # through create→409→update for every file. Costs O(1) extra request
-    # but saves O(N × 3s SDK retry) on re-seeds.
+    # 预先进行一次往返以了解现有的内存 ID
+    # store，所以我们可以直接按id更新而不是往返
+    # 通过创建→409→更新每个文件。额外请求成本为 O(1)
+    # 但在重新播种时节省了 O(N × 3s SDK 重试)。
     known_ids = await list_memory_paths_to_ids(client, store_id=store_id)
     if known_ids:
         logger.info(
@@ -244,8 +239,8 @@ async def seed_memory_store_from_pack(
             device_slug, memory_path, len(content),
         )
 
-    # Refresh the marker — merge with any existing entries so a partial
-    # re-seed doesn't erase the mtimes of files we didn't touch.
+    # 刷新标记 - 与任何现有条目合并，以便部分
+    # 重新种子不会删除我们未触及的文件的 mtimes。
     if seeded_mtimes:
         existing = read_seed_marker(pack_dir)
         merged = dict((existing or {}).get("files") or {})
@@ -256,17 +251,17 @@ async def seed_memory_store_from_pack(
             seeded_files=merged,
         )
 
-    # Inject the board-revision delta only on a FULL seed (only_files is None).
-    # Partial/auto seeds (only_files=[...]) must not add this extra key: they
-    # would produce an inconsistent status dict shape and trigger an unintended
-    # MA upsert on every post-expand sync and auto-seed call.
+    # 仅在完整种子上注入板修订增量（only_files 为 None）。
+    # 部分/自动种子 (only_files=[...]) 不得添加此额外密钥：它们
+    # 会产生不一致的状态字典形状并触发意外的
+    # MA 在每个扩展后同步和自动种子调用上更新插入。
     if only_files is not None:
         return status
 
-    # Import here (not at module top) to avoid a circular-import risk: board_ref
-    # is a thin contextvars module, but memory_seed is imported early by the
-    # runtime init chain.
-    from api.agent.board_ref import current_board_ref  # noqa: PLC0415
+    # 在此处导入（而不是在模块顶部）以避免循环导入风险：board_ref
+    # 是一个精简的 contextvars 模块，但是 memory_seed 是由
+    # 运行时初始化链。
+    from api.agent.board_ref import current_board_ref  # 编号：PLC0415
 
     memory_root = getattr(settings, "memory_root", None)
     delta_block = build_board_delta_block(

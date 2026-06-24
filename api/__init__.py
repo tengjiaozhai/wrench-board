@@ -1,3 +1,3 @@
-"""wrench-board 后端包。"""
+"""wrench-board 包。"""
 
 __version__ = "0.1.0"

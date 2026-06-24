@@ -1,21 +1,20 @@
-"""Cross-conversation narrative log for the diagnostic agent.
+"""诊断代理的交叉对话叙述日志。
 
-A field_report (`api/agent/field_reports.py`) is component-grain: "I confirmed
-U1501 was at fault on this device." A *session log* is conversation-grain:
-"On the 22/04 chat for repair R1, we tested PP3V0 + PP1V8, ruled out U1501,
-left it on suspect U1700 — paused because the tech was waiting on a part."
+field_report (`api/agent/field_reports.py`) 是组件级别：“我确认
+U1501 在此设备上出现故障。” *会话日志* 是对话粒度：
+“在22/04修复R1的聊天中，我们测试了PP3V0 + PP1V8，排除了U1501，
+把它留在可疑的 U1700 上——因为技术人员正在等待零件而暂停。”
 
-Field reports answer 'has anyone here ever blamed this refdes?'. Session
-logs answer 'did we already test this rail / explore this hypothesis on
-this device, in any past repair?' — exactly the user-facing scenario "but
-I told you in the other diag we already did this, you forgot!".
+现场报告回答“这里有人指责过这个refdes吗？”。会议
+日志回答“我们是否已经测试了这条铁路/探索了这个假设”
+这个设备过去有维修过吗？ — 正是面向用户的场景“但是
+我在其他诊断中告诉过你我们已经这样做了，你忘了！”。
 
-Storage mirrors `field_reports.py`: JSON-first to disk under
-`memory/{slug}/conversation_log/{stamp}_{repair_id}_{conv_id}.md`, plus a
-flag-gated mirror to the device's MA store at `/conversation_log/{...}.md`
-so the agent can `glob` / `grep` it on the FUSE mount across all past
-repairs on the same device.
-"""
+存储镜像`field_reports.py`：JSON-首先到磁盘下
+`内存/{⟦PRESERVE3⟧}/conversation_log/{stamp}_{⟦PRESERVE0⟧}_{conv_id}.md`，加上
+标记门控镜像到设备的 MA 存储（位于 `/conversation_log/{...}.md`）
+因此代理可以 `glob` / `grep` 将其安装在过去所有的 FUSE 上
+在同一台设备上进行维修。"""
 
 from __future__ import annotations
 
@@ -44,24 +43,24 @@ Outcome = Literal["resolved", "unresolved", "paused", "escalated"]
 
 @dataclass
 class TestedTarget:
-    """One probe / inspection step the tech performed during the session."""
+    """技术人员在会话期间执行的一项探测/检查步骤。"""
 
-    target: str          # 'rail:PP3V0', 'comp:U1501', 'pin:U7:12'
-    result: str          # 'normal', 'dead', 'shorted', 'open', 'hot', 'noisy', …
+    target: str          # '导轨：PP3V0'，'补偿：U1501'，'引脚：U7:12'
+    result: str          # “正常”、“死机”、“短路”、“开路”、“热”、“吵闹”……
 
 
 @dataclass
 class HypothesisTrace:
-    """One refdes the agent considered as a suspect, with verdict."""
+    """agent 曾考虑的嫌疑 refdes 及其裁决。"""
 
     refdes: str
     verdict: Literal["confirmed", "rejected", "inconclusive"]
-    evidence: str = ""   # one short sentence
+    evidence: str = ""   # 短短一句话
 
 
 @dataclass
 class SessionLog:
-    """Narrative summary of one chat-conversation, scoped per (repair, conv)."""
+    """一次聊天对话的叙述性摘要，范围为 (repair, conv)。"""
 
     log_id: str
     device_slug: str
@@ -71,7 +70,7 @@ class SessionLog:
     outcome: Outcome
     tested: list[TestedTarget] = field(default_factory=list)
     hypotheses: list[HypothesisTrace] = field(default_factory=list)
-    findings: list[str] = field(default_factory=list)   # field_report ids
+    findings: list[str] = field(default_factory=list)   # 字段报告 ID
     next_steps: str | None = None
     lesson: str | None = None
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
@@ -130,12 +129,11 @@ _YAML_LINE_RE = re.compile(r"^(\w+):\s*(.*)$")
 
 
 def _parse_log(path: Path) -> SessionLog | None:
-    """Best-effort parse of a saved log file. Returns None on malformed input.
+    """尽力解析已保存的日志文件。对于格式错误的输入，返回 None。
 
-    Frontmatter is the source of truth — body is human-readable Markdown that
-    we don't try to re-parse here (the structured form is the original tool
-    payload, which we don't need to round-trip).
-    """
+    Frontmatter 是事实的来源——正文是人类可读的 Markdown
+    我们不尝试在这里重新解析（结构化形式是原始工具
+    有效负载，我们不需要往返）。"""
     try:
         raw = path.read_text(encoding="utf-8")
     except OSError:
@@ -165,7 +163,7 @@ def _parse_log(path: Path) -> SessionLog | None:
             repair_id=meta["repair_id"],
             conv_id=meta["conv_id"],
             symptom=meta["symptom"],
-            outcome=outcome,  # type: ignore[arg-type]
+            outcome=outcome,  # 类型：忽略[arg-type]
             created_at=meta.get("created_at") or datetime.now(UTC).isoformat(),
         )
     except KeyError:
@@ -173,11 +171,10 @@ def _parse_log(path: Path) -> SessionLog | None:
 
 
 def _logs_dir(device_slug: str, memory_root: Path, owner_ref: str | None = None) -> Path:
-    """Where a session log lives on disk. Session logs are the agent's PRIVATE
-    cross-repair working memory, so when an owner (tenant) is set they live under
-    a per-owner subdir — a tenant only ever globs/lists its OWN past sessions.
-    Ownerless (standalone / self-host) keeps the flat path, single-tenant as before.
-    """
+    """会话日志在磁盘上的位置。会话日志是代理的私有日志
+    交叉修复工作记忆，因此当所有者（租户）被设置时，他们生活在
+    每个所有者的子目录 - 租户只会全局/列出其自己过去的会话。
+    无主（独立/self-host）保持平坦的路径，像以前一样单租户。"""
     base = memory_root / device_slug / "conversation_log"
     return base / "_owners" / _slug(owner_ref, 64) if owner_ref else base
 
@@ -203,17 +200,16 @@ async def record_session_log(
     memory_root: Path | None = None,
     owner_ref: str | None = None,
 ) -> dict[str, Any]:
-    """Append (idempotent overwrite per conv_id) one session log.
+    """追加（每个 conv_id 幂等覆盖）一个会话日志。
 
-    JSON-first; MA mirror when the flag is on. Returns a status dict.
-    Never raises — MA mirror failure leaves the JSON record intact.
+    JSON-第一；当标志打开时 MA 镜像。返回状态字典。
+    从不引发 — MA 镜像故障使 JSON 记录完好无损。
 
-    `owner_ref` (the tenant, from the cloud's X-Owner-Ref) scopes this PRIVATE
-    working memory: the on-disk log lands under a per-owner subdir and the MA
-    mirror targets the per-repair (tenant-private) store instead of the
-    device-shared one — so one tenant's session narrative is never readable by
-    another. Ownerless = standalone/self-host (flat path + device store, unchanged).
-    """
+    `⟦PRESERVE0⟧`（租户，来自云的 X-Owner-Ref）将此范围限定为 PRIVATE
+    工作内存：磁盘日志位于每个所有者的子目录和 MA 下
+    镜像的目标是每次修复（租户专用）存储而不是
+    设备共享的——因此一个租户的会话叙述永远无法被其他人读取
+    其他。无所有者=独立/self-host（扁平路径+设备存储，不变）。"""
     if outcome not in OUTCOME_VALUES:
         return {
             "ok": False,
@@ -225,8 +221,10 @@ async def record_session_log(
 
     created_at = datetime.now(UTC)
     stamp = created_at.strftime("%Y%m%dT%H%M%SZ")
-    # log_id = stamp + repair + conv. Filename is the same, so a re-call on
-    # the same (repair, conv) overwrites cleanly (path-based dedup, no glob).
+    # log_id = 印章 + 修复 + 转化次数。文件名相同，因此重新调用
+
+    # 相同的（修复，转换）干净地覆盖（基于路径的重复数据删除，无全局）。
+
     log_id = f"{stamp}_{_slug(repair_id, 24)}_{_slug(conv_id, 24)}"
 
     log = SessionLog(
@@ -235,7 +233,7 @@ async def record_session_log(
         repair_id=repair_id,
         conv_id=conv_id,
         symptom=symptom,
-        outcome=outcome,  # type: ignore[arg-type]
+        outcome=outcome,  # 类型：忽略[arg-type]
         tested=[TestedTarget(**t) for t in (tested or [])],
         hypotheses=[HypothesisTrace(**h) for h in (hypotheses or [])],
         findings=list(findings or []),
@@ -247,7 +245,8 @@ async def record_session_log(
 
     logs_dir = _logs_dir(device_slug, memory_root, owner_ref)
     logs_dir.mkdir(parents=True, exist_ok=True)
-    # Per-conv filename (NOT per-call) — same conv_id rewrites in place.
+    # 每个转换文件名（不是每个调用）——相同的 conv_id 重写到位。
+
     conv_filename = f"{_slug(repair_id, 24)}_{_slug(conv_id, 24)}.md"
     file_path = logs_dir / conv_filename
     file_path.write_text(markdown, encoding="utf-8")
@@ -290,10 +289,14 @@ async def _mirror_to_managed_agents(
     markdown: str,
     owner_ref: str | None = None,
 ) -> str:
-    # Tenant (owner_ref) → the per-repair store, which is tenant-private (the
-    # device store is shared across tenants, so mirroring a private session
-    # narrative there would let another tenant's agent grep it). Ownerless
-    # (self-host) keeps the device store = the tech's own cross-repair memory.
+    # 租户 (owner_ref) → 每次维修存储，这是租户私有的（
+
+    # 设备存储在租户之间共享，因此镜像私人会话
+
+    # 那里的叙述会让另一个租户的代理人 grep 它）。无主
+
+    # (self-host) 保留设备存储 = 技术自己的交叉修复内存。
+
     store_id = await (
         ensure_repair_store(client, device_slug=device_slug, repair_id=repair_id)
         if owner_ref
@@ -324,8 +327,8 @@ def list_session_logs(
     limit: int = 50,
     owner_ref: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Return logs sorted newest-first. Pure disk read, scoped to the owner
-    (a tenant lists only its own past sessions; ownerless = the flat path)."""
+    """返回日志按最新顺序排序。纯磁盘读取，范围仅限于所有者
+    （租户仅列出自己过去的会话；无所有者=平坦路径）。"""
     settings = get_settings()
     memory_root = memory_root or Path(settings.memory_root)
     logs_dir = _logs_dir(device_slug, memory_root, owner_ref)

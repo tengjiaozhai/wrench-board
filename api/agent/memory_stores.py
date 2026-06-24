@@ -14,8 +14,7 @@ Dual path — SDK first, raw HTTP fallback:
 
 All failures (missing key, network, API rejection) degrade to a WARNING
 log + `None`/empty return — the diagnostic session runs without memory
-rather than crashing.
-"""
+rather than crashing."""
 
 from __future__ import annotations
 
@@ -56,12 +55,11 @@ def _http_headers(api_key: str, *, content_json: bool = False) -> dict[str, str]
 
 
 def _http_timeout() -> float:
-    """Per-request timeout for the raw memory_stores REST fallback.
+    """原始内存存储 REST 回退的每个请求超时。
 
-    Pulled from settings at call time (not module import time) so test
-    monkeypatches of `get_settings` take effect even after this module is
-    already imported by another fixture.
-    """
+    在调用时（不是模块导入时）从设置中提取，因此进行测试
+    即使在该模块启动后，`get_settings`的monkeypatches也会生效
+    已由另一个装置导入。"""
     return get_settings().ma_memory_store_http_timeout_seconds
 
 
@@ -75,7 +73,7 @@ async def _create_store_via_http(
                 headers=_http_headers(api_key, content_json=True),
                 json={"name": name, "description": description},
             )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  # 编号：BLE001
         logger.warning("[MemoryStore] HTTP create raised: %s", exc)
         return None
     if resp.status_code != 200:
@@ -92,18 +90,18 @@ async def _create_store_via_http(
 
 
 async def _delete_store_via_http(*, api_key: str, store_id: str) -> bool:
-    """DELETE a memory store. Returns True on 200/204, False otherwise.
+    """删除内存存储。 200/204 时返回 True，否则返回 False。
 
-    Treats 404 as success — a store that's already gone is the desired end
-    state. Any other error logs a warning and returns False so the caller
-    can still proceed with disk cleanup."""
+    将 404 视为成功 - 已经消失的商店才是理想的结局
+    状态。任何其他错误都会记录警告并返回 False，以便调用者
+    仍然可以继续进行磁盘清理。"""
     try:
         async with httpx.AsyncClient(timeout=_http_timeout()) as http:
             resp = await http.delete(
                 f"{_API_BASE}/memory_stores/{store_id}",
                 headers=_http_headers(api_key),
             )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  # 编号：BLE001
         logger.warning(
             "[MemoryStore] HTTP delete raised for store=%s: %s", store_id, exc
         )
@@ -127,8 +125,7 @@ async def _update_memory_via_http(
     Note: the public Managed Agents API docs list this as PATCH, but the
     live endpoint only accepts POST (verified 2026-04-26 — PATCH/PUT both
     return 405 Method Not Allowed). The shape stays
-    `{"content": "..."}` either way.
-    """
+    `{"content": "..."}` either way."""
     try:
         async with httpx.AsyncClient(timeout=_http_timeout()) as http:
             resp = await http.post(
@@ -136,7 +133,7 @@ async def _update_memory_via_http(
                 headers=_http_headers(api_key, content_json=True),
                 json={"content": content},
             )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  # 编号：BLE001
         logger.warning(
             "[MemoryStore] HTTP update raised for memory_id=%s: %s",
             memory_id,
@@ -160,14 +157,13 @@ async def _update_memory_via_http(
 async def _upsert_memory_via_http(
     *, api_key: str, store_id: str, path: str, content: str
 ) -> str | None:
-    """True upsert: try create, on 409 path conflict fall back to update.
+    """真正的 upsert：尝试创建，在 409 路径冲突上回退到更新。
 
-    The Anthropic Memory API addresses memories by `mem_...` id for
-    mutations and returns `409 memory_path_conflict_error` when a create
-    is attempted at a path that already has a memory. This helper extracts
-    the `conflicting_memory_id` from the error body and PATCHes that
-    memory instead, giving callers true upsert semantics.
-    """
+    Anthropic 内存 API 通过 `mem_...` id 对内存进行寻址
+    突变并在创建时返回 `409 memory_path_conflict_error`
+    尝试一条已经有记忆的路径。这个助手提取
+    错误正文中的 `conflicting_memory_id` 和补丁
+    相反，内存，为调用者提供真正的更新插入语义。"""
     try:
         async with httpx.AsyncClient(timeout=_http_timeout()) as http:
             resp = await http.post(
@@ -175,7 +171,7 @@ async def _upsert_memory_via_http(
                 headers=_http_headers(api_key, content_json=True),
                 json={"path": path, "content": content},
             )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  # 编号：BLE001
         logger.warning(
             "[MemoryStore] HTTP upsert raised for path=%s: %s", path, exc
         )
@@ -186,7 +182,7 @@ async def _upsert_memory_via_http(
         except ValueError:
             return "ok"
 
-    # 409 path conflict → switch to PATCH on the conflicting memory id.
+    # 409 路径冲突 → 切换到冲突内存 id 上的 PATCH。
     if resp.status_code == 409:
         try:
             body = resp.json()
@@ -215,11 +211,10 @@ async def _upsert_memory_via_http(
 async def ensure_memory_store(
     client: AsyncAnthropic, device_slug: str
 ) -> str | None:
-    """Return the `memstore_...` id for this device, creating one on first call.
+    """返回此设备的 `memstore_...` id，在第一次调用时创建一个。
 
-    The id is cached in `memory/{slug}/managed.json` so subsequent calls on the
-    same device reuse it (no network round-trip, no duplicate stores).
-    """
+    该 id 缓存在 `memory/{⟦PRESERVE0⟧}/managed.json` 中，因此后续调用
+    同一设备重复使用它（无网络往返，无重复存储）。"""
     settings = get_settings()
     pack_dir = Path(settings.memory_root) / device_slug
     pack_dir.mkdir(parents=True, exist_ok=True)
@@ -244,7 +239,7 @@ async def ensure_memory_store(
         try:
             store = await sdk_surface.create(name=name, description=description)
             store_id = getattr(store, "id", None)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # 编号：BLE001
             logger.warning(
                 "[MemoryStore] SDK create failed for device=%s: %s — "
                 "falling back to HTTP",
@@ -283,11 +278,11 @@ async def ensure_memory_store(
 GLOBAL_REGISTRY_DIR = "_managed"
 GLOBAL_REGISTRY_FILE = "global.json"
 
-# Allowed kinds for the global singleton registry. Each maps to a single
-# store created at most once per workspace; the id is cached locally so
-# subsequent sessions reuse it. See
-# docs/superpowers/plans/2026-04-26-ma-memory-layered-architecture.md
-# for the layered MA memory architecture (4 stores per session).
+# 全局单例注册表允许的类型。每个映射到一个
+# 每个工作区最多创建一次商店； id 被缓存在本地所以
+# 后续会话重用它。看
+# 文档/superpowers/plans/2026-04-26-ma-memory-layered-architecture.md
+# 用于分层 MA 内存架构（每个会话 4 个存储）。
 _GLOBAL_KINDS = {"patterns", "playbooks"}
 
 
@@ -328,8 +323,7 @@ async def ensure_global_store(
     Created on first call, cached in `memory/_managed/global.json` for
     re-use across all sessions and devices. The store hosts cross-device
     knowledge (failure taxonomy, diagnostic playbook templates) attached
-    read-only to every diagnostic session.
-    """
+    read-only to every diagnostic session."""
     if kind not in _GLOBAL_KINDS:
         raise ValueError(f"Unknown global store kind: {kind!r}")
 
@@ -350,7 +344,7 @@ async def ensure_global_store(
         try:
             store = await sdk_surface.create(name=name, description=description)
             store_id = getattr(store, "id", None)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # 编号：BLE001
             logger.warning(
                 "[MemoryStore] SDK create failed for global %s: %s — "
                 "falling back to HTTP",
@@ -419,8 +413,7 @@ async def ensure_repair_store(
 
     Persisted at `memory/{slug}/repairs/{repair_id}/managed.json`. Backbone
     of the "agent-as-its-own-librarian" pattern that replaces the LLM-driven
-    session resume summary.
-    """
+    session resume summary."""
     marker = _repair_marker_path(device_slug, repair_id)
     marker.parent.mkdir(parents=True, exist_ok=True)
 
@@ -447,7 +440,7 @@ async def ensure_repair_store(
         try:
             store = await sdk_surface.create(name=name, description=description)
             store_id = getattr(store, "id", None)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # 编号：BLE001
             logger.warning(
                 "[MemoryStore] SDK create failed for repair=%s: %s — "
                 "falling back to HTTP",
@@ -506,26 +499,25 @@ async def list_memory_paths_to_ids(
     every time. One round-trip up front saves three (SDK retries × 3 + the
     eventual update) per existing memory on subsequent upserts.
 
-    Returns `{}` on any failure.
-    """
+    Returns `{}` on any failure."""
     settings = get_settings()
     if not settings.anthropic_api_key:
         return {}
     out: dict[str, str] = {}
     try:
         async with httpx.AsyncClient(timeout=_http_timeout()) as http:
-            # `limit` is server-capped at 100 (verified live 2026-04-26 —
-            # `limit=1000` returns `400 invalid_request_error`). Our
-            # knowledge stores carry ≤10 leaf files plus the field-reports
-            # subtree, so one page at limit=100 covers the realistic case.
-            # If a tenant ever pushes past 100 entries we should add cursor
-            # pagination here.
+            # `limit` 服务器上限为 100（已于 2026 年 4 月 26 日实时验证 —
+            # `limit=1000` 返回`400 invalid_request_error`）。我们的
+            # 知识库包含 ≤10 个叶文件以及现场报告
+            # 子树，因此 limit=100 的一页涵盖了实际情况。
+            # 如果租户推送超过 100 个条目，我们应该添加光标
+            # 此处分页。
             resp = await http.get(
                 f"{_API_BASE}/memory_stores/{store_id}/memories",
                 headers=_http_headers(settings.anthropic_api_key),
                 params={"limit": 100, "view": "basic"},
             )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  # 编号：BLE001
         logger.warning(
             "[MemoryStore] HTTP list raised for store=%s: %s", store_id, exc
         )
@@ -544,9 +536,9 @@ async def list_memory_paths_to_ids(
         for item in items:
             if not isinstance(item, dict):
                 continue
-            # The list endpoint mixes "memory" (full leaf) and
-            # "memory_prefix" (directory-like) entries. Only the former
-            # has an id we can address for updates.
+            # 列表端点混合了“内存”（全叶）和
+            # “memory_prefix”（类似目录）条目。只有前者
+            # 有一个 ID，我们可以获取更新信息。
             if item.get("type") != "memory":
                 continue
             mid = item.get("id")
@@ -582,11 +574,10 @@ async def upsert_memory(
     we skip straight to the update endpoint instead of doing a path-based
     create that the server will reject with 409 + auto-fallback to update.
     Saves ~3s per known memory by avoiding the SDK's naïve retry loop on
-    the conflict.
-    """
+    the conflict."""
     settings = get_settings()
     if memory_id and settings.anthropic_api_key:
-        # Fast path — one round-trip update, no create attempt, no 409s.
+        # 快速路径 — 一次往返更新，无创建尝试，无 409。
         sha = await _update_memory_via_http(
             api_key=settings.anthropic_api_key,
             store_id=store_id,
@@ -596,15 +587,15 @@ async def upsert_memory(
         if sha is not None:
             return sha
         # If the direct update failed (memory deleted, store rotated,
-        # etc.), fall through to the full upsert path so we can recover.
+        # 等），进入完整的更新插入路径，以便我们可以恢复。
 
     sdk_beta = getattr(client, "beta", None)
     sdk_stores = getattr(sdk_beta, "memory_stores", None) if sdk_beta else None
     sdk_surface = getattr(sdk_stores, "memories", None) if sdk_stores else None
     if sdk_surface is not None:
-        # Prefer `write` (public beta name). `create` kept as a courtesy
-        # for older SDK builds that may still expose the research-preview
-        # spelling.
+        # 更喜欢 `write` （公开测试版名称）。 `create` 出于礼貌而保留
+        # 对于较旧的 SDK 版本，可能仍会公开研究预览
+        # 拼写。
         call = getattr(sdk_surface, "write", None) or getattr(
             sdk_surface, "create", None
         )
@@ -616,7 +607,7 @@ async def upsert_memory(
                     content=content,
                 )
                 return getattr(result, "content_sha256", None) or "ok"
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:  # 编号：BLE001
                 logger.warning(
                     "[MemoryStore] SDK upsert failed for store=%s path=%s: %s — "
                     "falling back to HTTP",
@@ -641,14 +632,13 @@ async def delete_repair_store(
     device_slug: str,
     repair_id: str,
 ) -> bool:
-    """Delete the per-repair MA memory store, if any.
+    """删除每次修复的 MA 内存存储（如果有）。
 
-    Reads `memory/{slug}/repairs/{repair_id}/managed.json` to find the
-    `memory_store_id`, then deletes the store via SDK or HTTP. Returns True
-    when the store is gone (deleted now, or already absent / no marker —
-    nothing to clean). Errors are swallowed and logged so disk cleanup can
-    still proceed in the caller.
-    """
+    读取 `memory/{⟦PRESERVE2⟧}/repairs/{⟦PRESERVE0⟧}/managed.json` 来查找
+    `memory_store_id`，然后通过SDK或HTTP删除商店。返回真
+    当商店消失时（现在已删除，或已经不存在/没有标记 -
+    没有什么需要清洁的）。错误被吞掉并记录下来，以便磁盘清理可以
+    仍然在调用者中继续。"""
     marker = _repair_marker_path(device_slug, repair_id)
     if not marker.exists():
         return True
@@ -676,7 +666,7 @@ async def delete_repair_store(
         try:
             await sdk_surface.delete(store_id)
             return True
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # 编号：BLE001
             logger.warning(
                 "[MemoryStore] SDK delete failed for repair=%s store=%s: %s — "
                 "falling back to HTTP",

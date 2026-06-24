@@ -1,22 +1,21 @@
-"""Per-turn token cost estimation for diagnostic sessions.
+"""诊断会话的每轮令牌成本估算。
 
-Pricing is tracked by model family. Cache semantics apply: cache_read
-inputs bill at 10% of the base input rate, cache_creation at 125%.
+定价按型号系列进行跟踪。缓存语义适用：cache_read
+输入费用为基本输入速率的 10%，cache_creation 为 125%。
 
-Numbers are best-effort estimates — they feed the "cost per message /
-total conversation" surface the tech sees in the chat panel. If Anthropic
-changes prices, bump the table here. Off by a cent or two is fine — the
-goal is to let the tech reason about token spend live, not to reconcile
-invoices.
-"""
+数字是best-effort的估计值——它们提供了“每条消息的成本/
+技术人员在聊天面板中看到“总体对话”表面。如果Anthropic
+改变价格，在这里撞桌子。偏离一两分就可以了——
+目标是让关于代币花费的技术原因得以实现，而不是调和
+发票。"""
 
 from __future__ import annotations
 
 from typing import Any
 
-# Per-million-token rates in USD, sourced from
-# https://platform.claude.com/docs/en/about-claude/pricing (April 2026).
-# Opus dropped from the legacy $15/$75 tier at Opus 4.5; 4.7/4.8 stay at $5/$25.
+# 以美元计算的每百万代币汇率，源自
+# https://platform.claude.com/docs/en/about-claude/pricing（2026 年 4 月）。
+# Opus 从 Opus 4.5 的旧版 $15/$75 等级下降； 4.7/4.8 保持 5 美元/25 美元。
 MODEL_PRICING: dict[str, dict[str, float]] = {
     "claude-haiku-4-5":  {"input": 1.00, "output": 5.00},
     "claude-sonnet-4-6": {"input": 3.00, "output": 15.00},
@@ -24,7 +23,7 @@ MODEL_PRICING: dict[str, dict[str, float]] = {
     "claude-opus-4-8":   {"input": 5.00, "output": 25.00},
 }
 
-# Cache tier multipliers applied to the base input rate.
+# 应用于基本输入速率的缓存层乘数。
 CACHE_READ_MULTIPLIER  = 0.10
 CACHE_WRITE_MULTIPLIER = 1.25
 
@@ -37,13 +36,12 @@ def compute_turn_cost(
     cache_read_input_tokens: int = 0,
     cache_creation_input_tokens: int = 0,
 ) -> dict[str, Any]:
-    """Return the USD cost breakdown for one turn.
+    """返回一回合的美元成本明细。
 
-    `input_tokens` is the billable non-cached input; `cache_read_input_tokens`
-    and `cache_creation_input_tokens` are priced at their own multipliers
-    and should NOT be double-counted in `input_tokens`. This matches the
-    Anthropic usage shape.
-    """
+    `input_tokens` 是可计费的非缓存输入； ⟦保留2⟧
+    和 `cache_creation_input_tokens` 按其自己的乘数定价
+    并且不应在`input_tokens`中重复计算。 This matches the
+    Anthropic 使用形状。"""
     rates = MODEL_PRICING.get(model)
     if rates is None:
         return {
@@ -74,7 +72,7 @@ def compute_turn_cost(
 
 
 def cost_from_response(model: str, usage: Any) -> dict[str, Any]:
-    """Compute cost from an anthropic `Message.usage` object."""
+    """从人为的 `Message.usage` 对象计算成本。"""
     return compute_turn_cost(
         model,
         input_tokens=getattr(usage, "input_tokens", 0) or 0,

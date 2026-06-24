@@ -1,19 +1,18 @@
-"""Direct-mode memory recall — pure read helpers backing three wrapper tools.
+"""直接模式内存调用 - 支持三个包装器工具的纯读取助手。
 
-In managed mode the diagnostic agent greps three FUSE-mounted memory stores:
-per-device field reports, global failure-pattern archetypes, and global
-protocol playbooks. Direct mode (`runtime_direct`) has no FUSE mount, so without
-these the agent is blind to that recall (see `field_reports.list_field_reports`
-docstring: managed reads "via grep on the FUSE mount … rather than through a
-wrapper tool"). These functions ARE that wrapper, exposed as `mb_recall_*` /
-`mb_search_*` tools so the direct agent reaches parity.
+在托管模式下，诊断代理 grep 三个 FUSE 安装的内存存储：
+每个设备的现场报告、全局故障模式原型和全局
+协议剧本。直接模式（`runtime_direct`）没有 FUSE 安装，因此无需
+这些代理对召回视而不见（参见`field_reports.list_field_reports`
+文档字符串：托管读取“通过 FUSE 安装上的 grep ......而不是通过
+包装器工具”）。这些函数是包装器，公开为 `mb_recall_*` /
+`mb_search_*` 工具，使直接代理达到同等水平。
 
-All three are read-only and side-effect-free. Writes (recording findings,
-saving protocols) already exist and are shared by both runtimes.
+这三个都是只读且无副作用的。写入（记录结果，
+保存协议）已经存在并且由两个运行时共享。
 
-Matching is deliberately simple substring/keyword grep — the same shape as the
-managed agent grepping the mounted files, not semantic search.
-"""
+匹配是故意简单的子字符串/关键字 grep — 与
+托管代理 grep 已安装的文件，而不是语义搜索。"""
 
 from __future__ import annotations
 
@@ -26,11 +25,11 @@ from api.agent.field_reports import list_field_reports
 
 logger = logging.getLogger("wrench_board.agent.recall")
 
-# Versioned seed data shipped with the engine (curated by hand). Same source the
-# managed global stores are seeded from (see api/agent/seed_data/README.md).
+# 引擎附带的版本化种子数据（手动管理）。相同来源
+# 托管的全球商店是从（参见api/agent/seed_data/README.md）开始的。
 _SEED_DIR = Path(__file__).resolve().parent / "seed_data"
 
-# Default cap so a long device history can't blow up the agent's context.
+# 默认上限，因此较长的设备历史记录不会破坏代理的上下文。
 _DEFAULT_FIELD_REPORT_LIMIT = 8
 
 
@@ -42,16 +41,15 @@ def recall_field_reports(
     refdes: str | None = None,
     limit: int = _DEFAULT_FIELD_REPORT_LIMIT,
 ) -> list[dict[str, Any]]:
-    """Recall confirmed field reports for THIS device, newest-first.
+    """回想一下该设备已确认的现场报告，最新的优先。
 
-    Thin wrapper over `list_field_reports` (the disk-backed reader) that adds a
-    free-text `query` filter (matched across every field) and caps the result.
-    `refdes` is pushed down to the underlying reader. This is the direct-mode
-    equivalent of the managed agent grepping the device field_reports store.
-    """
-    # Pull a generous window first (refdes pushed down), then keyword-filter and
-    # cap here — so `query` narrows the newest-first set rather than the reader's
-    # own `limit` truncating before we filter.
+    `list_field_reports`（磁盘支持的读取器）的薄包装，添加了
+    自由文本 `query` 过滤器（在每个字段中匹配）并限制结果。
+    `⟦PRESERVE0⟧` 被下推到底层读取器。这是直接模式
+    相当于托管代理 grep 设备 field_reports 存储。"""
+    # 首先拉出一个宽大的窗口（refdes按下），然后进行关键字过滤和
+    # 此处上限 - 因此 `query` 缩小了最新的第一组而不是读者的范围
+    # 在过滤之前自己截断 `limit` 。
     reports = list_field_reports(
         device_slug=device_slug,
         memory_root=memory_root,
@@ -70,13 +68,12 @@ def recall_field_reports(
 
 
 def search_patterns(query: str, *, seed_dir: Path | None = None) -> list[dict[str, Any]]:
-    """Search the global failure-pattern archetypes (markdown) by keyword.
+    """按关键字搜索全局故障模式原型（markdown）。
 
-    Returns `[{name, content}]` for every archetype whose filename or body
-    contains `query` (case-insensitive substring) — the agent's "how do I reason
-    about this kind of fault" recall. Archetypes are few and short, so the full
-    body is returned for each hit.
-    """
+    对于文件名或正文的每个原型返回 `[{name, content}]`
+    包含 `query` （不区分大小写的子字符串）——代理的“我如何推理
+    关于这种错误”回忆。原型很少而且很短，所以完整的
+    每次命中都会返回主体。"""
     base = (seed_dir or _SEED_DIR) / "global_patterns"
     if not base.exists():
         return []
@@ -97,13 +94,12 @@ def search_patterns(query: str, *, seed_dir: Path | None = None) -> list[dict[st
 
 
 def search_playbooks(symptom: str, *, seed_dir: Path | None = None) -> list[dict[str, Any]]:
-    """Search the global protocol playbooks (JSON) by symptom.
+    """按症状搜索全局协议手册 (JSON)。
 
-    Returns the full playbook dict (including `steps`) for every playbook whose
-    `applies_when` overlaps `symptom` (case-insensitive substring either way) —
-    so the agent can lift a validated step sequence before calling
-    `bv_propose_protocol` instead of reinventing it.
-    """
+    返回每个剧本的完整剧本字典（包括`steps`）
+    `applies_when` 重叠 `symptom` （无论哪种方式都不区分大小写的子字符串） —
+    因此代理可以在调用之前提升经过验证的步骤序列
+    `⟦PRESERVE0⟧`而不是重新发明它。"""
     base = (seed_dir or _SEED_DIR) / "global_playbooks"
     if not base.exists():
         return []

@@ -1,7 +1,7 @@
-// Wrench Board mascot — clones <template id="tpl-mascot"> into a target,
-// applies the size + state classes, returns the mounted <svg>. Pair with
-// `web/styles/mascot.css` (idle breathing, blink, plus the per-state
-// animations) and `web/js/mascot_states.js` (the state registry).
+// 扳手板吉祥物 — 将 <template id="tpl-mascot"> 克隆到目标中，
+// 应用大小 + 状态类，返回已安装的 <svg>。配对
+// `web/styles/mascot.css` （空闲呼吸，眨眼，加上每个状态
+// 动画）和“web/js/mascot_states.js”（状态注册表）。
 
 import { MASCOT_STATE_IDS } from "./mascot_states.js";
 
@@ -18,12 +18,12 @@ function getTemplate() {
 }
 
 /**
- * Clone the mascot SVG into `target`, replacing whatever was there.
- * @param {Element} target  Mount point (div / span / etc.)
- * @param {{size?: string, state?: string}} [opts]
- *   size: xs (32px) | sm (80px) | md (160px) | lg (320px), default "sm"
- *   state: idle | thinking | working | success | error, default "idle"
- * @returns {SVGSVGElement|null} The mounted SVG, or null if mount failed.
+ * 将吉祥物 SVG 克隆到“target”中，替换其中的任何内容。
+ * @param {Element} 目标挂载点（div/span/等）
+ * @param {{大小？：字符串，状态？：字符串}} [选项]
+ * 尺寸：xs (32px) | sm (80 像素) | MD (160 像素) | LG (320px)，默认“sm”
+ * 状态：空闲 | thinking |工作|成功|错误，默认“空闲”
+ * @returns {SVGSVGElement|null} 已挂载的 SVG，如果挂载失败则为 null。
  */
 export function mountMascot(target, opts = {}) {
   if (!target) return null;
@@ -35,8 +35,8 @@ export function mountMascot(target, opts = {}) {
 
   const clone = tpl.content.firstElementChild.cloneNode(true);
   clone.classList.add("mascot", `mascot-${size}`, `is-${state}`);
-  // Accessibility — the template ships no role/label so we set one here.
-  // Re-applied on locale change via the onChange hook below.
+  // 可访问性——模板没有提供角色/标签，因此我们在这里设置一个。
+  // 通过下面的 onChange 挂钩重新应用区域设置更改。
   clone.setAttribute("role", "img");
   clone.setAttribute("aria-label", t("mascot.aria.label"));
   target.replaceChildren(clone);
@@ -52,9 +52,9 @@ if (window.i18n && window.i18n.onChange) {
 }
 
 /**
- * Toggle the state class on a mounted mascot (or any element marked .mascot).
- * Removes any existing is-* class before adding the new one. Pass null/undefined
- * state to clear all state classes (returns to idle defaults).
+ * 切换已安装吉祥物（或任何元素marked.mascot）上的状态类。
+ * 在添加新类之前删除任何现有的 is-* 类。传递 null/未定义
+ *状态清除所有状态类（返回到空闲默认值）。
  */
 export function setMascotState(svg, state) {
   if (!svg) return;

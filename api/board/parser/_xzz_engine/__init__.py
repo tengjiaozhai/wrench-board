@@ -1,5 +1,4 @@
-"""XZZ `.pcb` format parser — pure Python implementation.
+"""XZZ `.pcb` 格式解析器 — 纯 Python 实现。
 
-Structure cross-referenced against the public ImHex pattern by
-slimeinacloak (github.com/slimeinacloak/XZZPCB-ImHex).
-"""
+结构与公共 ImHex 模式交叉引用
+slimeinacloak (github.com/slimeinacloak/XZZPCB-ImHex)。"""

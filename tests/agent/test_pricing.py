@@ -8,18 +8,18 @@ from api.agent.pricing import compute_turn_cost, cost_from_response
 
 
 def test_haiku_simple_turn_cost():
-    # 10k input + 2k output on Haiku = $0.01 + $0.01 = $0.02
+    # 10k input + Haiku 上的 2k 输出 = $0.01 + $0.01 = $0.02
     cost = compute_turn_cost("claude-haiku-4-5", input_tokens=10_000, output_tokens=2_000)
     assert cost["priced"] is True
     assert abs(cost["cost_usd"] - 0.02) < 1e-6
 
 
 def test_opus_turn_cost_higher():
-    # Opus 4.7/4.8 at $5 / $25 per MTok (the post-4.5 tier, not the legacy
-    # $15/$75 of Opus 4.1). 10k input + 2k output = $0.05 + $0.05 = $0.10
+    # Opus 4.7/4.8，每 MTok 5 美元/25 美元（post-4.5 tier，不是旧版
+    # Opus 4.1 的 15 美元/75 美元）。 10k input + 2k 产出 = $0.05 + $0.05 = $0.10
     cost = compute_turn_cost("claude-opus-4-7", input_tokens=10_000, output_tokens=2_000)
     assert abs(cost["cost_usd"] - 0.10) < 1e-6
-    # Opus 4.8 shares the same tier — the active `deep` model must be priced.
+    # Opus 4.8 share与tier相同 - 活动的“deep”型号必须定价。
     cost_48 = compute_turn_cost("claude-opus-4-8", input_tokens=10_000, output_tokens=2_000)
     assert cost_48["priced"] is True
     assert abs(cost_48["cost_usd"] - 0.10) < 1e-6
@@ -47,7 +47,7 @@ def test_unknown_model_returns_zero_priced_false():
     cost = compute_turn_cost("mystery-model-9", input_tokens=100, output_tokens=100)
     assert cost["priced"] is False
     assert cost["cost_usd"] == 0.0
-    # Token counts are still echoed so the UI can still show "1234 tokens, price unknown".
+    # Token 计数re 仍然回显，因此 UI 仍然可以显示“1234 tokens，价格未知”。
     assert cost["input_tokens"] == 100
 
 

@@ -1,30 +1,29 @@
-"""Tool manifest + system prompt builders for the diagnostic agent.
+"""诊断代理的工具清单+系统提示构建器。
 
-Tool families (counts kept in sync with the lists below — the
-`tests/agent/test_dump_tools_inventory.py` regression test reads them
-back from this module and fails if the docstring drifts):
+工具系列（与下面的列表保持同步的计数 -
+`tests/agent/test_dump_tools_inventory.py` 回归测试读取它们
+如果文档字符串发生变化，则从该模块返回并失败）：
 
-- MB_TOOLS: 14 memory-bank + board aggregation + schematic engines
-  (always-on).
-- BV_TOOLS: 13 boardview controls (exposed only when a board is loaded
-  in the session).
-- PROFILE_TOOLS: 3 technician-profile tools (always-on).
-- STOCK_TOOLS: 5 stock & donor salvage tools (always-on). Search the
-  technician's donor inventory, mark/unmark donors, mark parts consumed.
-- PROTOCOL_TOOLS: 4 guided-protocol tools (always-on).
-- CAM_TOOLS: 1 camera capture tool (exposed only when the frontend
-  reported a camera available on session open).
-- CONSULT_TOOLS: 1 cross-tier escalation tool (Managed-Agents runtime
-  only — see `build_tools_manifest` for the rationale).
+- MB_TOOLS：14 个内存库 + 板聚合 + 原理图引擎
+  （始终开启）。
+- BV_TOOLS：13 个boardview 控件（仅在加载板时暴露
+  在会议中）。
+- PROFILE_TOOLS：3 个技术人员配置文件工具（始终开启）。
+- STOCK_TOOLS：5 个库存和捐赠者抢救工具（始终开启）。搜索
+  技术人员的捐赠者库存、标记/取消标记捐赠者、标记消耗的零件。
+- PROTOCOL_TOOLS：4 个引导协议工具（始终开启）。
+- CAM_TOOLS：1个相机捕捉工具（仅当前端
+  报告会话打开时有一个可用的相机）。
+- CONSULT_TOOLS：1 个跨层升级工具（托管代理运行时
+  仅 - 请参阅`build_tools_manifest`了解基本原理）。
 
-Auto-generated reference: `docs/tools.md` (regenerate via
+自动生成的参考：`docs/tools.md`（通过重新生成
 `make tools-inventory`).
 
-- build_tools_manifest(session): produces the per-session manifest
-  passed to Anthropic's messages.create or the Managed Agent definition.
-- render_system_prompt(session, device_slug): DIRECT-runtime only; the
-  Managed-runtime prompt is carried by the agent server-side.
-"""
+- build_tools_manifest(session)：生成每个会话清单
+  传递到 Anthropic 的 messages.create 或托管代理定义。
+- render_system_prompt(session, device_slug)：仅限直接运行时；这
+  托管运行时提示由代理服务器端携带。"""
 
 from __future__ import annotations
 
@@ -1089,10 +1088,10 @@ CONSULT_TOOLS: list[dict] = [
 ]
 
 
-# Direct-mode memory recall (parity with the managed agent's FUSE-mounted
-# stores). Read-only wrappers over `api.agent.recall`. Always present — the
-# direct agent has no FUSE mount, so these are its only window onto field
-# reports / patterns / playbooks. Managed mode does NOT use this manifest.
+# 直接模式内存调用（与托管代理的 FUSE 安装相同）
+# 商店）。 `api.agent.recall` 上的只读包装器。始终存在——
+# 直接代理没有 FUSE 安装，因此这是其唯一的现场窗口
+# 报告/模式/剧本。托管模式不使用此清单。
 RECALL_TOOLS: list[dict] = [
     {
         "type": "custom",
@@ -1152,17 +1151,17 @@ RECALL_TOOLS: list[dict] = [
 
 
 def build_tools_manifest(session: SessionState) -> list[dict]:
-    """Return the tools list for `session` in DIRECT mode. `profile_*` and
-    `protocol_*` always present; `bv_*` only when a board is loaded; `cam_*`
-    only when the frontend reported a camera available.
+    """在 DIRECT 模式下返回`session`的工具列表。 `profile_*` 和
+    `protocol_*` 始终存在；仅当加载板时`bv_*`； ⟦保留5⟧
+    仅当前端报告有可用相机时。
 
-    `consult_specialist` is intentionally absent here — escalation between
-    tiers requires the Managed Agents control plane (separate agent IDs per
-    tier, persisted in `managed_ids.json`). Direct mode runs a single
-    `messages.create` loop with no peer tiers to consult, so exposing the
-    tool would let the agent call something with no dispatcher behind it.
-    The MA runtime bakes CONSULT_TOOLS into each tier-scoped agent at
-    bootstrap time (see `scripts/bootstrap_managed_agent.py`)."""
+    `consult_specialist` 在这里故意缺席——升级
+    层需要 Managed Agents 控制平面（每个层有单独的代理 ID）
+    层，保留在`managed_ids.json`）。直接模式运行单个
+    `messages.create` 循环没有可咨询的对等层，因此暴露了
+    工具可以让代理在没有调度程序的情况下调用某些东西。
+    MA 运行时将 CONSULT_TOOLS 烘焙到每个层范围的代理中：
+    引导时间（请参阅`scripts/bootstrap_managed_agent.py`）。"""
     manifest: list[dict] = (
         list(MB_TOOLS) + list(RECALL_TOOLS) + list(PROFILE_TOOLS)
         + list(STOCK_TOOLS) + list(PROTOCOL_TOOLS)
@@ -1171,19 +1170,19 @@ def build_tools_manifest(session: SessionState) -> list[dict]:
         manifest.extend(BV_TOOLS)
     if session.has_camera:
         manifest.extend(CAM_TOOLS)
-    # Plan gate (cloud capability): a free tenant may NOT trigger a paid pack
-    # enrichment, so drop mb_expand_knowledge entirely — the agent never sees
-    # it, never proposes it (no dead CTA). Pro / self-host keep it. The
-    # execution path is gated too (defence in depth) for the managed runtime,
-    # whose manifest is baked at agent bootstrap and can't be filtered here.
+    # 计划门（云功能）：免费租户可能不会触发付费包
+    # 丰富，所以完全删除mb_expand_knowledge——代理永远看不到
+    # 它，从不提出它（没有死的CTA）。亲/self-host保留它。这
+    # 对于托管运行时，执行路径也被门控（深度防御），
+    # 其清单是在代理引导程序中烘焙的，无法在此处进行过滤。
     if not current_can_expand():
         manifest = [t for t in manifest if t.get("name") != "mb_expand_knowledge"]
     return manifest
 
 
 def _has_electrical_graph(device_slug: str) -> bool:
-    # T9 — per-owner : présence du graphe pour le tenant courant (son PDF
-    # actif), pas la racine partagée du slug. owner None → racine, inchangé.
+    # T9 — 每个所有者：存在于租客库兰特（儿子PDF）
+    # actif），通过 slug 进行操作。所有者 无 → racine, inchangé。
     from api.agent.owner_ref import current_owner_ref
     from api.pipeline import live_graph
 
@@ -1194,15 +1193,14 @@ def _has_electrical_graph(device_slug: str) -> bool:
 def render_system_prompt(
     session: SessionState, *, device_slug: str, cousin_line: str | None = None
 ) -> str:
-    """Build the system prompt for the DIRECT runtime only.
+    """仅为 DIRECT 运行时构建系统提示符。
 
-    The Managed runtime carries its prompt server-side via managed_ids.json
-    and doesn't call this function.
+    托管运行时通过 Managed_ids.json 在服务器端携带提示符
+    并且不调用这个函数。
 
-    ``cousin_line`` (T9a Phase B): when this board has no schematic of its own,
-    the caller may pass a one-line hint pointing the agent at a sibling pack
-    (same family) it can lean on as an indicative reference.
-    """
+    ``cousin_line`` (T9a Phase B)：当该板没有自己的原理图时，
+    调用者可能会传递一行提示，将代理指向同级包
+    （同一家族）它可以作为指示性参考。"""
     boardview_status = "✅" if session.board is not None else "❌ (no board file loaded)"
     schematic_status = (
         "✅ (mb_schematic_graph)"
@@ -1218,9 +1216,9 @@ def render_system_prompt(
         else ""
     )
     cousin_block = f"\n{cousin_line}\n" if cousin_line else ""
-    # mb_expand_knowledge is plan-gated (dropped from the manifest for free
-    # tenants) — keep the advertised capability line in sync so the agent isn't
-    # told about a tool it doesn't have.
+    # mb_expand_knowledge 是计划控制的（免费从清单中删除
+    # 租户）——保持广告的能力线同步，这样代理就不会
+    # 讲述了它没有的工具。
     mb_tools_line = (
         "mb_get_component, mb_get_rules_for_symptoms, mb_record_finding, "
         "mb_record_session_log, mb_expand_knowledge"

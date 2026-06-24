@@ -40,7 +40,7 @@ async def test_memory_store_setup_failed_emitted_when_ensure_raises(
         lambda ids, tier: {"id": "agent_x", "version": 1, "model": "claude-haiku-4-5"},
     )
 
-    # Make every ensure_* fail differently to verify all four are tracked.
+    # 使每个 ensure_* 失败的ently 都不同，以验证所有四个re 跟踪。
     async def boom_global(client, *, kind, description):
         raise RuntimeError(f"global {kind} provisioning down")
     async def boom_memory(client, slug):
@@ -49,10 +49,10 @@ async def test_memory_store_setup_failed_emitted_when_ensure_raises(
     monkeypatch.setattr(rm, "ensure_global_store", boom_global)
     monkeypatch.setattr(rm, "ensure_memory_store", boom_memory)
 
-    # Let session.create succeed (we need session_ready to be emitted first
-    # so the memory failure frame gets its turn). Bail later by making the
-    # WS receive raise — the orchestrator will treat it as a disconnect
-    # and tear down cleanly.
+    # 让session.create成功（我们需要首先session_ready被emitted
+    # 所以轮到内存故障了reframe）。稍后通过做出保释
+    # WS re接受加注 — orchestrator 将 tre 作为断开连接
+    # 并干净地撕下来。
     fake_session = MagicMock()
     fake_session.id = "sesn_test_001"
     class FakeSessions:
@@ -65,7 +65,7 @@ async def test_memory_store_setup_failed_emitted_when_ensure_raises(
     class FakeClient:
         beta = FakeBeta()
     monkeypatch.setattr(rm, "AsyncAnthropic", lambda **_kw: FakeClient())
-    # Stub the two forwarder coroutines so the test never opens a stream.
+    # 存根两个转发器协程，以便测试永远不会 opens a stream。
     async def _noop(*_a, **_kw):
         return None
     monkeypatch.setattr(rm, "_forward_ws_to_session", _noop)
@@ -84,12 +84,12 @@ async def test_memory_store_setup_failed_emitted_when_ensure_raises(
     )
     failures = failed_frames[0]["failures"]
     failed_stores = {entry["store"] for entry in failures}
-    # patterns + playbooks (global) + device — repair_store is not
-    # exercised here because no repair_id was passed.
+    # 模式 + 剧本（全局）+ 设备 — repair_store 不是
+    # 行使他re，因为没有repair_id通过。
     assert {"patterns", "playbooks", "device"}.issubset(failed_stores), (
         f"expected at least patterns/playbooks/device failures, got {failed_stores!r}"
     )
-    # Each entry must carry a non-empty error message.
+    # 每个entry必须携带非空错误消息。
     for entry in failures:
         assert entry["error"], f"empty error message in {entry!r}"
 

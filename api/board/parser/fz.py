@@ -1,27 +1,26 @@
-"""`.fz` boardview parser.
+"""`.fz` boardview 解析器。
 
-Two flavours of `.fz` exist in the field and this parser dispatches
-between them:
+该字段中存在两种类型的 `.fz`，并且该解析器会调度
+他们之间：
 
-1. **FZ-zlib**. 4-byte LE int32 size header followed directly by a
-   zlib stream that decompresses to a pipe-delimited (`!`) section
-   format with `A!schema` / `S!data` rows. Implemented in
-   `_fz_zlib.py`. No key required.
+1. **FZ-zlib**。 4 字节 LE int32 大小的标头，后面直接跟着一个
+   zlib 流，解压缩到管道分隔 (`!`) 部分
+   格式为 `A!schema` / `S!data` 行。实施于
+   ⟦保留6⟧。无需钥匙。
 
-2. **FZ-xor**. The same FZ-zlib container wrapped in a 16-byte
-   sliding-window RC6-shaped cipher keyed by a 44 × uint32 expanded
-   key. Decrypt with `_fz_engine.cipher.decrypt_fz_xor`, then hand the
-   plaintext back through `parse_fz_zlib`.
+2. **FZ 异或**。相同的 FZ-zlib 容器包装在 16 字节中
+   由 44 × uint32 扩展键控的滑动窗口 RC6 形密码
+   钥匙。使用`_fz_engine.cipher.decrypt_fz_xor`解密，然后交出
+   通过`parse_fz_zlib`返回明文。
 
-Dispatch: peek bytes 4-5 — a zlib magic (`78 9c` / `78 da` / `78 01`)
-routes to FZ-zlib directly; otherwise the bytes go through the XOR
-decrypt first and the result must surface a zlib magic at offset 4 of
-the recovered plaintext (or the file is rejected as malformed).
+调度：查看字节 4-5 — zlib 魔法 (`78 9c` / `78 da` / `78 01`)
+直接路由至FZ-zlib；否则字节将经过 XOR
+首先解密，结果必须在偏移量 4 处显示 zlib magic
+恢复的纯文本（或者文件因格式错误而被拒绝）。
 
-The cipher key is loaded from `WRENCH_BOARD_FZ_KEY` (see
-`_fz_engine.cipher`). FZ-zlib parsing works without the key; FZ-xor
-files raise a clear error when the key is unset.
-"""
+密钥从 `WRENCH_BOARD_FZ_KEY` 加载（参见
+⟦保留13⟧）。 FZ-zlib 解析无需密钥即可工作； FZ异或
+当密钥未设置时，文件会引发明显的错误。"""
 
 from __future__ import annotations
 

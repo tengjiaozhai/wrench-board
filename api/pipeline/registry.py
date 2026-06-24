@@ -1,7 +1,6 @@
 """Phase 2 — Registry Builder. Forced-tool output, Pydantic-validated.
 
-Converts the Scout's raw Markdown dump into a canonical `Registry` JSON.
-"""
+Converts the Scout's raw Markdown dump into a canonical `Registry` JSON."""
 
 from __future__ import annotations
 
@@ -28,7 +27,7 @@ SUBMIT_REGISTRY_TOOL_NAME = "submit_registry"
 
 
 def _submit_registry_tool() -> dict:
-    """Build the forced-tool definition whose `input_schema` matches `Registry`."""
+    """构建 `input_schema` 与 `⟦PRESERVE0⟧` 匹配的强制工具定义。"""
     schema = Registry.model_json_schema()
     return {
         "name": SUBMIT_REGISTRY_TOOL_NAME,
@@ -49,7 +48,7 @@ async def run_registry_builder(
     device_kind: str | None = None,
     stats: PhaseTokenStats | None = None,
 ) -> Registry:
-    """Execute Phase 2 — return a validated `Registry` Pydantic model."""
+    """执行阶段 2 — 返回经过验证的 `⟦PRESERVE1⟧` Pydantic 模型。"""
     logger.info("[Registry] Building canonical glossary for device=%r", device_label)
 
     user_prompt = REGISTRY_USER_TEMPLATE.format(

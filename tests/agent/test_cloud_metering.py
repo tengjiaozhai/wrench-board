@@ -111,7 +111,7 @@ async def test_report_turn_usage_posts_contract_with_bearer(monkeypatch):
     assert captured["json"] == {
         "owner_ref": "tenant-1",
         "model": "claude-opus-4-8",
-        "kind": "agent",  # default — build reports pass kind='build' explicitly
+        "kind": "agent",  # 默认 - 构建报告显式传递 kind='build'
         "input_tokens": 1000,
         "output_tokens": 200,
         "cache_read_input_tokens": 0,

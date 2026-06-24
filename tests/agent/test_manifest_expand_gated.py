@@ -14,7 +14,7 @@ def _tool_names(manifest):
 
 
 def test_expand_present_by_default(monkeypatch):
-    # Default (self-host / no cloud) → unrestricted.
+    # 默认（self-host/无cloud）→ 不受re限制。
     set_can_expand(True)
     monkeypatch.setattr("api.agent.manifest.current_can_expand", lambda: True)
     names = _tool_names(build_tools_manifest(SessionState()))
@@ -25,6 +25,6 @@ def test_expand_absent_when_capability_false(monkeypatch):
     monkeypatch.setattr("api.agent.manifest.current_can_expand", lambda: False)
     names = _tool_names(build_tools_manifest(SessionState()))
     assert "mb_expand_knowledge" not in names
-    # The other memory-bank tools stay — only enrichment is gated.
+    # 其他 memory-bank 工具保留 - 只有 enrichment 被门控。
     assert "mb_get_rules_for_symptoms" in names
     assert "mb_get_component" in names

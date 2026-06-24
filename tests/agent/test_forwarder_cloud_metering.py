@@ -70,7 +70,7 @@ def _make_ws():
 
 
 class _Settings:
-    # max_reconnects=0 → the stream ends fast after our events are processed.
+    # max_reconnects=0 → events are 处理后的 stream ends fast。
     ma_stream_event_timeout_seconds = 600.0
     ma_stream_max_reconnects = 0
     ma_session_drain_timeout_seconds = 5.0
@@ -102,8 +102,8 @@ async def test_forwarder_reports_usage_once_per_event(monkeypatch, tmp_path):
     recorder = MagicMock()
     monkeypatch.setattr(forwarders.cloud_metering, "fire_and_forget_report", recorder)
 
-    # Same event id delivered twice — the second hit is a catch-up replay and
-    # must be deduped by `_already_seen`, so only ONE report fires.
+    # 相同的 event id 交付red 两次 — 第二个 hit 是追赶replay 并且
+    # 必须通过 `_already_seen` 进行重复数据删除，因此只有一个 re端口 fire。
     stream = _FakeStream([_model_request_end("evt-1"), _model_request_end("evt-1")])
     client = _make_client(stream)
     ws = _make_ws()

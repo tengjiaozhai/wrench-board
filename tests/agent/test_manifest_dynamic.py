@@ -23,9 +23,9 @@ def _session_with_board() -> SessionState:
 
 def test_mb_tools_contains_core_set() -> None:
     # mb_list_findings was removed when the layered MA memory architecture
-    # landed — the agent now greps the field_reports/ mount directly via
-    # agent_toolset_20260401, making a wrapper tool redundant. The remaining
-    # core set is anti-hallucination + scoring + write + expand.
+    # 着陆 — agent 现在 greps field_re端口/挂载 directly 通过
+    # agent_toolset_20260401，制作包装工具redundant。 re主要
+    # core套装是反幻觉+评分+写字+expand。
     names = {t["name"] for t in MB_TOOLS}
     core = {
         "mb_get_component", "mb_get_rules_for_symptoms",
@@ -57,10 +57,10 @@ def test_every_tool_has_name_description_input_schema() -> None:
 
 
 def test_no_description_exceeds_managed_agents_limit() -> None:
-    # Anthropic Managed Agents reject tool definitions whose description
-    # exceeds 1024 characters; the bootstrap script silently *skips* such
-    # tools, so the agent loses the capability without an obvious failure.
-    # Regression-guard the budget at manifest-load time.
+    # Anthropic Managed Agents re喷射工具定义以及ose描述
+    # 超过 1024 个字符； bootstrap脚本silently *跳过*这样
+    # 工具，因此 agent los 具有无明显故障re 的功能。
+    # Regression-将预算控制在manifest-loadtime。
     MA_DESCRIPTION_LIMIT = 1024
     from api.agent.manifest import PROFILE_TOOLS, PROTOCOL_TOOLS
     overflows = [
@@ -76,7 +76,7 @@ def test_no_description_exceeds_managed_agents_limit() -> None:
 
 def test_manifest_without_board_has_only_mb_profile_protocol_tools() -> None:
     from api.agent.manifest import PROFILE_TOOLS, PROTOCOL_TOOLS, RECALL_TOOLS, STOCK_TOOLS
-    session = SessionState()  # board=None
+    session = SessionState()  # board=无
     manifest = build_tools_manifest(session)
     names = {t["name"] for t in manifest}
     expected = (
@@ -123,7 +123,7 @@ def test_consult_specialist_absent_from_direct_mode_manifest() -> None:
     names_with_board = {t["name"] for t in build_tools_manifest(_session_with_board())}
     assert "consult_specialist" not in names_no_board
     assert "consult_specialist" not in names_with_board
-    # CONSULT_TOOLS still defined in the module (consumed by bootstrap_managed_agent.py)
+    # CONSULT_TOOLS 仍在模块中定义（由 bootstrap_managed_agent.py 使用）
     assert any(t["name"] == "consult_specialist" for t in CONSULT_TOOLS)
 
 

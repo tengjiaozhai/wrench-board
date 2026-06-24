@@ -1,27 +1,27 @@
-// Diagnostic chat — agent markdown rendering + clickable refdes/net chips
-// (Phase D.6 extraction from llm.js). Takes the agent's raw text, renders it
-// through marked + DOMPurify (or a plain-text fallback when the CDN is absent),
-// then walks the result and turns board-validated refdes / net tokens into
-// clickable chips that drive the boardview. No module state.
+// 诊断ostic 聊天 — agent markdown rendering + clickable refdes/net chips
+// （Phase D.6 外部action from llm.js）。获取agent的原始文本，renders它
+// 通过 marked + DOMPurify （或en CDN 是 absent 的纯文本后备），
+// then 遍历 result 并将 board 验证的 refdes / net token 转换为
+// 驱动boardview的click可用chip。无模块状态。
 //
-// Permanent coupling: reads window.Boardview (the classic non-ESM renderer
-// bridge — see CLAUDE.md "Permanent globals") to validate tokens and to act on
-// chip clicks. marked / DOMPurify are global CDN scripts, referenced bare.
+// Permanent耦合：re广告窗口。Boardview（经典的非ESMrenderer
+// 桥 — 请参阅 CLAUDE.md“Permanent 全局变量”）来验证 tokens 并采取行动
+// chipclick秒。 marked / DOMPurify are 全局 CDN 脚本，referenced bare。
 
 import { escapeHtml as escapeHTML } from '../../../shared/dom.js';
 import { repairHash, parseRoute } from '../../../router.js';
 import { getRepairId } from '../../../shared/context.js';
 
-// Regex shapes. Kept loose — the semantic filter is the Boardview lookup.
+// 正则表达式形状。保留 loose — 语义过滤器是 Boardview 查找。
 const RE_REFDES = /\b[A-Z]{1,3}\d{1,4}\b/g;
-// Nets: common naming conventions used in iPhone / Mac / Pi schematics.
-// Over-matches on purpose; Boardview.hasNet is the truth gate.
+// Nets：iPhone / Mac / Pi schematics 中使用的命名转换entions 的mm。
+// purpose 上的比赛过多； Boardview.hasNet 是真理之门。
 const RE_NET = /\b(?:PP_[A-Z0-9_]+|[PN]P_[A-Z0-9_]+|L\d{1,3}|VCC(?:_[A-Z0-9_]+)?|VDD(?:_[A-Z0-9_]+)?|AVDD(?:_[A-Z0-9_]+)?|DVDD(?:_[A-Z0-9_]+)?|GND(?:_[A-Z0-9_]+)?|[A-Z][A-Z0-9_]{3,})\b/g;
 const RE_UNKNOWN_REFDES = /⟨\?([A-Z]{1,3}\d{1,4})⟩/g;
 
-// Parse markdown → sanitize → walk text nodes → replace validated tokens
-// with clickable chips. If marked / DOMPurify aren't on the page, fall back
-// to plain text (defensive: network hiccup loading the CDN).
+// 解析 markdown → sanitize → 遍历文本节点 → re放置经过验证的 tokens
+// 与 clickable chips。如果 marked / DOMPurify aren 不在页面上，则后退
+// 为纯文本（defensive：network hiccup loading CDN）。
 export function renderAgentMarkup(container, text) {
   let html;
   if (typeof marked !== "undefined" && typeof DOMPurify !== "undefined") {
@@ -37,9 +37,9 @@ export function renderAgentMarkup(container, text) {
   decorateChipsIn(container);
 }
 
-// Walk all text nodes under `root` and replace validated refdes / net
-// tokens with clickable chips, plus unknown-refdes ⟨?U999⟩ with amber
-// span. Text inside <code> is skipped (agent's verbatim intent).
+// 遍历 `root` 和 replace 验证的 refdes / net 下的所有文本节点
+// tokens 与 clickable chips，加上未知-refdes ⟨?U999⟩ 与 amber
+// 跨度。 <code> 内的文本被跳过（agent 的逐字 intent）。
 function decorateChipsIn(root) {
   const hasBoard = !!(window.Boardview && window.Boardview.hasBoard && window.Boardview.hasBoard());
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
@@ -72,7 +72,7 @@ function decorateOneTextNode(textNode, hasBoard) {
     }
   }
   if (matches.length === 0) return;
-  // Resolve overlaps: earliest-start first, ties broken by longest-wins.
+  // 解决重叠问题：最早开始的优先，最长胜利打破en的平局。
   matches.sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
   const cleaned = [];
   let cursor = 0;
@@ -92,21 +92,21 @@ function decorateOneTextNode(textNode, hasBoard) {
   textNode.parentNode.replaceChild(frag, textNode);
 }
 
-// Chip-click target: switch the main view to #pcb if we're not already there,
-// then run the boardview action. The panel is push-mode so the board shows
-// to the left while the chat stays visible on the right (420 px strip). When
-// we have to navigate, wait two animation frames so the section becomes
-// visible and brd_viewer's ResizeObserver sees non-zero canvas dimensions —
-// otherwise the focus pan would compute against a 0×0 canvas and end up off
-// screen (the ResizeObserver now flushes any pending focus on its own, but
-// the nav-then-apply ordering also lets non-focus actions see the real DOM).
+// Chip-click目标：如果我们're不是readyre，则将主视图切换到#pcb，
+// then 运行boardview action。面板为推送模式，因此 board 显示
+// 在左侧，聊天在右侧保持可见（420 px 条）。瓦en
+// 我们必须导航，等待两个动画frames，这样该部分就变成了
+// 可见且 brd_viewer 的 ResizeObserver 看到非零 canvas 暗淡ensions —
+// 否则 focus 平移将针对 0×0 canvas 和 end 进行计算
+// screen（ResizeObserver现在会自行刷新任何 pending focus，但是
+// nav-then-apply 排序还可以让非 focus action 看到real DOM）。
 function gotoBoardviewThen(fn) {
   const route = parseRoute();
   if (route.level === "repair" && route.vue === "pcb") {
     fn();
     return;
   }
-  // Navigate to the pcb vue of the active repair (canonical hash route).
+  // 导航到活动 repair 的 pcb vue（规范哈希路由）。
   const id = route.level === "repair" ? route.id : getRepairId();
   if (id) window.location.hash = repairHash(id, "pcb");
   requestAnimationFrame(() => requestAnimationFrame(fn));

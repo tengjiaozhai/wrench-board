@@ -29,9 +29,9 @@ async def test_cam_capture_full_round_trip(tmp_path: Path):
     ws = MagicMock()
     ws.send_json = AsyncMock()
 
-    # Schedule the frontend "response" to arrive after dispatch starts.
+    # 安排 frontend“re响应”在调度开始后到达。
     async def simulate_frontend():
-        # Wait for the dispatch to register a pending capture.
+        # 等待调度re注册pending capture。
         for _ in range(50):
             if session.pending_captures:
                 break
@@ -63,21 +63,21 @@ async def test_cam_capture_full_round_trip(tmp_path: Path):
         timeout_s=2.0,
     )
 
-    # WS push happened (capture request sent to frontend)
+    # WS 推送 happened（capture request sent 到 frontend）
     ws.send_json.assert_awaited()
     pushed = ws.send_json.call_args.args[0]
     assert pushed["type"] == "server.capture_request"
     assert "request_id" in pushed
     assert pushed["tool_use_id"] == "sevt_tool123"
 
-    # Persisted on disk
+    # 保留在磁盘上
     macros = list((tmp_path / "iphone-x" / "repairs" / "R1" / "macros").glob("*_capture.jpg"))
     assert len(macros) == 1
 
-    # Files API was called
+    # 文件API被调用
     client.beta.files.upload.assert_awaited_once()
 
-    # Tool result sent back to MA
+    # 工具re结果ent返回MA
     client.beta.sessions.events.send.assert_awaited_once()
     send_call = client.beta.sessions.events.send.call_args
     sent = (send_call.kwargs.get("events")
@@ -91,5 +91,5 @@ async def test_cam_capture_full_round_trip(tmp_path: Path):
     text = [c for c in event["content"] if c.get("type") == "text"]
     assert text and "HD USB Camera" in text[0]["text"]
 
-    # Future cleaned up
+    # 富图re清理完毕
     assert len(session.pending_captures) == 0

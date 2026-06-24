@@ -38,16 +38,16 @@ async def test_upload_macro_persists_and_injects_user_message(tmp_path: Path):
         frame=frame,
     )
 
-    # Persisted to disk
+    # 持久化到磁盘
     macros_dir = tmp_path / "iphone-x" / "repairs" / "R1" / "macros"
     files = list(macros_dir.glob("*_manual.jpg"))
     assert len(files) == 1
     assert files[0].read_bytes() == bytes_data
 
-    # Files API was called
+    # 文件API被调用
     client.beta.files.upload.assert_awaited_once()
 
-    # MA session received the user.message with image block
+    # MA会话re收到带有图像块的user.message
     client.beta.sessions.events.send.assert_awaited_once()
     send_call = client.beta.sessions.events.send.call_args
     events = (send_call.kwargs.get("events")
@@ -64,7 +64,7 @@ async def test_upload_macro_persists_and_injects_user_message(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_upload_macro_rejects_oversized_payload(tmp_path: Path):
     session = SessionState()
-    # 10 MB of bytes → exceeds the 5 MB cap
+    # 10 MB 字节 → 超过 5 MB 上限
     big_bytes = b"\x00" * (10 * 1024 * 1024)
     frame = {
         "type": "client.upload_macro",

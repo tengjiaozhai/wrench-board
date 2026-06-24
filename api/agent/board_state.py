@@ -1,21 +1,21 @@
-"""Per-repair persistence + replay of the boardview overlay state.
+"""每次修复持久性+boardview覆盖状态的重播。
 
-The chat replay (managed runtime) re-emits agent text + tool_use events
-from MA's event store, but it never re-runs `dispatch_bv` — so the
-visual side-effects (highlights, focus, annotations, dim, layer flip)
-that those tool calls produced are gone the moment the WS reconnects.
-The tech reopens the panel and the board is bare even though the chat
-shows "I highlighted U7 for you".
+聊天回放（managed运行时）重新emit代理文本+tool_use事件
+来自 MA 的事件存储，但它永远不会重新运行 `dispatch_bv` — 所以
+视觉副作用（突出显示、焦点、注释、暗淡、图层翻转）
+一旦 WS 重新连接，产生的那些工具调用就会消失。
+技术人员重新打开面板，即使聊天，面板也是空的
+显示“我为你突出显示了 U7”。
 
-Fix: snapshot the SessionState's overlay fields to
-`memory/{slug}/repairs/{repair_id}/board_state.json` after every bv_*
-mutation, and on WS reopen replay the snapshot as a sequence of
-`boardview.*` events to brd_viewer. End result: refresh the page and
-the board shows up exactly as the agent left it.
+修复：将 SessionState 的覆盖字段快照为
+每个bv_*之后`内存/{slug}/repairs/{repair_id}/board_state.json`
+突变，并在 WS 上重新将快照重放为一系列
+brd_viewer 的“boardview.*”事件。最终结果：刷新页面并
+该板的显示与特工离开时的完全一样。
 
-State is keyed per-repair, not per-conv: the device is the same across
-conversations of a repair, and the tech's mental model is "what I see
-on the board" — not "what conv I'm currently in".
+状态是按修复而不是按转换进行键控的：设备在整个过程中是相同的
+维修对话，技术人员的心理模型是“我所看到的”
+在董事会上”——而不是“我目前所在的会议”。
 """
 
 from __future__ import annotations
@@ -38,14 +38,14 @@ def _state_path(
     repair_id: str,
     conv_id: str | None,
 ) -> Path:
-    """Path for the board overlay snapshot.
+    """Path 用于板覆盖快照。
 
-    Conv-scoped when `conv_id` is given (the desirable shape: each chat
-    thread gets its own canvas, so opening a fresh conv shows a clean
-    board even though another conv on the same repair has annotations
-    and arrows). Falls back to the repair-root location when no conv id
-    is provided — preserves backward compat with snapshots written
-    before the per-conv refactor.
+    当给出`conv_id`时，Conv范围（理想的形状：每个聊天
+    线程有自己的画布，因此打开一个新的转换会显示一个干净的
+    即使同一维修中的另一个转换有注释
+    和箭头）。当没有转换 ID 时回退到修复根位置
+    提供 - 保留与写入的快照的向后兼容性
+    在每个转换重构之前。
     """
     base = memory_root / device_slug / "repairs" / repair_id
     if conv_id:
@@ -61,19 +61,39 @@ def save_board_state(
     session: SessionState,
     conv_id: str | None = None,
 ) -> None:
-    """Snapshot the session's overlay state to disk. Best-effort — never
-    blocks the WS path on a write failure (logs at warning).
+    """将会话的覆盖状态快照到磁盘。尽最大努力——从不
+    写入失败时阻止WS路径（警告时记录）。
 
-    Anonymous sessions (no repair_id) skip silently — without a repair
-    there's no place to scope the snapshot.
+    匿名会话（无 repair_id）静默跳过 — 无需修复
+    没有地方可以确定快照的范围。
     """
     if not repair_id:
         return
     snapshot = session.serialize_view()
-    # Cheap empty-state shortcut — no point persisting an empty overlay
-    # over an empty file. Also avoids a noisy ENOENT->mkdir->write cycle
-    # on every WS open of a fresh repair where the agent hasn't called
-    # any bv_* yet.
+    # 廉价的空状态快捷方式——没有必要保留一个空的覆盖层
+
+
+
+
+
+    # 覆盖一个空文件。还避免了嘈杂的 ENOENT->mkdir->write 周期
+
+
+
+
+
+    # 每次 WS 进行新维修且代理商尚未致电时
+
+
+
+
+
+    # 还没有任何 bv_* 。
+
+
+
+
+
     if (
         snapshot["layer"] == "top"
         and not snapshot["highlights"]
@@ -106,16 +126,16 @@ def load_board_state(
     repair_id: str | None,
     conv_id: str | None = None,
 ) -> dict[str, Any] | None:
-    """Read a previously-saved snapshot for this conv, or None.
+    """读取此转换之前保存的快照，或无。
 
-    Strictly per-conv when `conv_id` is given (no legacy fallback): a
-    fresh conversation MUST land on a clean board, even if a sibling
-    conv on the same repair has a populated overlay. Without this, the
-    "+ Nouvelle conversation" path inherited annotations/arrows from
-    whichever conv last touched the board.
+    当给出 `conv_id` 时严格按转化（无遗留后备）：
+    新的对话必须落在干净的板上，即使是兄弟姐妹
+    同一修复上的 conv 有一个填充的覆盖层。如果没有这个，
+    “+Nouvelle对话”路径继承注释/箭头
+    以最后接触黑板的 CV 为准。
 
-    The repair-root legacy path is only consulted when no conv_id is
-    supplied at all (anonymous WS, mostly tests).
+    仅当没有 conv_id 时才参考修复根遗留路径
+    完全提供（匿名WS，主要是测试）。
     """
     if not repair_id:
         return None
@@ -133,18 +153,23 @@ def load_board_state(
 
 
 async def replay_board_state_to_ws(ws: Any, snapshot: dict[str, Any]) -> int:
-    """Push the boardview events that reconstruct `snapshot` to the WS.
+    """将重建“快照”的boardview事件推送到WS。
 
-    Order matters: layer/visibility/filter first (skeleton), then
-    highlights, then annotations/arrows, then dim_unrelated last (it
-    operates on the just-set highlights). Returns the count of events
-    sent so the caller can log / decide whether to surface anything.
+    顺序很重要：首先是图层/可见性/过滤器（骨架），然后
+    突出显示，然后注释/箭头，最后是暗淡不相关（它
+    对刚刚设置的亮点进行操作）。返回事件的计数
+    已发送，以便调用者可以记录/决定是否显示任何内容。
     """
     if not isinstance(snapshot, dict):
         return 0
     sent = 0
 
-    # Layer flip — only when it diverges from the default top.
+    # 图层翻转 - 仅当它偏离默认顶部时。
+
+
+
+
+
     layer = snapshot.get("layer")
     if layer == "bottom":
         await ws.send_json({
@@ -154,7 +179,12 @@ async def replay_board_state_to_ws(ws: Any, snapshot: dict[str, Any]) -> int:
         })
         sent += 1
 
-    # Layer visibility — only push when one side is hidden.
+    # 图层可见性 — 仅当一侧隐藏时才推送。
+
+
+
+
+
     lv = snapshot.get("layer_visibility") or {}
     for side in ("top", "bottom"):
         visible = lv.get(side, True)
@@ -166,7 +196,12 @@ async def replay_board_state_to_ws(ws: Any, snapshot: dict[str, Any]) -> int:
             })
             sent += 1
 
-    # Filter by type — text-only on the brd renderer.
+    # 按类型过滤 — brd 渲染器上的纯文本。
+
+
+
+
+
     filter_prefix = snapshot.get("filter_prefix")
     if filter_prefix:
         await ws.send_json({
@@ -175,11 +210,36 @@ async def replay_board_state_to_ws(ws: Any, snapshot: dict[str, Any]) -> int:
         })
         sent += 1
 
-    # Component highlights — single batched event so the renderer applies
-    # them in one pass (additive=False = replace existing on the client).
-    # Color carried through from the saved overlay so warn/amber tags survive
-    # the reload (the previous flat-accent version repainted everything cyan
-    # and silently dropped the agent's amber "risky part" semantics).
+    # 组件亮点 - 单个批处理事件，以便渲染器应用
+
+
+
+
+
+    # 一次性完成它们（additive=False = 替换客户端上现有的）。
+
+
+
+
+
+    # 颜色从保存的覆盖层中继承，因此警告/琥珀色标签可以保留
+
+
+
+
+
+    # 重新加载（之前的平口音版本将所有内容重新绘制为青色
+
+
+
+
+
+    # 并默默地放弃了代理的琥珀色“风险部分”语义）。
+
+
+
+
+
     highlights = snapshot.get("highlights") or []
     color = snapshot.get("highlight_color") or "accent"
     if color not in ("accent", "warn", "mute"):
@@ -193,11 +253,31 @@ async def replay_board_state_to_ws(ws: Any, snapshot: dict[str, Any]) -> int:
         })
         sent += 1
 
-    # Focus — replay the pan/zoom centred on the last bv_focus target.
-    # `boardview.focus` carries bbox + zoom; the renderer will pan and
-    # apply its highlight pulse animation. Replayed AFTER the bare
-    # highlight so focus's single-target highlight doesn't get clobbered
-    # by the broader set above.
+    # 焦点 — 重播以最后一个 bv_ 焦点目标为中心的平移/缩放。
+
+
+
+
+
+    # `boardview.focus`携带bbox+zoom；渲染器将​​平移并并
+    # 应用其突出显示脉冲动画。裸露之后重播
+
+
+
+
+
+    # 高亮显示，这样焦点的单目标高亮显示就不会被破坏
+
+
+
+
+
+    # 由上面更广泛的集合。
+
+
+
+
+
     last_focused = snapshot.get("last_focused")
     last_bbox = snapshot.get("last_focused_bbox")
     last_zoom = snapshot.get("last_focused_zoom") or 1.4
@@ -207,13 +287,28 @@ async def replay_board_state_to_ws(ws: Any, snapshot: dict[str, Any]) -> int:
             "refdes": last_focused,
             "bbox": last_bbox,
             "zoom": last_zoom,
-            "auto_flipped": False,  # the layer flip event was already emitted above
+            "auto_flipped": False,  # 上面已经发出了图层翻转事件
         })
         sent += 1
 
-    # Net highlight — only the name; pin_refs aren't snapshotted (we'd
-    # need the parsed board to recompute). The renderer can still tag
-    # the net label even without pin overlays.
+    # 网络亮点——只有名字； pin_refs 没有快照（我们
+
+
+
+
+
+    # 需要解析板重新计算）。渲染器仍然可以标记
+
+
+
+
+
+    # 即使没有引脚覆盖，网络标签也是如此。
+
+
+
+
+
     net = snapshot.get("net_highlight")
     if net:
         await ws.send_json({
@@ -223,9 +318,24 @@ async def replay_board_state_to_ws(ws: Any, snapshot: dict[str, Any]) -> int:
         })
         sent += 1
 
-    # Annotations + arrows — re-emit individually so the renderer's
-    # per-id store rebuilds with the same ids the agent originally used
-    # (lets bv_* tool replays line up if the agent later removes them).
+    # 注释 + 箭头 — 单独重新emit，以便渲染器的
+
+
+
+
+
+    # 每个 id 存储使用代理最初使用的相同 id 进行重建
+
+
+
+
+
+    # （如果代理稍后将其删除，则让 bv_* 工具重播排列起来）。
+
+
+
+
+
     for ann_id, ann in (snapshot.get("annotations") or {}).items():
         if not isinstance(ann, dict):
             continue
@@ -252,8 +362,18 @@ async def replay_board_state_to_ws(ws: Any, snapshot: dict[str, Any]) -> int:
         })
         sent += 1
 
-    # Dim unrelated — must come AFTER highlights so the dim mask knows
-    # what's "related" (the just-set highlight set on the renderer side).
+    # 昏暗无关——必须在高光之后出现，以便昏暗蒙版知道
+
+
+
+
+
+    # 什么是“相关的”（渲染器端刚刚设置的突出显示）。
+
+
+
+
+
     if snapshot.get("dim_unrelated"):
         await ws.send_json({"type": "boardview.dim_unrelated"})
         sent += 1

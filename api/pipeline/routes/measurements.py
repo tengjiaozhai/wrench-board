@@ -1,9 +1,8 @@
-"""Measurement journal endpoints — POST + GET under a repair.
+"""测量日志端点 — 修复下的 POST + GET。
 
-Wire-thin shims over `api.tools.measurements.mb_*` so the UI's direct
-clicks share the same persistence + classifier path the agent uses
-through tool calls.
-"""
+`api.tools.measurements.mb_*` 上的细线垫片，因此 UI 是直接的
+点击共享代理使用的相同持久性+分类器路径
+通过工具调用。"""
 
 from __future__ import annotations
 
@@ -33,13 +32,12 @@ async def post_measurement(
     repair_id: str,
     body: MeasurementCreate,
 ) -> dict:
-    """Append a measurement event to the repair journal and auto-classify it.
+    """将测量事件附加到维修日志并自动分类。
 
-    Returns `{recorded, auto_classified_mode, timestamp}`. 400 when the
-    target string fails parse (expected `rail:<name>` or `comp:<refdes>`).
-    WS emission is deliberately skipped here — the tech's direct UI clicks
-    are observed by the agent only when it polls the journal.
-    """
+    返回`{recorded, auto_classified_mode, timestamp}`。 400 当
+    目标字符串解析失败（预期为 `rail:<name>` 或 `comp:<⟦PRESERVE0⟧>`）。
+    这里故意跳过了WS发射——技术的直接用户界面点击
+    仅当代理轮询日志时才会观察到。"""
     settings = get_settings()
     safe_repair_id = _validate_repair_id(repair_id)
     result = _mb_record_measurement(
@@ -65,12 +63,11 @@ async def get_measurements(
     target: str | None = None,
     since: str | None = None,
 ) -> dict:
-    """Return the measurement journal for a repair, newest-first.
+    """返回测量日志进行维修，最新的在前。
 
-    Optional `?target=rail:+3V3` and `?since=<ISO-ts>` query filters.
-    Always returns `{found, measurements}` — `measurements` is empty when
-    the journal has no matching entries.
-    """
+    可选的 `?target=rail:+3V3` 和 `?since=<ISO-ts>` 查询过滤器。
+    始终返回 `{found, measurements}` — `measurements` 为空时
+    该期刊没有匹配的条目。"""
     settings = get_settings()
     safe_repair_id = _validate_repair_id(repair_id)
     return _mb_list_measurements(

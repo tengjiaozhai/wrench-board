@@ -1,12 +1,12 @@
-// Hash-based section router + chrome (topbar crumbs, mode pill, metabar).
-// Owns navigation between the 8 app sections and refreshes the chrome when
-// the active section or current device changes.
+// 基于哈希的部分路由器+chrome（topbar面包屑，模式丸，metabar）。
+// 拥有 en 8 个应用程序部分之间的导航，并且 refreshes chrome when
+// 活动部分或当前ent设备changes。
 
 export const SECTIONS = ["home", "pcb", "schematic", "graphe", "stock", "profile"];
 
-// SECTION_META holds i18n keys instead of literal strings — resolved at
-// render time inside updateChrome(). On locale switch, refreshChrome() is
-// re-invoked through the i18n.onChange hook below.
+// SECTION_META 持有 i18n 键而不是文字字符串 — re 已解决
+// 渲染时间位于 updateChrome() 内。在 locale 开关上，refreshChrome() 是
+// re - 通过下面的i18n.onChange 钩子调用。
 const SECTION_META = {
   home:          {crumbKey: "router.section.home",      mode: {tagKey: "router.mode.journal_tag", subKey: "router.mode.journal_repairs",   color: "cyan"}},
   pcb:           {crumbKey: "router.section.pcb",       mode: {tagKey: "router.mode.tool_tag",    subKey: "router.mode.tool_boardview",    color: "cyan"}},
@@ -16,31 +16,31 @@ const SECTION_META = {
   profile:       {crumbKey: "router.section.profile",   mode: {tagKey: "router.mode.profile_tag", subKey: "router.mode.profile_sub",       color: "cyan"}},
 };
 
-// prettifySlug now lives in shared/dom.js (single source of truth). Imported for
-// internal use (updateChrome) AND re-exported to preserve the public API
-// consumed by main.js and landing.js.
+// prettifySlug 现在位于shared/dom.js（单一事实来源）。进口用于
+// 内部使用（更新Chrome）和re-导出到pre服务公众API
+// 被main.js和landing.js消耗。
 import { prettifySlug } from "./shared/dom.js";
 export { prettifySlug };
 import { setContext, getDeviceSlug, getRepairId } from "./shared/context.js";
 import { getRepair } from "./services/repairs.js";
 
-// ── Phase C: 2-level hash route grammar ──────────────────────────────────
-// Global routes:  #home | #stock | #profile | #landing
-// Repair routes:  #repair/<id>/<vue>  with vue ∈ REPAIR_VUES (default diagnostic)
-// The repair `graph` vue maps to the internal "graphe" section DOM (VUE_TO_SECTION).
-// `?view=md` stays in the REAL query string (before the #) — orthogonal sub-state
-// of the graph vue, read/written by currentViewMode()/applyMemoireMode().
+// ── Phase C：2级带宽路由语法 ──────────────────────────────────
+// 全球航线：#home | #股票| #简介| ＃降落
+// 修复路由：#repair/<id>/<vue> with vue ∈ REPAIR_VUES（默认诊断）
+// 修复 `graph` vue 映射到内部“graphe”部分 DOM (VUE_TO_SECTION)。
+// `?view=md` 保留在 REAL 查询字符串中（在 # 之前re）——正交子状态
+// graph vue、读/写，由 currentViewMode()/applyMemoireMode() 实现。
 export const REPAIR_VUES = ["diagnostic", "pcb", "schematic", "graph"];
 const VUE_TO_SECTION = { diagnostic: "home", pcb: "pcb", schematic: "schematic", graph: "graphe" };
 const GLOBAL_ROUTES = ["home", "stock", "profile", "landing"];
 
 /**
- * Parse window.location.hash into a structured route:
- *   { level: "repair", id, vue }  for #repair/<id>/<vue>
- *   { level: "global", name }     for #home | #stock | #profile | #landing
- * Unknown/empty → { level: "global", name: "home" }. Tolerates a trailing
- * "?view=md" hash-fragment query by splitting it off (view lives in the real
- * query string, but be defensive).
+ * 将window.location.hash解析为结构化路由：
+ * { level: "repair", id, vue } for #repair/<id>/<vue>
+ *#home | { 级别：“全球”，名称 } #stock| #简介| #登陆
+ * 未知/空 → { level: "global", name: "home" }.耐受尾随
+ * "?view=md" 哈希片段分割查询（视图生活真实）
+ * 查询字符串，但必须是防御性的）。
  */
 export function parseRoute() {
   const raw = (window.location.hash || "").replace(/^#/, "");
@@ -55,20 +55,20 @@ export function parseRoute() {
   return { level: "global", name };
 }
 
-/** Build a canonical repair-route hash (#repair/<id>/<vue>). */
+/** 构建规范的修复路由带宽 (#repair/<id>/<vue>)。 */
 export function repairHash(id, vue = "diagnostic") {
   const v = REPAIR_VUES.includes(vue) ? vue : "diagnostic";
   return `#repair/${encodeURIComponent(id)}/${v}`;
 }
 
-// repair_id → device_slug, resolved lazily and cached for the page load.
-// In-app navigations seed this (seedSlugForRepair) so they stay synchronous;
-// only a cold deep-link/reload pays the getRepair round-trip.
+// repair_id→device_slug，re延迟求解并缓存到页面load。
+// 应用内导航种子 this (seedSlugForRepair)，以便它们保持同步；
+// 只有感冒 deep-link/reload 才能支付 getRepair round-trip。
 const _slugByRepair = new Map();
 
-/** Fast-path: seed the slug cache when the slug is already known (home card
- *  click, landing nav, pipeline redirect) so syncContextFromUrl resolves without
- *  a fetch. No-op on falsy id/slug (never caches a bad value). */
+/** 快速路径：在 slug 存储中分布 en slug 已经已知（主卡
+ * 点击、登陆导航、管道重新direct) 所以syncContextFromUrl 重新占用人体工学
+ * fetch。对 false id/slug 不执行任何操作（从不服务器错误值）。*/
 export function seedSlugForRepair(id, slug) {
   if (id && slug) _slugByRepair.set(id, slug);
 }
@@ -85,10 +85,10 @@ async function loadPackSummary(slug) {
   }
 }
 
-// Repair metadata cache for the topbar — keyed by repair_id, populated
-// lazily by ensureRepairMeta on cache miss. Lets the breadcrumb show the
-// human symptom and the session-pill show the start date instead of the
-// raw UUID, without making updateChrome async.
+// 修复 topbar 的元数据缓存 — 由 repair_id 键控，已填充
+// 懒惰地通过ensureRepairMeta在缓存未命中上。让面包屑显示
+// human symptom 和 session-pill 显示开始日期而不是
+// 原始UUID，未进行更新Chromeasync。
 const _repairCache = new Map();
 const _repairCacheInFlight = new Map();
 
@@ -118,7 +118,7 @@ function formatRepairDate(iso) {
   if (!iso) return "…";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "…";
-  // fr-FR formats as "26 avr., 14:32" — drop the comma to read as one phrase.
+  // fr-FR 格式为“26 avr., 14:32” — 将逗号粘贴到一个主板上阅读。
   return _dateFmt.format(d).replace(/,\s*/g, " ");
 }
 
@@ -166,15 +166,15 @@ function packMissingFiles(pack) {
 function updateChrome(section, deviceSlug, pack) {
   const t = (window.t || ((k) => k));
   let meta = SECTION_META[section] || SECTION_META.home;
-  // Home's mode-pill reflects whether a session is active. Without a session,
-  // it reads the journal/repairs default. With a session, it reads "Session"
-  // to signal we're on the dashboard, not the list.
+  // Home 的模式丸re反映会话是否处于活动状态。没有会议，
+  // 它re广告journal/repair的默认值。通过会话，它re广告“会话”
+  // 表示我们're在dashboard上，而不是列表上。
   const activeSession = currentSession();
   if (section === "home" && activeSession) {
     meta = { ...meta, mode: { ...meta.mode, subKey: "router.mode.journal_session" } };
   }
 
-  // Mode pill — static per-section, overridden on Graphe by pack state.
+  // 模式丸 - 每个部分静态，按包状态覆盖 Graphe 上的en。
   let mode = meta.mode;
   if (section === "graphe") {
     if (!deviceSlug) {
@@ -191,12 +191,12 @@ function updateChrome(section, deviceSlug, pack) {
   pill.className = `mode-pill ${mode.color}`;
   document.getElementById("modePillText").textContent = `${t(mode.tagKey)} · ${t(mode.subKey)}`;
 
-  // Repair metadata for the active session — drives the symptom in the
-  // breadcrumb and the start date in the session-pill. Synchronous read;
-  // a cache miss kicks off an async fetch + re-render at the bottom.
+  // 修复活动会话的元数据 — 驱动 symptom
+  // breadcrumb 和会话丸中的开始日期。同步read；
+  // a cache miss 在底部启动 async fetch + re-render。
   const sessionMeta = activeSession ? _repairCache.get(activeSession.repair) : null;
 
-  // Session pill — persistent across sections when a session is active.
+  // 会话药丸 — 持续ent across 会话处于活动状态的部分。
   const sessionPill = document.getElementById("sessionPill");
   if (sessionPill) {
     if (activeSession) {
@@ -218,10 +218,10 @@ function updateChrome(section, deviceSlug, pack) {
     }
   }
 
-  // Breadcrumbs — contextual path: device / symptom / section.
-  // The brand name already lives in the .brand block on the left, so we
-  // don't repeat it here. The symptom comes from the repair metadata; on
-  // cache miss we fall back to the UUID-short and refresh asynchronously.
+  // Breadcrumbs — 上下文路径：device/symptom/section。
+  // 品牌名称 already 位于左侧的 .brand 块中，所以我们
+  // 别re重复他re。 symptom来自fr来自repair元数据；在
+  // 缓存错过了我们回落到UUID-短且异步刷新。
   const crumbs = [];
   if (activeSession) {
     crumbs.push(prettifySlug(activeSession.device));
@@ -236,18 +236,18 @@ function updateChrome(section, deviceSlug, pack) {
   crumbs.push(t(meta.crumbKey));
   renderCrumbs(crumbs);
 
-  // Async upgrade — fetch repair meta on miss, re-render the chrome once
-  // it lands. The cache prevents the recursive call from looping.
+  // 异步升级 - fetchrepair元未命中，re-render chrome一次
+  // 它着陆了。服务器防止递归调用循环。
   if (activeSession && !sessionMeta) {
     ensureRepairMeta(activeSession.repair).then(m => {
       if (m) updateChrome(section, deviceSlug, pack);
     });
   }
 
-  // Metabar — Graphe-only. body.no-metabar pulls .canvas/.home/.stub up.
+  // Metabar——仅限图形。body.no-metabar拉起.canvas/.home/.stub。
   document.body.classList.toggle("no-metabar", section !== "graphe");
-  // Section-specific class so scoped styles (boardview colour config rows in
-  // the Tweaks panel, etc.) can show / hide per active section.
+  // 特定于部分的类，因此范围样式（boardview颜色配置行
+  // 调整面板等）可以显示每个活动部分的 / hide。
   document.body.dataset.section = section;
   if (section !== "graphe") return;
 
@@ -278,30 +278,30 @@ function updateChrome(section, deviceSlug, pack) {
 function refreshChrome(section) {
   const slug = getDeviceSlug();
 
-  // Provisional synchronous update (no pack yet) — prevents FOUC.
+  // 临时同步更新（尚未打包）- prevents FOUC。
   updateChrome(section, slug, null);
 
-  // For Graphe with a device, fetch pack summary and refine.
+  // 对于带有设备的 Graphe，获取包摘要并进行优化。
   if (section === "graphe" && slug) {
     loadPackSummary(slug).then(pack => {
-      // Guard: user may have navigated away while fetch was in flight.
+      // 守卫：用户可能在 hile fetch 飞行时导航离开。
       if (currentSection() === section) updateChrome(section, slug, pack);
     });
   }
 }
 
-// Section DOM key for the current route. Repair vues map through VUE_TO_SECTION
-// (graph→graphe); global routes map to their own section (landing→home DOM, the
-// overlay sits on top). SECTIONS stays the section-DOM-key set used by navigate's
-// guard — distinct from GLOBAL_ROUTES.
+// current 路线的部分 DOM 键。通过VUE_TO_SECTION修复vues地图
+// (graph→graphe);全局路由映射到它们自己的部分（landing→home DOM，
+// overlay 位于顶部）。 SECTIONS 保留导航使用的部分 DOM 键集
+// 守卫 — 与 GLOBAL_ROUTES 不同的 fr。
 export function currentSection() {
   const route = parseRoute();
   if (route.level === "repair") return VUE_TO_SECTION[route.vue];
   return route.name === "landing" ? "home" : route.name;
 }
 
-// Highlight the active rail button by route. In a repair the active key is the
-// vue; globally it's the route name. Buttons carry data-rail (Phase C).
+// 按路线突出显示活动的 rail 按钮。在 repair 中，活动键是
+// 视图；在全球范围内，它是路线名称。按钮带有 data-rail (Phase C)。
 function setActiveRail(route) {
   const active = route.level === "repair" ? route.vue : route.name;
   document.querySelectorAll(".rail-btn").forEach(btn => {
@@ -309,8 +309,8 @@ function setActiveRail(route) {
   });
 }
 
-// Show the rail's global button group outside a repair, the repair group inside.
-// Buttons/separators carry data-rail-level="global|repair"; .hidden is global CSS.
+// 在 repair 外部显示 rail 的全局按钮组，在内部显示 repair 组。
+// 按钮/分隔符带有 data-rail-level="global|repair"； .hidden 是全局CSS。
 function applyRailLevel(route) {
   document.querySelectorAll(".rail [data-rail-level]").forEach(el => {
     el.classList.toggle("hidden", el.dataset.railLevel !== route.level);
@@ -322,12 +322,12 @@ export function navigate(section) {
   const route = parseRoute();
   setActiveRail(route);
   applyRailLevel(route);
-  // Hide all known section DOMs, show the target.
+  // 隐藏所有已知的部分 DOM，显示目标。
   document.getElementById("homeSection").classList.toggle("hidden", section !== "home");
-  // The "graphe" section is a merged Mémoire view — the visible child
-  // (canvas vs memoryBank) is driven by the view mode (graph|md).
-  // When leaving this section, hide both children so they don't leak
-  // into another route.
+  // “graphe”部分是合并的Mémoire视图——可见的child
+  // (canvas vs memoryBank) 是由视图模式 (graph|md) 驱动en。
+  // 离开此部分时，隐藏两个子项，以免泄漏
+  // 进入另一条路线。
   const inMemoire = section === "graphe";
   if (!inMemoire) {
     document.getElementById("canvas").classList.add("hidden");
@@ -341,10 +341,10 @@ export function navigate(section) {
   });
   refreshChrome(section);
   if (section === "pcb") {
-    // brd_viewer.js loads as a deferred module; on first-load navigation
-    // (user hits /#pcb directly) the function may not be defined yet when
-    // navigate() runs from the boot IIFE. Try now, and retry once when
-    // the module is guaranteed to have executed.
+    // brd_viewer.js 作为延迟模块加载；在首次加载导航时
+    // （用户hits /#pcbdirectly）该函数可能尚未定义when
+    // navigate() 从启动 IIFE 运行 fr。现在就尝试，然后re再尝试一次en
+    // 该模块保证已执行。
     const runPcbInit = () => {
       const root = document.getElementById("brdRoot");
       if (root && typeof window.initBoardview === "function") {
@@ -359,25 +359,25 @@ export function navigate(section) {
   }
 }
 
-// `deps.maybeLoadGraph` is injected by main.js (which owns the graph-mount
-// guard) so the view-toggle handler can trigger an idempotent graph reload
-// without reaching through a window.* global — mirrors the mountRepairVue
-// injection.
+// `deps.maybeLoadGraph` 由 main.js 注入（which 拥有 graph-mount
+// Guard），因此视图切换处理程序可以触发 idempotent graph reload
+// 没有 reaching 通过窗口。* 全局 — 镜像 mountRepairVue
+// 注射。
 export function wireRouter({ maybeLoadGraph } = {}) {
-  // NOTE: the hashchange listener lives in main.js (single owner) — it runs the
-  // full async sequence migrateLegacyUrl → syncContextFromUrl → navigate →
-  // mountRoute. Don't add a second navigate() here (it would double-navigate off
-  // a possibly-stale store).
+  // NOTE：hashchange列表ener住在main.js（单一所有者）——它运行
+  // 完整的异步序列 migrateLegacyUrl →syncContextFromUrl → 导航 →
+  // mountRoute。不要添加第二个导航（）here（它会双重导航
+  // pos相当陈旧的斯托re）。
   //
-  // Re-render the topbar chrome (mode pill, breadcrumbs, metabar status text)
-  // when the user toggles EN/FR. The DOM-level [data-i18n] elements are
-  // refreshed by i18n.applyDom; chrome content that is built imperatively
-  // from current section + pack state must be redrawn here.
+  // 重新渲染endertopbar铬（模式丸，breadcrumbs，metabar状态文本）
+  // 当用户切换英语/法语时。 DOM 级别 [data-i18n] 元素是
+  // refre由i18n.applyDom 隐藏；强制构建的 chrome 内容
+  // from current 部分 + 包状态必须在这里重新绘制。
   if (window.i18n && typeof window.i18n.onChange === "function") {
     window.i18n.onChange(() => refreshChrome(currentSection()));
   }
-  // Rail click → route-aware navigation. Global buttons jump to #<name>; repair
-  // vue buttons jump to #repair/<currentId>/<vue> (only when a repair is active).
+  // 轨道交通click→路线-aware导航。全局按钮跳转到#<name>； repair
+  // vue 按钮跳转到 #repair/<currentId>/<vue> （仅当修复某个活动状态时）。
   document.querySelectorAll(".rail-btn[data-rail]").forEach(btn => {
     btn.addEventListener("click", () => {
       const target = btn.dataset.rail;
@@ -390,24 +390,24 @@ export function wireRouter({ maybeLoadGraph } = {}) {
       if (id) window.location.hash = repairHash(id, target);
     });
   });
-  // Toggle buttons: clicking sets the mode + re-applies. The actual
-  // memory-bank data fetch on first entry in md mode is handled by
-  // main.js (which owns loadMemoryBank).
+  // 切换按钮：单击设置模式+重新应用。实际的
+  // md 模式下第一个 en 尝试的memory-bank数据fetch由以下方式处理
+  // main.js（拥有loadMemoryBank）。
   document.querySelectorAll(".view-toggle-btn").forEach(btn => {
     btn.addEventListener("click", () => {
       const mode = btn.dataset.view;
       applyMemoireMode(mode);
-      // On first entry into Brut mode, make sure the memory bank is
-      // populated — loadMemoryBank is idempotent.
+      // 在第一个 en 尝试进入 Brut 模式时，使 sure memory bank 为
+      // 已填充 — loadMemoryBank 为幂等。
       if (mode === "md") {
         import("./memory_bank.js").then(m => m.loadMemoryBank?.());
       } else {
-        // Switching back to Visuel: the canvas just became visible with
-        // real dimensions. Trigger the graph load (idempotent via
-        // _graphLoadedSlug guard in main.js) so layoutNodes + fitToScreen
-        // see correct clientWidth/clientHeight. If we don't do this, a
-        // load attempted while canvas was hidden bails out without
-        // marking the slug mounted, and the view would stay empty.
+        // 将hing切换回Visuel：canvas刚刚变得可见
+        // 真实尺寸ensions。触发graphload（幂等通过
+        // _graphLoadedSlug 守卫在main.js) 所以layoutNodes + fitToScreen
+        // 请参考正确的 clientWidth/clientHeight。如果我们不这样做，a
+        // 加载尝试而canvas是隐藏的保释，没有
+        // 将 slug 标记为已安装，视图将保持为空。
         maybeLoadGraph?.();
       }
     });
@@ -415,8 +415,8 @@ export function wireRouter({ maybeLoadGraph } = {}) {
 }
 
 /**
- * Which memoire view is active, derived from the `view` query param.
- * Defaults to "graph" when absent or invalid.
+ * Which memoire 视图处于活动状态，从“view”查询参数派生出 fr。
+ * 默认为“graph”whenabsent或无效。
  */
 export function currentViewMode() {
   const v = new URLSearchParams(window.location.search).get("view");
@@ -424,16 +424,16 @@ export function currentViewMode() {
 }
 
 /**
- * Apply the memoire view mode — toggle DOM visibility of canvas vs
- * memoryBank, update the toggle-button active state, hide/show the
- * graph-specific filter chips in the metabar, and update the URL's
- * `view` param without reloading the page.
+ * 应用 memoire 视图模式 — 切换 canvas vs 的 DOM 可见性
+ * memoryBank，更新切换按钮活动状态，hide/显示
+ * graph特定过滤器metabar中的chip，并更新URL的
+ * `view` 参数没有 reloading 页面。
  */
 export function applyMemoireMode(mode) {
   mode = mode === "md" ? "md" : "graph";
   document.getElementById("canvas").classList.toggle("hidden", mode !== "graph");
   document.getElementById("memoryBank").classList.toggle("hidden", mode !== "md");
-  // Graph-specific filter chips + search live in .metabar .filters.
+  // 特定于图的过滤器 chips + 在 .metabar .filters 中实时搜索。
   const filtersEl = document.querySelector(".metabar .filters");
   if (filtersEl) filtersEl.classList.toggle("hidden", mode !== "graph");
   document.querySelectorAll(".view-toggle-btn").forEach(btn => {
@@ -441,8 +441,8 @@ export function applyMemoireMode(mode) {
     btn.classList.toggle("active", on);
     btn.setAttribute("aria-pressed", on ? "true" : "false");
   });
-  // Persist the choice in the URL without reloading — replaceState keeps
-  // history clean (toggling back and forth shouldn't pollute back-button).
+  // 保留 URL 中的选择，而不使用 reloading — replaceState 保留
+  // hi故事干净（来回切换不应污染后退按钮）。
   const url = new URL(window.location.href);
   if (mode === "md") {
     url.searchParams.set("view", "md");
@@ -453,11 +453,11 @@ export function applyMemoireMode(mode) {
 }
 
 /**
- * Derive {device, repair} from the current hash route and write it into the
- * store (shared/context.js) — the single read surface for views. For a repair
- * route, resolves the slug from the repair id (cache, else getRepair). For a
- * global route, clears the context. Returns a Promise that settles once the
- * store reflects the route — await it before mounting views on a deep-link.
+ * 从 current 哈希路由导出 {device, repair} fr并将其写入
+ * store (shared/context.js) — 用于视图的单个 read 表面。对于 repair
+ * 路线，re解决slugfromrepairid（缓存，否则getRepair）。对于一个
+ * 全局路由，清除上下文。返回一个 Promise，一旦
+ * store re 改变路线 — await 在 re 在 deep-link 上安装视图之前。
  */
 export async function syncContextFromUrl() {
   const route = parseRoute();
@@ -468,7 +468,7 @@ export async function syncContextFromUrl() {
   let slug = _slugByRepair.get(route.id);
   if (!slug) {
     try {
-      const meta = await getRepair(route.id);   // RepairSummary { device_slug, ... }
+      const meta = await getRepair(route.id);   // RepairSummary { 设备_slug, ... }
       slug = meta?.device_slug || null;
       if (slug) _slugByRepair.set(route.id, slug);
     } catch (err) {
@@ -480,9 +480,9 @@ export async function syncContextFromUrl() {
 }
 
 /**
- * Return the currently active repair session, derived from URL query params.
- * A session is defined by the SIMULTANEOUS presence of ?device= and ?repair=.
- * Re-derived on every call — zero hidden state.
+ * 返回当前ently活动的repair session，派生的from URL查询参数。
+ * 会话由 ?device= 和 ?repair= 的同时 presence 定义。
+ * 每次调用时重新导出 — 零 hidden 状态。
  */
 export function currentSession() {
   const device = getDeviceSlug();
@@ -492,25 +492,25 @@ export function currentSession() {
 }
 
 /**
- * Quit the active session: strip ?device= + ?repair=, hash to #home, close
- * chat panel, re-render the list. Called from the dashboard's Quitter button
- * and the topbar session pill's [×].
+ * 退出活动会话：strip ?device= + ?repair=，散列到#home，close
+ * 聊天面板，列表下方re-ren。从 dashboard 的退出按钮调用 fr
+ * 以及topbar疗程药丸的[×]。
  */
 export async function leaveSession() {
-  // Clear context first so currentSession() reads null immediately.
+  // 首先清除上下文，以便立即执行 currentSession() reads null imm。
   setContext({ device: null, repair: null });
-  // Close the chat panel if open. llmClose is a <button>; if the panel
-  // isn't mounted yet the optional chaining silently skips.
+  // 如果 open，则关闭ose 聊天面板。 llmClose 是一个<按钮>；如果面板
+  // 尚未安装，可选链接 silently 会跳过。
   document.getElementById("llmClose")?.click();
-  // Navigate to the global repairs list. Setting the hash fires hashchange →
-  // main.js's listener re-syncs context + mounts #home. We still drop the
-  // dashboard + show the landing explicitly below in case we were already on
-  // #home (no hashchange fires when the hash is unchanged).
+  // 导航至全局修复列表。设置哈希触发 hashchange →
+  // main.js 的列表ener re-同步上下文 + 安装 #home。我们仍然放弃
+  // dashboard + 在下面明确显示 landing，以防我们re already
+  // #home（没有hashchange触发时，哈希值不变）。
   window.location.hash = "#home";
   navigate("home");
-  // Quitting a session always returns to the landing hero — the tech is
-  // declaring "I'm done with this repair", so the start screen (where they
-  // can pick another device or open a new diagnostic) is the right next step.
+  // 退出会话总是re转向landinghero——技术是
+  // 声明“我已经完成了 this repair”，因此开始 screen（当re 他们
+  // 可以选择另一个设备或操作en一个新的diagnostic）是正确的下一步。
   const { hideRepairDashboard } = await import("./features/repair/diagnostic/dashboard.js");
   hideRepairDashboard();
   const { showLanding } = await import("./features/global/landing/index.js");
@@ -518,10 +518,10 @@ export async function leaveSession() {
 }
 
 /**
- * Rewrite any pre-Phase-C URL into the new grammar, in place (replaceState, no
- * reload). Covers ?device=&repair=#section, ?tool=stock, bare #memory-bank /
- * #graphe. Safe no-op on already-canonical URLs. Keeps view=md in the real query
- * string (Decision A). Call before syncContextFromUrl on boot + each hashchange.
+ * 将任何 pre-Phase-C URL 重写到新的语法中（replaceState，无
+ * reload）。 头部 ?device=&repair=#section、?tool=stock、bare #memory-bank /
+ * #graphe。在已经规范的URL上安全no-op。在真实查询中保留view=md
+ * 字符串 (Decision A)。启动时调用 beforeresyncContextFromUrl + 每个 hashchange。
  */
 export function migrateLegacyUrl() {
   const url = new URL(window.location.href);
@@ -538,21 +538,21 @@ export function migrateLegacyUrl() {
     const sectionToVue = { home: "diagnostic", pcb: "pcb", schematic: "schematic",
                            graphe: "graph", "memory-bank": "graph" };
     const vue = sectionToVue[oldHash] || "diagnostic";
-    if (oldHash === "memory-bank") params.set("view", "md");   // query string (Decision A)
-    seedSlugForRepair(repair, device);                          // we know the slug — skip the fetch
+    if (oldHash === "memory-bank") params.set("view", "md");   // 查询字符串 (Decision A)
+    seedSlugForRepair(repair, device);                          // 我们知道 slug — 跳过 fetch
     params.delete("device"); params.delete("repair");
     url.hash = repairHash(repair, vue);
     changed = true;
   } else if (device && !repair) {
-    // Device-only legacy link (pack browse). No repair to scope to under the new
-    // grammar → send to the global list; the pack is reachable by opening a repair.
+    // 仅限设备的旧版链接（包浏览）。没有repair适用于新的范围
+    // grammar → send 到全局列表；该包可通过操作en操作repair来获得re。
     params.delete("device");
     url.hash = "#home";
     changed = true;
   }
 
-  // Bare legacy section hashes with no repair are no longer canonical routes
-  // (pcb/schematic/graphe/memory-bank are repair-only vues) → fall back to #home.
+  // 没有 repair are 的 Bare 遗留部分哈希不再是规范路由
+  // （pcb/schematic/graphe/memory-bank are Repair-仅限vue）→ 回退到#home。
   const bareHash = (url.hash || "").replace(/^#/, "").split("?")[0].split("/")[0];
   if (bareHash === "memory-bank" || bareHash === "graphe") { url.hash = "#home"; changed = true; }
 

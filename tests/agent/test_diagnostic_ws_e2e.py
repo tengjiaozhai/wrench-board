@@ -29,9 +29,9 @@ from api.main import app
 from api.session.state import SessionState
 
 # ----------------------------------------------------------------------------
-# Fake stream helpers — mirror the shape of client.messages.stream(...) just
-# enough for the direct runtime. Kept local to avoid cross-importing private
-# helpers from test_ws_flow.py.
+# 假 stream 助手 — 镜像 client.messages.stream(...) 的形状
+# en足够directruntime。保留本地以避免 cross-导入私有
+# 来自 test_ws_flow.py 的助手。
 # ----------------------------------------------------------------------------
 
 
@@ -81,8 +81,8 @@ def _stream_text(text: str) -> tuple[list[tuple], MagicMock]:
     stop_ev.type = "content_block_stop"
     stop_ev.index = 0
     events = [(stop_ev, [block])]
-    # usage has to be real ints — cost_from_response runs getattr on this and
-    # the result ends up inside a JSON-encoded turn_cost frame.
+    # 用法必须是 real ints — cost_from_response 在 this 上运行 getattr 并且
+    # result ends 位于JSON-en编码的turn_cost frame中。
     final = MagicMock(content=[block], stop_reason="end_turn", usage=_FAKE_USAGE)
     return events, final
 
@@ -147,7 +147,7 @@ def _patch_runtime(
 
 
 # ----------------------------------------------------------------------------
-# Tests
+# 测试
 # ----------------------------------------------------------------------------
 
 
@@ -239,10 +239,10 @@ def test_ws_diagnostic_sanitizes_unknown_refdes_over_the_wire(
     with TestClient(app) as client, client.websocket_connect(
         "/ws/diagnostic/demo-pi?tier=fast"
     ) as ws:
-        ws.receive_json()  # session_ready
+        ws.receive_json()  # 会话就绪
         ws.send_json({"type": "message", "text": "diagnose"})
 
-        # First frame that is an assistant message.
+        # 第一个fr消息是一条助理消息。
         assistant_text = None
         for _ in range(10):
             frame = ws.receive_json()
@@ -289,11 +289,11 @@ def test_ws_diagnostic_bv_tool_dispatch_emits_board_event(
 
         ws.send_json({"type": "message", "text": "show U7"})
 
-        # Scripted flow emits exactly 5 frames:
-        # turn_cost (stream 1) / tool_use / boardview.highlight /
-        # message (stream 2) / turn_cost (stream 2). Pull them explicitly so
-        # a missing boardview event fails the test fast instead of blocking
-        # forever on receive_json.
+        # 脚本化流程 emit 正好 5 frames：
+        # turn_cost (流 1) / tool_use / boardview.highlight /
+        # 消息（stream 2）/turn_cost（stream 2）。明确地拉动它们
+        # 缺少 boardview event 会导致测试失败 fast 而不是阻塞
+        # forever于receive_json。
         frames = [ws.receive_json() for _ in range(5)]
 
         types = [f.get("type", "") for f in frames]
@@ -308,9 +308,9 @@ def test_ws_diagnostic_bv_tool_dispatch_emits_board_event(
 
 
 # ----------------------------------------------------------------------------
-# Managed Agents runtime — isolate the session_ready + memory-store attach
-# behavior. Mocks stop at _forward_*_to_session so we don't have to fake the
-# full MA event stream; those two tasks are proven out elsewhere.
+# Managed Agents runtime — 隔离 session_ready + 内存存储re 连接
+# 行为。模拟在 _forward_*_to_session 处停止，因此我们不必伪造
+# 完整 MA event stream； ose 两个任务 are proven elsewhere。
 # ----------------------------------------------------------------------------
 
 
@@ -365,8 +365,8 @@ def _patch_managed_runtime(
         staticmethod(_from_device),
     )
 
-    # Capture the kwargs passed to sessions.create so tests can assert the
-    # memory_store resource attachment without needing deep stream mocking.
+    # Capture 将 kwargs 传递给sessions.create，以便测试可以断言
+    # memory_storeresource Attachment，无需deep stream 嘲笑。
     created_kwargs: dict = {}
 
     class _FakeSessions:
@@ -450,9 +450,9 @@ def test_ws_diagnostic_managed_attaches_memory_store_readonly(
 
 
 # ----------------------------------------------------------------------------
-# Repair resumption — direct mode scoped to an existing repair_id. Covers
-# both the fresh-repair path (context_loaded frame emitted once) and the
-# resume path (history_replay_start / per-event frames / history_replay_end).
+# 修复 re 消耗 — direct 模式范围为现有 repair_id。封面
+# fresh-repair 路径（context_loaded frame emitted 一次）和
+# resume 路径 (history_replay_start / 每个事件帧 / History_replay_end)。
 # ----------------------------------------------------------------------------
 
 
@@ -489,12 +489,12 @@ def test_ws_diagnostic_direct_fresh_repair_emits_context_loaded(
         assert ready["repair_id"] == repair_id
         assert ready["conv_id"], "a fresh conversation must be minted"
 
-        # The fresh-repair branch in run_diagnostic_session_direct emits a
-        # `boardview.reset_view` (per-conv canvas wipe — keeps the renderer
-        # from inheriting the previous conv's overlay) followed by the
-        # `context_loaded` signal that gates user input. Drain frames
-        # until we hit context_loaded so this test stays robust to other
-        # bootstrap events the runtime may insert in front later.
+        # run_diagnostic_session_direct emit 中的 fresh-repair 分支
+        # `boardview.reset_view`（每个转换 canvas 擦除 — 保留 renderer
+        # from 继承 pre前一个 conv 的 overlay)，后跟
+        # `context_loaded` 信号控制用户input。排水frames
+        # 直到我们hit context_loaded，所以this测试对其他测试保持稳健
+        # bootstrap events runtime 稍后可能会插入fr。
         ctx = None
         for _ in range(8):
             frame = ws.receive_json()
@@ -517,8 +517,8 @@ def test_ws_diagnostic_direct_replays_prior_conversation(
     memory_root = tmp_path
     _write_repair_meta(memory_root, slug, repair_id, symptom="capture")
 
-    # Seed a conversation via the real helpers so the on-disk layout matches
-    # exactly what the runtime reads back.
+    # 通过 real 助手播种对话，以便磁盘布局匹配
+    # 正是runtimere广告返回的内容。
     conv_id, _created = ensure_conversation(
         device_slug=slug, repair_id=repair_id, conv_id="new",
         tier="fast", memory_root=memory_root,
@@ -550,16 +550,16 @@ def test_ws_diagnostic_direct_replays_prior_conversation(
         assert ready["repair_id"] == repair_id
         assert ready["conv_id"] == conv_id
 
-        # Expected replay sequence (with the per-conv canvas wipe in front):
-        #   boardview.reset_view, history_replay_start, message(user, replay),
-        #   message(assistant, replay), history_replay_end. Filter on the
-        #   chat-history bracket so this stays robust to other bootstrap
-        #   events. Read until the history_replay_end sentinel rather than a
-        #   hardcoded count — the bootstrap event mix evolves (board_state,
-        #   recovery_state, etc.) and a fixed range() hangs on `receive_json()`
-        #   when fewer events arrive.
+        # 预期 replay sequence （在 front 中进行每次转换 canvas 擦除）：
+        #   boardview.reset_view，history_replay_start，消息（用户，replay），
+        #   消息（助理，replay），history_replay_end。过滤器上
+        #   聊天-hi故事括号，因此 this 对其他 bootstrap 保持稳健
+        #   events。阅读直到 history_replay_end sentinel 而不是
+        #   硬编码计数 - bootstrap event 混合演变（board_state，
+        #   recovery_state等）和一个固定的range()挂在`receive_json()`上
+        #   到达的 even 数量为何en 减少。
         all_frames: list[dict] = []
-        for _ in range(20):  # safety cap
+        for _ in range(20):  # 安全帽
             f = ws.receive_json()
             all_frames.append(f)
             if f.get("type") == "history_replay_end":
@@ -580,10 +580,10 @@ def test_ws_diagnostic_direct_replays_prior_conversation(
             if f.get("type") == "message" and f.get("role") == "user"
         )
         assert user_replay["text"] == "what's wrong?"
-        # User messages aren't flagged `replay`: the UI differentiates them
-        # from live input by being inside the replay window (between start
-        # and end frames), not by a per-message flag. Only assistant text
-        # carries replay:true so the streaming renderer doesn't re-animate.
+        # 用户消息 aren 未标记为“replay”：UI 与entiates 它们
+        # fr在replay窗口内直播input（在en开始
+        # 和 end frames），而不是通过每条消息标志。仅辅助文字
+        # 带有 replay:true，所以 streaming renderer 不会 re 动画。
 
         asst_replay = next(
             f for f in frames

@@ -1,10 +1,10 @@
-// Diagnostic chat — session cost accumulator + status-bar readout (Phase D.6
-// extraction from llm.js). Owns the per-session cost state (reset on each
-// reconnect; the backend emits `turn_cost` after every agent inference turn).
-// The module is the single owner of these three counters — llm.js drives it
-// through resetCost() / recordTurnCost() and reads formatted values via fmtUsd.
+// 诊断ostic 聊天 — 会话 cost 累加器 + 状态栏 readout (Phase D.6
+// 外部actionfromllm.js）。拥有每个会话的 cost 状态（re在每个会话上设置）
+// re连接；每 agent 推断ence 回合后，后面end emits `turn_cost`）。
+// 该模块是这些 ree 计数器的唯一所有者 — llm.js 驱动它
+// 通过 resetCost() / recordTurnCost() 和 reads 通过 fmtUsd 格式化值。
 
-// Session cost accumulator — reset on each (re)connect.
+// 会话 cost 累加器 — 在每个 (re) 连接上设置re。
 let sessionCostUsd = 0;
 let sessionTurns = 0;
 let lastTurnCostUsd = 0;
@@ -16,9 +16,9 @@ export function fmtUsd(amount) {
   return amount > 0 ? `<$0.0001` : `$0.00`;
 }
 
-// Render the running total into the status-bar chip (#llmCostTotal). Hidden
-// until the first priced turn lands; "hot" once the session or last turn
-// crosses a spend threshold.
+// 将运行总计 Ren 放入状态栏chip (#llmCostTotal)。希德en
+// 直到第一个定价转弯落地；一旦会话或最后一轮“热”
+// crosses a spend threshold。
 export function updateCostTotal() {
   const el2 = document.getElementById("llmCostTotal");
   if (!el2) return;
@@ -32,16 +32,16 @@ export function updateCostTotal() {
   el2.classList.toggle("hot", sessionCostUsd >= 0.50 || lastTurnCostUsd >= 0.10);
 }
 
-// Zero the counters (new connection = new cost scope). Does NOT repaint — the
-// caller calls updateCostTotal() once after resetting all its other state, to
-// preserve the original single-repaint ordering.
+// 将计数器清零（新连接 = 新 cost 范围）。不会 re 绘画 —
+// 调用者在 re 设置所有其他状态后调用 updateCostTotal() 一次，以
+// pre服务于原始单re油漆订购。
 export function resetCost() {
   sessionCostUsd = 0;
   sessionTurns = 0;
   lastTurnCostUsd = 0;
 }
 
-// Fold a `turn_cost` event into the running total and repaint the chip.
+// 将 `turn_cost` event 折叠到运行总计中并re绘制chip。
 export function recordTurnCost(payload) {
   lastTurnCostUsd = Number(payload.cost_usd || 0);
   sessionCostUsd += lastTurnCostUsd;

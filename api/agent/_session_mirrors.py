@@ -1,7 +1,7 @@
 """用于跟踪从托管生成的 fire-and-forget 镜像任务的帮助程序
 诊断会议。
 
-从``runtime_managed.py`` so the dispatch surface
+从``runtime_managed.py``所以调度表面
 (``tool_dispatch.py``中取出）并且运行时可以引用它而无需形成
 一个导入周期。行为与原始内联定义相比没有变化。"""
 
@@ -21,9 +21,10 @@ class SessionMirrors:
     """跟踪 fire-and-forget 镜像任务并在会话关闭时等待它们。
 
     由托管运行时用来确保``mb_validate_finding``'s
-    ⟦PRESERVE0⟧ MA-store mirror, the ``⟦PRESERVE1⟧`` round-trip, and the
-    auto-seed re-upload are not orphaned by a fast ⟦PRESERVE2⟧ disconnect. The
-    drain timeout is read from ``settings.ma_session_drain_timeout_seconds``。"""
+    ⟦PRESERVE0⟧ MA-store mirror，``⟦PRESERVE1⟧`` 往返，以及
+    自动种子重新上传不会因快速 ⟦PRESERVE2⟧ 断开连接而发生 orphan 。这
+    drain超时从``settings.ma_session_drain_timeout_seconds``读取。
+"""
 
     def __init__(self) -> None:
         self._pending: set[asyncio.Task] = set()

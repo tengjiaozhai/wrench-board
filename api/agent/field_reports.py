@@ -1,24 +1,24 @@
-"""Cross-session memory for the diagnostic agent.
+"""诊断代理的跨会话内存。
 
-Each "field report" captures a confirmed finding from a technician — the refdes
-that was actually at fault, the symptom the client reported, the mechanism, and
-free-form notes. The next diagnostic session on the same device can read these
-back to learn from prior repairs.
+每个“现场报告”都记录了技术人员确认的发现 - refdes
+实际上是哪里出了问题，客户报告的症状，机制，以及
+自由格式的笔记。同一设备上的下一个诊断会话可以读取这些
+回来学习之前的维修经验。
 
-Two backends, same interface:
+两个后端，相同的接口：
 
-- **JSON (always on)** writes one Markdown file per report under
-  `memory/{slug}/field_reports/{timestamp}-{refdes}.md`. Durable, audit-friendly,
-  grep-able, and works without any Anthropic-side feature.
-- **Managed Agents mirror (flag-gated)** additionally pushes the same content
-  to the device's memory store when `settings.ma_memory_store_enabled=True` so
-  the MA runtime can grep it on the `/mnt/memory/` filesystem mount. The JSON
-  file is still written first — MA is a secondary accelerator, never the sole
-  source of truth.
+- **JSON（始终开启）** 将每个报告写入一个 Markdown 文件
+  `内存/{slug}/field_reports/{时间戳}-{refdes}.md`。耐用、易于审计、
+  grep-able，并且无需任何 Anthropic 端功能即可工作。
+- **Managed Agents mirror（标记门控）** 另外推送相同的内容
+  当 `settings.ma_memory_store_enabled=True` 时到设备的内存存储，所以
+  MA 运行时可以在 `/mnt/memory/` 文件系统挂载上 grep 它。 JSON
+  文件仍然先写入 - MA 是辅助加速器，而不是唯一的加速器
+  真相的来源。
 
-The split means cross-session learning is durable via the JSON path and
-transparently accelerated through the MA memory store when the flag is on.
-Zero migration when toggling the flag.
+拆分意味着跨会话学习通过 JSON 路径是持久的，并且
+当标志打开时，通过 MA 内存存储透明地加速。
+切换标志时零迁移。
 """
 
 from __future__ import annotations
@@ -41,10 +41,10 @@ logger = logging.getLogger("wrench_board.agent.field_reports")
 
 @dataclass
 class FieldReport:
-    """One confirmed finding, written to disk as a self-describing Markdown file.
+    """一项已确认的发现，作为自我描述的 Markdown 文件写入磁盘。
 
-    `report_id` is the filename stem (timestamp-refdes slug) so it's trivially
-    dedupable and sortable without parsing YAML/JSON front-matter.
+    `report_id` 是文件名主干（时间戳-refdes slug），所以它很简单
+    dedup可排序且无需解析 YAML/JSON 前端内容。
     """
 
     report_id: str
@@ -94,10 +94,10 @@ _YAML_LINE_RE = re.compile(r"^(\w+):\s*(.*)$")
 
 
 def _parse_report(path: Path) -> FieldReport | None:
-    """Parse a Markdown report back into a FieldReport. Returns None on malformed input.
+    """将 Markdown 报告解析回 FieldReport。对于格式错误的输入，返回 None。
 
-    The frontmatter is the primary source of truth; the prose body is advisory
-    (human-readable, not machine-consumed here).
+    头条新闻是事实的主要来源；散文机构是咨询性的
+    （这里是人类可读的，不是机器消耗的）。
     """
     try:
         raw = path.read_text(encoding="utf-8")
@@ -135,7 +135,7 @@ def _parse_report(path: Path) -> FieldReport | None:
 
 
 def _slug_fragment(text: str, max_len: int = 32) -> str:
-    """URL / filename safe fragment of `text`, trimmed to `max_len`."""
+    """`text` 的 URL / 文件名安全片段，修剪为 `max_len`。”"""
     frag = re.sub(r"[^a-zA-Z0-9._-]+", "-", text.strip().lower())
     frag = re.sub(r"-+", "-", frag).strip("-")
     return (frag or "unknown")[:max_len]
@@ -157,20 +157,20 @@ async def record_field_report(
     session_id: str | None = None,
     memory_root: Path | None = None,
 ) -> dict[str, Any]:
-    """Write a new field report. JSON-first; MA mirror when the flag is on.
+    """撰写新的现场报告。 JSON-第一； MA mirror 当旗帜亮起时。
 
     Returns a status dict — tests and telemetry both key on it. Never raises:
-    MA mirror failure does NOT fail the JSON write; the audit record stands.
+    MA mirror 故障不会导致 JSON 写入失败；审计记录有效。
     """
     settings = get_settings()
     memory_root = memory_root or Path(settings.memory_root)
 
     created_at = datetime.now(UTC)
-    # Filename: ISO timestamp in compact form + refdes slug — sortable and
-    # dedupable. Second resolution is enough; if two reports race at the same
-    # second for the same refdes, the second one overwrites (acceptable — both
-    # carry identical content if they're truly duplicate, and idempotent writes
-    # simplify the MA mirror path too).
+    # File名称：紧凑形式的 ISO 时间戳 + refdes slug — 可排序和
+    # dedup可以。第二个决议就足够了；如果两个报告同时进行
+    # 第二个对于相同的refdes，第二个覆盖（可接受 - 两者
+    # 如果确实重复，则携带相同的内容，并且幂等写入
+    # 也简化了 MA mirror 路径）。
     stamp = created_at.strftime("%Y%m%dT%H%M%SZ")
     report_id = f"{stamp}-{_slug_fragment(refdes)}"
 
@@ -227,7 +227,7 @@ async def _mirror_to_managed_agents(
     report_id: str,
     markdown: str,
 ) -> str:
-    """Mirror one report to the device's MA memory store. Returns a status string."""
+    """将一份报告镜像到设备的 MA 内存存储。返回状态字符串。”"""
     store_id = await ensure_memory_store(client, device_slug)
     if store_id is None:
         return "skipped:no_store"
@@ -256,13 +256,13 @@ def list_field_reports(
     limit: int = 20,
     filter_refdes: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Return reports sorted newest-first, filtered by refdes when supplied.
+    """返回的报告按最新的在前排序，在提供时按 refdes 进行过滤。
 
-    Pure disk read — the JSON-backed path that works without MA access.
-    Used by the `/pipeline/packs/{slug}/findings` HTTP endpoint and as a
-    test helper. The diagnostic agent reads the same content via grep on
-    the FUSE mount (`/mnt/memory/wrench-board-{slug}/field_reports/`)
-    rather than through a wrapper tool.
+    纯磁盘读取 — JSON 支持的路径，无需 MA 访问即可工作。
+    由 `/pipeline/packs/{slug}/findings` HTTP 端点使用并作为
+    测试助手。诊断代理通过 grep on 读取相同的内容
+    FUSE 安装 (`/mnt/memory/wrench-board-{slug}/field_reports/`)
+    而不是通过包装工具。
     """
     settings = get_settings()
     memory_root = memory_root or Path(settings.memory_root)

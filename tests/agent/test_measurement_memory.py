@@ -27,7 +27,7 @@ def test_measurement_event_shape():
         source="ui",
     )
     assert ev.target == "rail:+3V3"
-    assert ev.auto_classified_mode is None  # defaults to None
+    assert ev.auto_classified_mode is None  # 默认为无
 
 
 def test_parse_target_rail():
@@ -73,7 +73,7 @@ def test_auto_classify_rail_overvoltage_as_shorted():
 
 
 def test_auto_classify_rail_explicit_short_note():
-    # near-zero voltage + explicit note='short' promotes dead → shorted.
+    # 接近零电压+明确的注释='短路'促进死→短路。
     assert auto_classify(
         target="rail:+3V3", value=0.0, unit="V", nominal=3.3, note="short"
     ) == "shorted"
@@ -85,12 +85,12 @@ def test_auto_classify_ic_hot():
 
 
 def test_auto_classify_rail_missing_nominal_returns_none():
-    # Can't classify without knowing the expected value.
+    # 在不知道期望值的情况下无法分类。
     assert auto_classify(target="rail:+3V3", value=2.8, unit="V", nominal=None) is None
 
 
 def test_auto_classify_unknown_target_kind_returns_none():
-    # Pin-level measurements don't auto-classify to component modes.
+    # 引脚级别 measurement 不会自动分类为 component 模式。
     assert auto_classify(target="pin:U7:3", value=0.8, unit="V", nominal=3.3) is None
 
 
@@ -159,7 +159,7 @@ def test_compare_measurements(tmp_path: Path):
 
 def test_synthesise_observations_dedup_latest(tmp_path: Path):
     mr = tmp_path / "memory"
-    # Same target measured twice — latest wins.
+    # 相同的目标测量了两次red——最新的胜利。
     append_measurement(
         memory_root=mr, device_slug="d", repair_id="r",
         target="rail:+3V3", value=2.87, unit="V", nominal=3.3, source="ui",
@@ -175,7 +175,7 @@ def test_synthesise_observations_dedup_latest(tmp_path: Path):
     obs = synthesise_observations(
         memory_root=mr, device_slug="d", repair_id="r",
     )
-    # Latest rail mode = alive (3.29V ≈ 3.3V).
+    # 最新rail模式=活动（3.29V ≈ 3.3V）。
     assert obs.state_rails.get("+3V3") == "alive"
     assert obs.state_comps.get("Q17") == "hot"
     assert obs.metrics_rails["+3V3"].measured == 3.29
@@ -195,7 +195,7 @@ def test_compare_measurements_insufficient_returns_none(tmp_path: Path):
         memory_root=mr, device_slug="d", repair_id="r",
         target="rail:+3V3",
     )
-    assert diff is None  # only one measurement — no before/after
+    assert diff is None  # 只有一个 measurement — 没有之前re/之后
 
 
 def test_rail_nominal_voltage_with_standby_note_classifies_stuck_on():
@@ -209,7 +209,7 @@ def test_rail_nominal_voltage_with_standby_note_classifies_stuck_on():
 
 def test_rail_nominal_voltage_with_standby_keywords():
     """Test various standby-like keywords trigger stuck_on classification."""
-    # English variants
+    # Error 500 (Server Error)!!1500.That’s an error.There was an error. Please try again later.That’s all we know.
     assert auto_classify(
         target="rail:+3V3", value=3.3, unit="V", nominal=3.3, note="standby"
     ) == "stuck_on"
@@ -219,7 +219,7 @@ def test_rail_nominal_voltage_with_standby_keywords():
     assert auto_classify(
         target="rail:+3V3", value=3.3, unit="V", nominal=3.3, note="sleep"
     ) == "stuck_on"
-    # French variants
+    # French变体
     assert auto_classify(
         target="rail:+3V3", value=3.3, unit="V", nominal=3.3, note="veille"
     ) == "stuck_on"
@@ -275,7 +275,7 @@ def test_end_to_end_journal_drives_hypothesize(tmp_path: Path):
     assert obs.state_rails == {"+3V3": "dead", "+5V": "alive"}
     assert obs.metrics_rails["+3V3"].measured == 0.02
 
-    # Minimal graph where U12 sources +3V3 and consumes +5V (like MNT).
+    # 最小 graph 当re U12 提供 +3V3 并消耗 +5V（如 MNT）。
     eg = ElectricalGraph(
         device_slug="demo",
         components={

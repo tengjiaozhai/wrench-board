@@ -277,7 +277,7 @@ def test_build_ctx_tag_includes_label_and_initial_complaint(tmp_path):
     # 措辞故意是被动的——“initial_complaint”（不是“symptom”）
     # 并引用，因此 agent re 将其广告为摄入表元数据，而不是作为
     # fresh symptom 会触发 re 的声明
-    # mb_get_rules_for_symptoms。
+    # mb_获取症状的规则。
     assert (
         tag
         == '[ctx · device=iPhone X (iphone-x) · initial_complaint="pas de boot, écran noir"]'

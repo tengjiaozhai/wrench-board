@@ -7,8 +7,7 @@ injected into the system prompt; the caller gates it on "no graph for this board
 
 Best-effort: any registry/filesystem hiccup returns None — a missing hint must
 never disturb a session. The sibling boards stay DISTINCT (suggestion, never a
-merge): the line tells the agent to cross-check, not to trust blindly.
-"""
+merge): the line tells the agent to cross-check, not to trust blindly."""
 from __future__ import annotations
 
 import logging
@@ -19,24 +18,24 @@ from api.pipeline.device_registry import find_cousin_packs, get_device_registry_
 
 logger = logging.getLogger("wrench_board.agent.cousin_hint")
 
-# How many siblings to name (graph-bearing first); keep the line short.
+# 要说出多少个兄弟姐妹的名字（首先是图表）；保持线路短。
 _MAX_COUSINS = 3
 
 
 async def build_cousin_line(device_slug: str) -> str | None:
-    """One-line sibling-fallback hint for ``device_slug``, or None when there is
-    no same-family cousin pack with usable data."""
+    """``⟦PRESERVE0⟧`` 的单行兄弟后备提示，或者当存在时为 None
+    没有包含可用数据的同系表兄弟包。"""
     try:
         memory_root = Path(get_settings().memory_root)
         store = get_device_registry_store(memory_root)
         cousins = await find_cousin_packs(store, memory_root, device_slug)
-    except Exception:  # noqa: BLE001 - best-effort UX, never disturb the session
+    except Exception:  # noqa：BLE001 - best-effort UX，切勿打扰会话
         logger.warning("[CousinHint] lookup failed for %r", device_slug, exc_info=True)
         return None
     if not cousins:
         return None
 
-    # Graph-bearing siblings are the most useful — list them first.
+    # 带图的兄弟姐妹是最有用的——首先列出它们。
     cousins.sort(key=lambda c: not c.get("has_graph"))
     named = []
     for c in cousins[:_MAX_COUSINS]:

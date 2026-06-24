@@ -1,16 +1,16 @@
-// Single source of truth for the mascot's animation states.
+// 吉祥物动画状态的单一事实来源。
 //
-// `mascot.js` reads this to validate states; the gallery
-// (`web/mascot_gallery.html`) reads the SAME list to render one preview card
-// per animation. Add a state here + its keyframes in `web/styles/mascot.css`
-// and it appears automatically everywhere — no duplication.
+// `mascot.js` 读取此内容以验证状态；画廊
+// (`web/mascot_gallery.html`) 读取相同的列表来渲染一张预览卡
+// 每个动画。在此处添加状态+其关键帧在`web/styles/mascot.css`中
+// 它会自动出现在任何地方——没有重复。
 //
-//   id    : the suffix used in the `is-<id>` CSS class (and setMascotState arg)
-//   label : human name shown on the gallery card
-//   kind  : "loop"     — runs forever (idle, thinking, scanning…)
-//           "oneshot"  — plays once and rests (success, error, celebrating…);
-//                        the gallery gets a Replay button for these
-//   blurb : one-line description of what the animation does
+// id : `is-<id>` CSS 类中使用的后缀（和 setMascotState arg）
+// label : 画廊卡上显示的人名
+// kind : "loop" — 永远运行（空闲、thinking、扫描…）
+// “oneshot”——播放一次然后休息（成功、错误、庆祝……）；
+// 画廊有一个重播按钮
+// 简介：一行描述动画的作用
 
 export const MASCOT_STATES = [
   { id: "idle",        label: "Repos",        kind: "loop",    blurb: "Respiration + clignements" },
@@ -25,7 +25,7 @@ export const MASCOT_STATES = [
   { id: "danger",      label: "Alerte",       kind: "oneshot", blurb: "Corps écarlate, shake, yeux en croix" },
 ];
 
-// Convenience lookups derived from the list above.
+// 源自上面列表的便捷查找。
 export const MASCOT_STATE_IDS = MASCOT_STATES.map((s) => s.id);
 export const MASCOT_LOOP_IDS = MASCOT_STATES.filter((s) => s.kind === "loop").map((s) => s.id);
 export const MASCOT_ONESHOT_IDS = MASCOT_STATES.filter((s) => s.kind === "oneshot").map((s) => s.id);

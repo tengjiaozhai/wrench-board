@@ -59,7 +59,7 @@ async def test_seed_no_op_when_flag_disabled(pack_dir, monkeypatch):
     )
 
     assert all(v == "skipped:flag_disabled" for v in status.values())
-    # Flag off = no upsert call reaches the wire, period.
+    # 标记关闭 = 没有 upsert 调用 re 会伤害 wire，句号。
     assert calls == []
 
 
@@ -69,7 +69,7 @@ async def test_seed_skipped_when_ensure_memory_store_returns_none(
     monkeypatch.setenv("MA_MEMORY_STORE_ENABLED", "true")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
 
-    # Force ensure_memory_store to return None (SDK down, API denied, etc.).
+    # 强制 ensure_memory_store re关闭（SDK 关闭、API denied 等）。
     async def fake_ensure(_client, _slug):
         return None
 
@@ -133,7 +133,7 @@ async def test_seed_reports_missing_file(pack_dir, monkeypatch):
     monkeypatch.setenv("MA_MEMORY_STORE_ENABLED", "true")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
 
-    # Drop one of the expected files.
+    # 删除预期的文件之一。
     (pack_dir / "rules.json").unlink()
 
     async def fake_ensure(_client, _slug):
@@ -169,7 +169,7 @@ async def test_seed_records_per_file_upsert_failure(pack_dir, monkeypatch):
         nonlocal calls
         calls += 1
         if calls == 2:
-            return None  # mimic the shared helper's failure mode
+            return None  # 模仿 shared 助手的失败re模式
         return "sha_ok"
 
     monkeypatch.setattr("api.agent.memory_seed.upsert_memory", flaky_upsert)
@@ -178,16 +178,16 @@ async def test_seed_records_per_file_upsert_failure(pack_dir, monkeypatch):
     status = await seed_memory_store_from_pack(
         client=client, device_slug="demo-pi", pack_dir=pack_dir
     )
-    # 1 file fails out of len(_SEED_FILES); the rest are seeded.
+    # len(_SEED_FILES) 中有 1 个文件失败； re第一个re种子。
     assert sum(1 for v in status.values() if v == "seeded") == len(_SEED_FILES) - 1
     assert sum(1 for v in status.values() if v.startswith("error:")) == 1
 
 
 # ---------------------------------------------------------------------------
-# Marker I/O tests (Task 1)
+# 标记 I/O 测试（任务 1）
 # ---------------------------------------------------------------------------
 
-from api.agent.memory_seed import (  # noqa: E402
+from api.agent.memory_seed import (  # 点：E402
     _SEED_FILES,
     MARKER_FILENAME,
     read_seed_marker,
@@ -232,7 +232,7 @@ def test_stale_files_no_marker_returns_all_present(tmp_path: Path):
     pack.mkdir()
     (pack / "registry.json").write_text("{}")
     (pack / "rules.json").write_text("{}")
-    # knowledge_graph.json + dictionary.json absent on purpose
+    # knowledge_graph.json + dictionary.json absent 上 purpose
     stale = stale_files_for_pack(pack)
     assert set(stale) == {"registry.json", "rules.json"}
 
@@ -259,13 +259,13 @@ def test_stale_files_partial_drift(tmp_path: Path):
         p = pack / name
         p.write_text("{}")
         files[name] = p.stat().st_mtime
-    # Back-date the marker's rules.json entry by 1 s so the rewrite below is
-    # guaranteed to produce a strictly-newer stat mtime, regardless of the
-    # filesystem's mtime resolution. Deterministic; no wallclock wait.
+    # 将标记的 rules.json en 回溯 1 秒，因此下面的 re 写入为
+    # 保证产生严格更新的统计数据 mtime，re，无论
+    # 文件system的mtimere解决方案。确定性；无需挂钟等待。
     files["rules.json"] = files["rules.json"] - 1.0
     write_seed_marker(pack_dir=pack, store_id="memstore_x", seeded_files=files)
 
-    # Simulate a later pipeline write to rules.json only.
+    # 仅模拟稍后的 pipeline 写入rules.json。
     (pack / "rules.json").write_text('{"rules": []}')
     assert stale_files_for_pack(pack) == ["rules.json"]
 
@@ -308,7 +308,7 @@ async def test_seed_only_files_uploads_subset(tmp_path: Path, monkeypatch):
 
     assert calls == ["/knowledge/rules.json"]
     assert status["/knowledge/rules.json"] == "seeded"
-    # Marker must contain rules.json plus merge with anything previously recorded.
+    # 标记必须包含 rules.json 以及与任何hing pre之前的 re 合并。
     marker = ms_mod.read_seed_marker(pack)
     assert marker["store_id"] == "memstore_xyz"
     assert "rules.json" in marker["files"]
@@ -331,10 +331,10 @@ async def test_seed_only_files_preserves_prior_marker_entries(tmp_path: Path, mo
     for name, _ in ms_mod._SEED_FILES:
         (pack / name).write_text("{}")
 
-    # Pre-populate a marker with mtimes for ALL four files, but back-date
-    # rules.json by 1 s so the rewrite below lands at a strictly-newer mtime
-    # without relying on filesystem timing. The other three entries stay at
-    # "now" — the test's point is that partial re-seed preserves them.
+    # Pre - 使用 mtimes 填充所有四个文件的标记，但回溯日期
+    # rules.json 1 秒，因此下面的 re 写法会达到严格较新的 mtime
+    # 没有re躺在文件sys项目时间。其他ree en尝试入住
+    # “现在”——测试的要点是部分 re 种子 pre 为它们服务。
     prior_mtimes = {name: (pack / name).stat().st_mtime for name, _ in ms_mod._SEED_FILES}
     prior_mtimes["rules.json"] = prior_mtimes["rules.json"] - 1.0
     ms_mod.write_seed_marker(
@@ -359,8 +359,8 @@ async def test_seed_only_files_preserves_prior_marker_entries(tmp_path: Path, mo
         return {}
     monkeypatch.setattr(ms_mod, "list_memory_paths_to_ids", fake_list_ids)
 
-    # Partial re-seed of rules.json only — its current stat mtime is newer
-    # than the (back-dated) marker entry, so the merge path triggers.
+    # 仅 rules.json 的部分 re 种子 — 其 current 统计 mtime 较新
+    # 比（回溯）标记entry，因此合并路径触发。
     (pack / "rules.json").write_text('{"rules": [{"id": "new"}]}')
 
     await ms_mod.seed_memory_store_from_pack(
@@ -370,17 +370,17 @@ async def test_seed_only_files_preserves_prior_marker_entries(tmp_path: Path, mo
 
     marker = ms_mod.read_seed_marker(pack)
     assert marker is not None
-    # All four filenames must still be in the marker.
+    # 所有四个en 电影必须仍位于标记中。
     expected_files = {name for name, _ in ms_mod._SEED_FILES}
     assert set(marker["files"].keys()) == expected_files, (
         f"merge must preserve entries for untouched files; got {set(marker['files'].keys())!r}"
     )
-    # The three untouched files must keep their old mtimes.
+    # 第ree 未触及的文件必须保留其旧的mtime。
     for name in expected_files - {"rules.json"}:
         assert marker["files"][name] == prior_mtimes[name], (
             f"{name} mtime must not change on partial re-seed"
         )
-    # rules.json mtime must have advanced.
+    # rules.json mtime 必须已高级。
     assert marker["files"]["rules.json"] > prior_mtimes["rules.json"]
 
 
@@ -390,7 +390,7 @@ def test_stale_files_handles_legacy_marker_without_files_key(tmp_path: Path):
     pack.mkdir()
     (pack / "registry.json").write_text("{}")
     (pack / "rules.json").write_text("{}")
-    # Legacy marker: no `files` field.
+    # 旧标记：没有“文件”field。
     (pack / "managed.json").write_text(
         '{"memory_store_id": "memstore_legacy", "device_slug": "demo"}'
     )
@@ -409,7 +409,7 @@ async def test_seed_merges_into_legacy_marker(tmp_path: Path, monkeypatch):
     pack.mkdir()
     for name, _ in ms_mod._SEED_FILES:
         (pack / name).write_text("{}")
-    # Legacy marker — no `files` key.
+    # 旧标记 — 没有“files”键。
     (pack / "managed.json").write_text(
         '{"memory_store_id": "memstore_legacy", "device_slug": "demo"}'
     )

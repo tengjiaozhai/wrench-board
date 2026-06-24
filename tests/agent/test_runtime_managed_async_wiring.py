@@ -14,19 +14,19 @@ from pathlib import Path
 import pytest
 
 RUNTIME_PATH = Path(__file__).parent.parent.parent / "api" / "agent" / "runtime_managed.py"
-# After the runtime decomposition the wire-flow patterns live across the
-# ``api.agent.runtime`` sub-package files. The wiring tests still look for
-# the same source markers (`def _emit`, `cam_capture` branch, the
-# post-cancel block); to keep them honest the fixture concatenates every
-# runtime file so a future refactor that drops one of the patterns from
-# ANY of them still trips the assertion.
+# 在 runtime 分解osition 之后，wire 流模式将变为 acros
+# ``api.agent.runtime`` 子包文件。接线测试仍在寻找
+# 相同的源标记（`def _emit`、`cam_capture` 分支、
+# post-取消块）；为了让他们诚实，fixture concatenates 每个
+# runtime 文件，因此 future re 因素会丢弃其中一种模式 from
+# 其中任何一个仍然违背了这一断言。
 RUNTIME_DIR = Path(__file__).parent.parent.parent / "api" / "agent" / "runtime"
-# `_SessionMirrors` was lifted out of ``runtime_managed.py`` into its own
-# module when the dispatch refactor landed (see ``tool_dispatch.py``), so
-# the AST contract test below has to inspect that module directly. The
-# runtime still re-exports the symbol under its legacy name via
-# ``from api.agent._session_mirrors import SessionMirrors as
-# _SessionMirrors`` so existing imports keep working.
+# `_SessionMirrors` 被从 ``runtime_managed.py`` 中提升到自己的
+# 模块 when 调度re因子落地（参见``tool_dispatch.py​​``），所以
+# 下面的 AST 合约测试必须检查该模块directly。这
+# runtime 仍然 re - 通过其旧名称导出符号
+# ``from api.agent._session_mirrors 将 SessionMirrors 导入为
+# _SessionMirrors`` 因此现有的导入继续工作。
 SESSION_MIRRORS_PATH = (
     Path(__file__).parent.parent.parent / "api" / "agent" / "_session_mirrors.py"
 )
@@ -51,7 +51,7 @@ def session_mirrors_tree() -> ast.Module:
 
 
 # ---------------------------------------------------------------------------
-# F1: _emit must NOT call asyncio.create_task on ws.send_json
+# F1：_emit 不得在 ws.send_json 上调用 asyncio.create_task
 # ---------------------------------------------------------------------------
 
 
@@ -61,19 +61,19 @@ def test_emit_uses_session_mirrors_not_bare_create_task(runtime_source: str):
     `asyncio.create_task(ws.send_json(...))`. Bare create_task is the F1
     bug — orphaned task, frame can be dropped on session close.
     """
-    # Locate the _emit closure in the source.
+    # 在源中找到 _emit closure。
     marker = "def _emit(event: dict) -> None:"
     idx = runtime_source.find(marker)
     assert idx != -1, "_emit closure must exist (measurement/validation hook)"
 
-    # Read the few lines after the def to inspect the body.
+    # 阅读 def 后面的几行来检查主体。
     body = runtime_source[idx:idx + 600]
     assert "session_mirrors.spawn(" in body, (
         "F1 regression: _emit must call session_mirrors.spawn(...) so the "
         "ws.send_json task is tracked. Found body:\n" + body
     )
-    # Defensive: bare asyncio.create_task on ws.send_json inside _emit
-    # would re-introduce the orphan-task bug.
+    # Defensive：bareasyncio.create_task位于ws.send_json内_emit
+    # 会re-引入孤儿任务错误。
     body_first_4_lines = "\n".join(body.splitlines()[:5])
     assert "asyncio.create_task(ws.send_json" not in body_first_4_lines, (
         "F1 regression: _emit must NOT call asyncio.create_task(ws.send_json, "
@@ -82,7 +82,7 @@ def test_emit_uses_session_mirrors_not_bare_create_task(runtime_source: str):
 
 
 # ---------------------------------------------------------------------------
-# F2: cam_capture must use session_mirrors.spawn + add a release callback
+# F2：cam_capture必须使用session_mirrors.spawn +添加release回调
 # ---------------------------------------------------------------------------
 
 
@@ -99,7 +99,7 @@ def test_cam_capture_dispatch_tracked_with_release_callback(runtime_source: str)
     idx = runtime_source.find(branch_marker)
     assert idx != -1, "cam_capture dispatch branch must exist"
 
-    # Body of the branch: read until the next `continue` (end of branch).
+    # 分支主体：read 直到下一个“继续”（分支的end）。
     branch_body = runtime_source[idx:idx + 3000]
     end = branch_body.find("continue")
     assert end != -1, "cam_capture branch must end with `continue`"
@@ -125,7 +125,7 @@ def test_cam_capture_dispatch_tracked_with_release_callback(runtime_source: str)
 
 
 # ---------------------------------------------------------------------------
-# F8: post-cancel gather must precede the finally cleanup
+# F8：post-取消gather必须pre放弃最终清理
 # ---------------------------------------------------------------------------
 
 
@@ -152,8 +152,8 @@ def test_post_cancel_per_task_unwind_present_before_finally(
         "in the asyncio.wait orchestration"
     )
 
-    # Inspect the body of the loop to confirm a bounded per-task wait
-    # follows the cancel and that the warning includes the task name.
+    # 检查循环体以确认每个任务等待的有限时间
+    # 取消之后，警告包含任务名称。
     after_cancel = runtime_source[idx:idx + 1200]
     assert "asyncio.wait({task}" in after_cancel, (
         "F1 follow-up regression: missing per-task `asyncio.wait({task}, "
@@ -200,15 +200,15 @@ def test_session_mirrors_class_contract_unchanged(
     assert "spawn" in methods, "SessionMirrors must expose spawn()"
     assert "wait_drain" in methods, "SessionMirrors must expose wait_drain()"
 
-    # spawn must be sync (returns Task), not async — otherwise call sites
-    # that do `mirrors.spawn(...)` without await would silently no-op.
+    # 生成必须是同步的（re转动任务），而不是async——否则调用站点
+    # 没有 await 的 `mirrors.spawn(...)` 将会是 silently no-op。
     spawn = next(n for n in cls.body
                  if isinstance(n, ast.FunctionDef) and n.name == "spawn")
     assert spawn.__class__.__name__ == "FunctionDef", (
         "spawn must be sync (def spawn) so call sites work without await"
     )
 
-    # Importer alias from runtime_managed must still expose the legacy name.
+    # 导入器别名 from runtime_managed 仍必须使用旧名称ose。
     from api.agent._session_mirrors import SessionMirrors
     from api.agent.runtime_managed import _SessionMirrors as _Reexport
 

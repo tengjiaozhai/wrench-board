@@ -80,8 +80,7 @@ async def publish(slug: str, event: dict[str, Any]) -> None:
 
     调用链：create_repair → create_task(_launch) → _run_pipeline_with_events
             → orchestrator emit → _on_event → 本函数
-    消费链：本函数 → queue.put → progress_ws Step F → 浏览器 handleProgressEvent
-    """
+    消费链：本函数→queue.put→progress_ws步骤F→浏览器handleProgressEvent"""
     _history[slug].append(event)
 
     listeners = list(_subscribers.get(slug, ()))

@@ -1,1 +1,1 @@
-"""Post-build QA gates for generated knowledge packs."""
+"""用于生成的知识包的构建后 QA 门。"""

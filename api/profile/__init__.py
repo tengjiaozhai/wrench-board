@@ -1,1 +1,1 @@
-"""Technician profile sub-system."""
+"""技术员档案子系统。"""

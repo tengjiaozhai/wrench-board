@@ -1,4 +1,4 @@
-"""Logging configuration — plain text by default, one handler on stdout."""
+"""日志记录配置 — 默认为纯文本，标准输出上有一个处理程序。"""
 
 from __future__ import annotations
 
@@ -9,10 +9,9 @@ _CONFIGURED = False
 
 
 def configure_logging(level: str = "INFO") -> None:
-    """Install a single stdout handler with a concise format.
+    """安装具有简洁格式的单个标准输出处理程序。
 
-    Idempotent: safe to call multiple times (e.g. on --reload).
-    """
+    幂等：可以安全地多次调用（例如在 --reload 上）。"""
     global _CONFIGURED
     if _CONFIGURED:
         return

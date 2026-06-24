@@ -1,20 +1,19 @@
-"""Exception classes for the bench generator.
+"""工作台生成器的异常类。
 
-Split from the main module so they can be imported without triggering
-the Pydantic + Anthropic import graph in downstream consumers (e.g. a
-CLI that only wants to pretty-print a precondition failure).
-"""
+从主模块中分离出来，这样就可以在不触发的情况下导入它们
+下游消费者中的 Pydantic + Anthropic 导入图（例如
+CLI 只想漂亮地打印前提条件失败）。"""
 
 
 class BenchGeneratorError(Exception):
-    """Base class. Catch this to catch all generator failures."""
+    """基础班。抓住这个来捕捉所有发电机故障。"""
 
 
 class BenchGeneratorPreconditionError(BenchGeneratorError):
-    """Raised before any LLM call when the pack inputs are insufficient.
-    Exit code 2 in the CLI."""
+    """当包输入不足时，在任何 LLM 调用之前引发。
+    CLI 中的退出代码 2。"""
 
 
 class BenchGeneratorLLMError(BenchGeneratorError):
-    """Raised after max_attempts retries on a malformed LLM response.
-    Exit code 3 in the CLI."""
+    """在 max_attempts 次重试格式错误的 LLM 响应后引发。
+    CLI 中的退出代码 3。"""

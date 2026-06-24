@@ -1,8 +1,8 @@
-"""Dispatch router for the bv_* tool family.
+"""为 bv_* 工具系列调度路由器。
 
-Maps the public names (exposed to Claude in the manifest) to the existing
-handlers in api/tools/boardview.py. Each handler returns a dict that may
-contain {ok, summary, event, reason, suggestions}.
+将公共名称（在清单中向 Claude 公开）映射到现有的
+api/tools/boardview.py 中的处理程序。每个处理程序返回一个可能的字典
+包含{ok、摘要、事件、原因、建议}。
 """
 
 from __future__ import annotations
@@ -35,10 +35,10 @@ BV_DISPATCH: dict[str, Callable[..., dict[str, Any]]] = {
 
 
 def dispatch_bv(session: SessionState, name: str, payload: dict[str, Any]) -> dict[str, Any]:
-    """Route a bv_* tool call to its handler. Traps any exception.
+    """将 bv_* 工具调用路由到其处理程序。捕获任何异常。
 
-    Returns {ok: false, reason: "unknown-tool"} if the name isn't in BV_DISPATCH.
-    Returns {ok: false, reason: "handler-exception", error: str(exc)} if the
+    如果名称不在 BV_DISPATCH 中，则返回 {ok: false, Reason: "unknown-tool"}。
+    返回 {ok: false, Reason: "handler-exception", error: str(exc)} 如果
     handler raises (e.g. malformed payload).
     """
     handler = BV_DISPATCH.get(name)

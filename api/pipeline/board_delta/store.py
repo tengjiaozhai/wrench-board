@@ -8,7 +8,7 @@ _UNSAFE = re.compile(r"[^a-z0-9.-]+")
 
 
 def normalize_board_number(raw: str) -> str:
-    """Stable, filesystem-safe key. Lowercase, separators -> '-', strip path bits."""
+    """稳定、文件系统安全的密钥。小写，分隔符 -> '-'，剥离路径位。"""
     s = (raw or "").strip().lower()
     s = _SEP.sub("-", s)
     s = s.replace("..", "")

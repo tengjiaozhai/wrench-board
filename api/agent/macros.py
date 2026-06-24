@@ -1,14 +1,18 @@
 """宏图像的持久性助手。
 
-宏位于``memory/{⟦PRESERVE2⟧}/repairs/{⟦PRESERVE1⟧}/macros/{ts}_{source}.{ext}``.
-Two sources :
+宏位于``memory/{`manual`}/repairs/{`。
+两个来源：
 
-  - ``manual`` : tech drag-dropped or uploaded via the chat panel (Flow A)
-  - ``capture`` : agent called ``⟦PRESERVE0⟧``, frontend snapped via
-    getUserMedia (Flow B)
+  - `}/macros/{ts}_{source}.{ext}``。
+两个来源：
 
-The path layout is mirrored on the frontend's replay route
-(``GET /api/macros/{⟦PRESERVE2⟧}/{⟦PRESERVE1⟧}/{filename}``）。"""
+  - “手册”：通过聊天面板拖放或上传技术（Flow A）
+  -``capture``：代理名为``⟦PRESERVE0⟧``，前端通过
+    获取用户媒体 (Flow B)
+
+路径布局在前端的重放路径上是mirrored
+(``GET /api/macros/{⟦PRESERVE2⟧}/{⟦PRESERVE1⟧}/{文件名}``）。
+"""
 
 from __future__ import annotations
 
@@ -34,12 +38,13 @@ def persist_macro(
     bytes_: bytes,
     mime: str,
 ) -> Path:
-    """在未知 mime 或无效源上写入 ``bytes_`` under ``macros/{ts}_{source}.{ext}`` and return the path.
+    """在未知 mime 或无效源上在 ``macros/{ts}_{source}.{ext}`` 下写入 ``bytes_`` 并返回路径。
 
-    Creates the macros directory if missing. Disambiguates same-second
-    collisions with a numeric suffix.
+    如果缺少，则创建宏 directory。消除同一秒的歧义
+    与数字后缀的冲突。
 
-    Raises :class:`ValueError`。"""
+    引发:class:`ValueError`。
+"""
     if source not in ("manual", "capture"):
         raise ValueError(f"source must be 'manual' or 'capture', got {source!r}")
     ext = _EXT_FROM_MIME.get(mime.lower())
@@ -95,11 +100,12 @@ def build_image_ref(
     repair_id: str,
     source: Source,
 ) -> dict:
-    """在回放时构建``image_ref`` dict that lands in ``messages.jsonl``.
+    """在回放时构建“image_ref”字典，该字典落在“messages.jsonl”中。
 
-    The frontend resolves ``path`` (relative to
-    ``memory/{⟦PRESERVE1⟧}/repairs/{⟦PRESERVE0⟧}/``) via the
-    ``GET /api/macros/{⟦PRESERVE1⟧}/{⟦PRESERVE0⟧}/{filename}``路线。"""
+    前端解析``path``（相对于
+    ``内存/{⟦PRESERVE1⟧}/repairs/{⟦PRESERVE0⟧}/``）通过
+    ``GET /api/macros/{⟦PRESERVE1⟧}/{⟦PRESERVE0⟧}/{文件名}``路线。
+"""
     repair_root = memory_root / slug / "repairs" / repair_id
     relative = path.relative_to(repair_root)
     return {

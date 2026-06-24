@@ -27,10 +27,10 @@ from api.board.model import Board, Layer, Part, Pin, Point
 from api.session.state import SessionState
 
 # ---------------------------------------------------------------------------
-# Doubles — kept self-contained. We re-implement (not import) the FakeWS /
-# FakeStream pair so this file stays decoupled from the helpers in
-# test_ws_flow.py / test_diagnostic_ws_e2e.py (those are private to their
-# modules and could change shape).
+# 双打——保持独立。我们re-implement（不是导入）FakeWS /
+# FakeStream 配对，因此 this 文件与中的助手保持解耦 fr
+# test_ws_flow.py / test_diagnostic_ws_e2e.py（those are私有）
+# 模块并且可以change形状）。
 # ---------------------------------------------------------------------------
 
 
@@ -169,8 +169,8 @@ def _patch_settings(
         ma_stream_event_timeout_seconds=600.0,
     )
     monkeypatch.setattr(rt, "get_settings", lambda: settings)
-    # chat_history.get_settings() is also called when persisting JSONL —
-    # patch it on that module too so the backend check resolves to "jsonl".
+    # chat_history.get_settings() 也称为 when 持续 JSONL —
+    # 也将其修补到该模块上，以便后面的end检查re解析为“jsonl”。
     import api.agent.chat_history as ch
     monkeypatch.setattr(ch, "get_settings", lambda: settings)
     return settings
@@ -210,7 +210,7 @@ def _install_stream_recorder(
 
 
 # ---------------------------------------------------------------------------
-# Tests
+# 测试
 # ---------------------------------------------------------------------------
 
 
@@ -235,7 +235,7 @@ async def test_missing_api_key_emits_error_and_closes(
     assert ws._closed is True
     assert ws.sent and ws.sent[0]["type"] == "error"
     assert ws.sent[0]["code"] == "missing_api_key"
-    # The bail-out path is hit before AsyncAnthropic(...) is invoked.
+    # 救援路径是调用 AsyncAnthropic(...) 之前的hit。
     assert constructed == []
 
 
@@ -266,8 +266,8 @@ async def test_tier_query_param_picks_the_right_model(
 
     assert kwargs_log, "stream() was never called"
     assert kwargs_log[0]["model"] == expected_model
-    # session_ready also surfaces the resolved model so the frontend can
-    # display it to the tech.
+    # session_ready 还可以显示 re 已求解模型，因此 frontend 可以
+    # 将其显示给技术人员。
     ready = next(m for m in ws.sent if m.get("type") == "session_ready")
     assert ready["model"] == expected_model
 
@@ -343,7 +343,7 @@ async def test_mb_tool_dispatch_feeds_result_back_into_next_turn(
     ws = FakeWS(["any measurements?"])
     await rt.run_diagnostic_session_direct(ws, "demo-pi", tier="fast")
 
-    # 2 stream calls: first emits tool_use, second receives the tool_result.
+    # 2 个ream 调用：第一个emits tool_use，第二个re接收工具_result。
     assert len(captured) == 2, f"expected 2 stream calls, saw {len(captured)}"
     second = captured[1]
     tool_result_blocks = [
@@ -354,18 +354,18 @@ async def test_mb_tool_dispatch_feeds_result_back_into_next_turn(
     ]
     assert tool_result_blocks, "tool_result was never appended to the next turn"
     decoded = json.loads(tool_result_blocks[0]["content"])
-    # mb_list_measurements returns {"found": True, "measurements": []} on
-    # an empty repair — proves the tool actually ran rather than being
-    # short-circuited. The runtime still strips top-level 'event'/'events'
-    # keys before forwarding to the agent (those are reserved for WS-emit);
-    # 'measurements' is intentionally not in that reserved set so it makes
-    # it through.
+    # mb_list_measurements re打开 {"found": True, "measurements": []}
+    # 空的 repair — 证明该工具实际运行而不是被
+    # 短路。 runtime 仍然剥离顶级 'event'/'events'
+    # re转发到agent之前的键（第ose arere服务于WS-emit）；
+    # 'measurements' 是 intentionally 不在该 re 服务集中，所以它使得
+    # 它通过。
     assert decoded.get("found") is True
     assert decoded.get("measurements") == []
-    # tool_use_id must round-trip so the agent can correlate the result.
+    # tool_use_id 必须round-trip，以便agent 可以关联re结果。
     assert tool_result_blocks[0]["tool_use_id"] == "toolu_meas1"
-    # The tool_use frame must also have hit the WS for the frontend to
-    # surface it in the activity log.
+    # tool_use frame 还必须具有 hit WS，以便 frontend
+    # 将其显示在活动日志中。
     types = [m.get("type") for m in ws.sent]
     assert "tool_use" in types
 
@@ -424,15 +424,15 @@ async def test_stock_tool_dispatch_runs_and_feeds_result_back(
     """
     _stub_session(monkeypatch)
     _patch_settings(monkeypatch, memory_root=tmp_path)
-    # The stock package reads get_settings().memory_root through its own module
-    # bindings (it `from api.config import get_settings`), so the rt-level patch
-    # doesn't reach it — patch both stock modules at the tmp_path.
+    # stock包reads get_settings().memory_root 通过其自己的模块
+    # 绑定（它`from api.config import get_settings`），所以rt级补丁
+    # 不reach它 - 修补tmp_path处的两个stock模块。
     import api.stock.store as stock_store
     import api.stock.tools as stock_tools
     settings = MagicMock(memory_root=str(tmp_path))
     monkeypatch.setattr(stock_store, "get_settings", lambda: settings)
     monkeypatch.setattr(stock_tools, "get_settings", lambda: settings)
-    # mark_donor requires memory/{device_slug}/ to exist.
+    # mark_donorrequiresmemory/{device_slug}/存在。
     (tmp_path / "macbook-air-m1").mkdir(parents=True)
 
     import api.agent.runtime_direct as rt
@@ -467,12 +467,12 @@ async def test_stock_tool_dispatch_runs_and_feeds_result_back(
     ]
     assert tool_results, "no tool_result block on the second turn"
     decoded = json.loads(tool_results[0]["content"])
-    # Proof the real stock tool ran end-to-end (not the unknown-tool fallback).
+    # 证明 real stock 工具运行了 end-to-end（不是未知工具后备）。
     assert decoded.get("created") is True
     assert decoded.get("donor_id"), "stock_mark_donor returned no donor_id"
     assert "unknown-tool" not in json.dumps(decoded)
     assert tool_results[0]["tool_use_id"] == "toolu_donor1"
-    # And the inventory was actually persisted on disk.
+    # 而inventory实际上是持久化在磁盘上的。
     inv = json.loads((tmp_path / "_stock" / "inventory.json").read_text())
     assert any(
         d.get("device_slug") == "macbook-air-m1"
@@ -489,7 +489,7 @@ async def test_chat_history_persisted_to_jsonl_under_repair(
     `memory/{slug}/repairs/{repair_id}/conversations/{conv_id}/`. Uses the
     real chat_history module (no monkeypatching) on a tmp_path memory root."""
     slug, repair_id = "demo-pi", "R1"
-    # Seed the repair meta so the runtime's intro builder doesn't no-op.
+    # 为 repair 元添加种子，这样 runtime 的介绍构建器就不会 no-op。
     repairs = tmp_path / slug / "repairs"
     repairs.mkdir(parents=True, exist_ok=True)
     (repairs / f"{repair_id}.json").write_text(
@@ -508,8 +508,8 @@ async def test_chat_history_persisted_to_jsonl_under_repair(
         ws, slug, tier="fast", repair_id=repair_id,
     )
 
-    # Find the conversation directory the runtime materialized. There should
-    # be exactly one conv after a single fresh open + one user message.
+    # 找到对话direct或runtime具体化。 re 应该
+    # 恰好是单个 fresh open + 一条用户消息之后的一次转换。
     conv_dir = tmp_path / slug / "repairs" / repair_id / "conversations"
     convs = [p for p in conv_dir.iterdir() if p.is_dir()]
     assert len(convs) == 1, f"expected 1 conv dir, got {convs}"
@@ -517,12 +517,12 @@ async def test_chat_history_persisted_to_jsonl_under_repair(
     assert jsonl.exists(), "messages.jsonl was never written"
 
     lines = [json.loads(line) for line in jsonl.read_text().splitlines() if line.strip()]
-    # We expect at least three records: the intro user message (deferred-flush),
-    # the live user message, and the assistant turn.
+    # 我们期望至少 three records：介绍性用户消息 (deferred-flush)，
+    # 实时用户消息，然后助理轮流。
     roles = [rec.get("event", {}).get("role") for rec in lines]
     assert "user" in roles
     assert "assistant" in roles
-    # Confirm the live user input made it through with the ctx_tag prefix.
+    # 确认实时用户 input 已使用 ctx_tag prefix 完成操作。
     user_contents = [
         rec["event"]["content"]
         for rec in lines
@@ -580,11 +580,11 @@ async def test_stream_kwargs_include_system_prompt_and_tools(
 
     assert kwargs_log
     kw = kwargs_log[0]
-    # system is a list of typed text blocks (not a bare string).
+    # system 是键入文本块的列表（不是 bare 字符串）。
     assert isinstance(kw["system"], list)
     assert kw["system"][0]["type"] == "text"
     assert kw["system"][0].get("cache_control") == {"type": "ephemeral"}
-    # tools last entry is cache-marked.
+    # 工具最后en尝试是缓存-marked。
     tools = kw["tools"]
     assert tools, "tool manifest empty"
     assert tools[-1].get("cache_control") == {"type": "ephemeral"}
@@ -611,7 +611,7 @@ async def test_opus_tier_attaches_thinking_and_xhigh_effort(
     assert kw.get("thinking") == {"type": "adaptive", "display": "summarized"}
     assert kw.get("output_config") == {"effort": "xhigh"}
 
-    # Now the negative case for fast tier.
+    # 现在是 fast tier 的负情况。
     _client, kwargs_log_fast = _install_stream_recorder(
         monkeypatch, [_stream_text("ok")]
     )
@@ -639,7 +639,7 @@ def test_normalize_message_strips_parsed_output_from_blocks() -> None:
     assert "parsed_output" not in block, "parsed_output must be stripped from streamed blocks"
     assert block["text"] == "hi"
 
-    # already-a-dict path (e.g. reloaded from a JSONL mirror).
+    # already-a-dict 路径（例如 reloaded from JSONL 镜像）。
     out2 = rt._normalize_message(
         {"role": "assistant", "content": [{"type": "text", "text": "x", "parsed_output": None}]}
     )
@@ -745,7 +745,7 @@ async def test_api_error_mid_stream_emits_error_and_does_not_propagate(
     monkeypatch.setattr(rt, "AsyncAnthropic", lambda **_kw: client)
 
     ws = FakeWS(["diagnose this board"])
-    # Must NOT raise — today the APIError propagates through to the caller.
+    # 不能引发 - 今天 APIError 传播到调用者。
     await rt.run_diagnostic_session_direct(ws, "demo-pi", tier="fast")
 
     stream_errors = [m for m in ws.sent if m.get("type") == "stream_error"]
@@ -773,7 +773,7 @@ class _StallingStream:
     def current_message_snapshot(self) -> SimpleNamespace:
         return SimpleNamespace(content=[])
 
-    async def get_final_message(self):  # pragma: no cover - must not be reached
+    async def get_final_message(self):  # pragma: 无遮盖 - 不得reached
         raise AssertionError("get_final_message must not run on a stalled stream")
 
 
@@ -864,26 +864,26 @@ class _HangingOpenStream:
     """
 
     async def __aenter__(self):
-        # Sleep far longer than the watchdog timeout the test installs. With the
-        # fix in place, asyncio.wait_for cancels this await and raises
-        # TimeoutError into the runtime before this ever returns.
+        # 睡眠时间比测试安装的看门狗time长得多。随着
+        # 固定到位，asyncio.wait_for 取消 this await 并引发
+        # 在 re thi re 轮之前的 runtime 发生超时错误。
         await asyncio.sleep(3600)
-        return self  # pragma: no cover - never reached
+        return self  # pragma: 没有掩饰 - 永远不会 reached
 
     async def __aexit__(self, *exc_info) -> bool:
         return False
 
-    def __aiter__(self):  # pragma: no cover - open never completes
+    def __aiter__(self):  # pragma: 无覆盖 - open 永远不会完成
         return self
 
-    async def __anext__(self):  # pragma: no cover - open never completes
+    async def __anext__(self):  # pragma: 无覆盖 - open 永远不会完成
         raise StopAsyncIteration
 
     @property
-    def current_message_snapshot(self) -> SimpleNamespace:  # pragma: no cover
+    def current_message_snapshot(self) -> SimpleNamespace:  # 编译指示：无覆盖
         return SimpleNamespace(content=[])
 
-    async def get_final_message(self):  # pragma: no cover - never reached
+    async def get_final_message(self):  # pragma: 没有掩饰 - 永远不会 reached
         raise AssertionError("get_final_message must not run on a hung-open stream")
 
 
@@ -902,7 +902,7 @@ async def test_stream_open_hang_is_bounded_and_recovers(
     the fix, the runtime times the open out, re-streams, and recovers.
     """
     _stub_session(monkeypatch)
-    # Tiny per-event/open timeout so the hung open trips the watchdog fast.
+    # 每个 event/open timeout 很小，因此挂起的 open 会触发看门狗 fast。
     _patch_settings(monkeypatch, memory_root=tmp_path)
     import api.agent.runtime_direct as rt
 
@@ -916,8 +916,8 @@ async def test_stream_open_hang_is_bounded_and_recovers(
     )
 
     ws = FakeWS(["go"])
-    # Hard outer bound: if the open hang is NOT bounded by the runtime (the bug),
-    # the session never returns and this raises TimeoutError → RED.
+    # 硬外界：如果 open 挂起不受 runtime（错误）限制，
+    # 会话永远不会 re 转动，并且 this 会引发 TimeoutError → 红色。
     await asyncio.wait_for(
         rt.run_diagnostic_session_direct(ws, "demo-pi", tier="fast"),
         timeout=5.0,
@@ -957,6 +957,6 @@ async def test_sanitizer_logs_unknown_refdes_and_wraps_text(
     )
     assert "⟨?U999⟩" in agent_msg["text"]
     assert "U7 is fine" in agent_msg["text"]
-    # The warning is structural — without it, silent corruption would be
-    # invisible in production logs.
+    # 这个警告是结构性的——没有它，silent腐败就会
+    # 在生产日志中不可见。
     assert any("sanitizer wrapped" in rec.getMessage() for rec in caplog.records)

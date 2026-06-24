@@ -58,7 +58,7 @@ def test_safe_tool_result_text_returns_structured_error_on_total_failure():
     assert decoded == {
         "ok": False,
         "reason": "serialization_failed",
-        "error": pytest.approx(decoded["error"], abs=0),  # any non-empty str
+        "error": pytest.approx(decoded["error"], abs=0),  # 任何非空 str
     }
     assert decoded["error"]
 
@@ -95,7 +95,7 @@ def test_build_log_id_tier_at_end_so_partial_grep_narrows_naturally():
 
     log_id = _build_log_id("rep_42", "conv_xyz", "normal")
     assert log_id.startswith("rep_42:conv_xyz:")
-    # Tier is the third segment, not somewhere in the middle.
+    # 层是 third segment，而不是中间的re。
     parts = log_id.split(":")
     assert parts == ["rep_42", "conv_xyz", "normal"]
 
@@ -183,16 +183,16 @@ def test_session_start_log_emits_log_id_anchor_line(monkeypatch, caplog):
         f"{[r.getMessage() for r in caplog.records]!r}"
     )
     anchor = anchor_lines[0]
-    # Must carry both the human triplet AND the MA session id so an
-    # operator can pivot between them.
+    # 必须同时携带人类三元组和 MA 会话 ID，以便
+    # 运算符可以在en之间旋转。
     assert "rep_anchor:conv_anchor_001:fast" in anchor, (
         f"anchor must contain the log_id triplet, got {anchor!r}"
     )
     assert "sesn_anchor_999" in anchor, (
         f"anchor must contain the MA session_id, got {anchor!r}"
     )
-    # Sanity: the format is grepable as `log_id=X session=Y` (not nested
-    # in a JSON blob or formatted across multiple lines).
+    # 健全性：格式 grepable 为 `log_id=X session=Y` （不嵌套
+    # 在 JSON blob 或格式化的 across 多行中）。
     m = re.search(r"log_id=(\S+)\s+session=(\S+)", anchor)
     assert m, f"anchor must match `log_id=X session=Y` pattern, got {anchor!r}"
     assert m.group(1) == "rep_anchor:conv_anchor_001:fast"

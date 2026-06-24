@@ -31,7 +31,7 @@ async def test_mirror_outcome_retries_then_succeeds(monkeypatch, tmp_path: Path)
     async def fake_ensure(client, slug):
         return "memstore_123"
 
-    # ensure_memory_store is imported inside mirror_outcome_to_memory; patch the source module.
+    # ensure_memory_store导入到mirror_outcome_to_memory内部；修补源模块。
     monkeypatch.setattr(
         "api.agent.memory_stores.ensure_memory_store",
         fake_ensure,

@@ -1,35 +1,34 @@
-"""WebSocket pipeline 进度中继 — `WS /pipeline/progress/{slug}`。
+"""WebSocket pipeline 进度中继 — `⟦PRESERVE5⟧ /pipeline/progress/{⟦PRESERVE4⟧}`。
 
 【时序图 — 完整版见 repairs.py 模块 docstring】
 
-  浏览器 fetch POST /repairs (短 HTTP) → return RepairResponse
-       → connectProgress(slug) → new WebSocket → 本 handler progress_ws
+  浏览器获取POST /repairs(短HTTP)→返回RepairResponse
+       → connectProgress(slug) → 新 WebSocket → 本处理程序 Progress_ws
 
 【哪一行建立 / 保持 WS 长会话？】
-  - 建立：progress.py:58  await websocket.accept()
+  - 建立：progress.py:58 wait websocket.accept()
   - 保持：progress.py:64-66
-        while True:
-            event = await queue.get()
-            await websocket.send_text(json.dumps(event))
+        而真实：
+            事件 = 等待队列.get()
+            等待 websocket.send_text(json.dumps(事件))
     该循环在客户端断开前一直运行（WebSocketDisconnect → finally unsubscribe）。
 
 【职责】
   本文件只做「总线 → 浏览器」的透明转发，不包含 pipeline 业务逻辑。
-  浏览器在 POST /pipeline/repairs 拿到 device_slug 且 pipeline_started=true 后，
+  浏览器在 POST /pipeline/repairs 拿到device_slug且pipeline_started=true后，
   自行连接本 WS；slug 必须与 HTTP 响应中的一致。
 
 【与 events 总线的关系】
-  1. accept 后调用 events.subscribe(slug) — 获得 queue（含 history 回放）
+  1.accept 后调用 events.subscribe(slug) — 获得队列（含历史回放）
   2. 先发 {type: "subscribed"} 握手 ack
-  3. while True: event = await queue.get() → websocket.send_text(json.dumps(event))
-  4. 断开时在 finally 里 events.unsubscribe(slug, queue)
+  3. while True: event = wait queue.get() → websocket.send_text(json.dumps(event))
+  4. 断开时在finally里events.unsubscribe(slug,queue)
 
 【事件来源（publish 侧）】
-  repairs._run_pipeline_with_events → orchestrator.generate_knowledge_pack(on_event=…)
+  Repairs._run_pipeline_with_events → Orchestrator.generate_knowledge_pack(on_event=…)
   详见 api/pipeline/routes/repairs.py 中 _on_event 与 create_repair 的 Branch 1。
 
-将客户端订阅到 per-slug 事件总线，原样转发每条事件直至断开连接。
-"""
+将客户端订阅到 per-slug 事件总线，原样转发每条事件直至断开连接。"""
 
 from __future__ import annotations
 
@@ -52,21 +51,20 @@ async def progress_ws(websocket: WebSocket, device_slug: str) -> None:
     """Step F：progress WebSocket 服务端 — 订阅 events 总线并转发给浏览器。
 
     【在完整流程中的位置】
-      Step E  create_repair 已 return RepairResponse（HTTP 已结束）
-      Step 6  前端 new WebSocket(/pipeline/progress/{slug}) 连到本 handler
-      Step F  本函数 accept → subscribe(slug) → while True 逐条 send_text
-      Step D  并行的后台 task 持续 events.publish(slug, ev) → 本 queue 收到
+      步骤E create_repair已返回RepairResponse（HTTP已结束）
+      步骤 6 前端 new WebSocket(/pipeline/progress/{slug}) 连到本处理程序
+      Step F 本函数accept → subscribe(slug) → while True 逐条send_text
+      Step D 后台任务持续 events.publish(slug, ev) → 本队列接收
 
     时序（典型新设备首次构建）：
-      T0  POST /pipeline/repairs 返回 {device_slug, pipeline_started: true}
-      T1  前端 new WebSocket("/pipeline/progress/{device_slug}")
-      T2  本 handler accept → subscribe(slug) → 回放 history（若后台已 emit）
+      T0 POST /pipeline/repairs 返回 {device_slug, pipeline_started: true}
+      T1 前端 new WebSocket("/pipeline/progress/{device_slug}")
+      T2 本处理程序接受 → 订阅(slug) → 回放历史（后台若已发出）
       T3  发送 {type: "subscribed", device_slug}
-      T4+ 后台 orchestrator emit → publish → queue.get → send_text 逐条转发
+      T4+后台编排器emit→publish→queue.get→send_text逐条转发
       Tn  pipeline_finished 到达；前端自行 close 或跳转工作区
 
-    安全：enforce_ws_origin / enforce_ws_service_token（自托管通常 no-op）。
-    """
+    安全：enforce_ws_origin / enforce_ws_service_token（自托管通常 no-op）。"""
     if not await enforce_ws_origin(websocket):
         return
     if not await enforce_ws_service_token(websocket):

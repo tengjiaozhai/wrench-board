@@ -1,9 +1,9 @@
-"""服务令牌验证 — 解析 Bearer + 比较常数时间。
+"""服务令牌校验 — Bearer 解析 + 恒定时间比较。
 
-来源独特的 ws_security (guard WS) et http_security (中间件
-HTTP）不要重复秘密比较逻辑。乐解析
-重现守卫历史行为执行WS（str.partition sur
-le Premier espace) pour ne rien régresser."""
+供 ws_security（WS 守卫）与 http_security（HTTP 中间件）共用，
+避免重复秘密比较逻辑。解析沿用 WS 历史行为（str.partition 按
+第一个空格切分），不引入回归。
+"""
 
 from __future__ import annotations
 
@@ -11,11 +11,10 @@ import secrets
 
 
 def extract_bearer(header: str | None) -> str | None:
-    """'授权：持有者 <令牌>' → <令牌>，sinon 无。
+    """'Authorization: Bearer <token>' → <token>，否则 None。
 
-    利用partition(' ')来保护WS历史：scheme=avant le 1er
-    espace，呈现=après。返回 None si le plan n'est pas 'Bearer'ou
-    这就是我们所见的。"""
+    使用 partition(' ') 保持 WS 历史语义：scheme 为第一个空格前，
+    presented 为之后。scheme 非 'Bearer' 或 presented 为空时返回 None。"""
     scheme, _, presented = (header or "").partition(" ")
     if scheme == "Bearer" and presented:
         return presented
@@ -23,5 +22,5 @@ def extract_bearer(header: str | None) -> str | None:
 
 
 def token_matches(presented: str | None, expected: str) -> bool:
-    """比较恒定时间。虚假 si 呈现 est vide/无。"""
+    """恒定时间比较。presented 为空/None 时返回 False。"""
     return bool(presented) and secrets.compare_digest(presented, expected)

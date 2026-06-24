@@ -28,7 +28,7 @@ def test_cam_capture_independent_of_board():
     """cam_capture is gated on has_camera, not on board presence."""
     session = SessionState()
     session.has_camera = True
-    # No board loaded — bv_* should be absent, but cam_capture still present.
+    # 没有boardloaded - bv_*应该是absent，但cam_capture仍然是present。
     names = _tool_names(build_tools_manifest(session))
     assert "cam_capture" in names
-    assert "bv_highlight" not in names  # confirm baseline
+    assert "bv_highlight" not in names  # 确认基线

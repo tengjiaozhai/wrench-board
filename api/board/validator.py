@@ -1,9 +1,8 @@
-"""Anti-hallucination guardrail — every refdes the agent mentions passes here.
+"""防幻觉护栏——特工提到的每个refdes都经过这里。
 
-Pure functions over an already-parsed `Board`. No I/O, no mutation. If a
-lookup fails the caller is expected to return a structured null/unknown
-response, not fabricate data (per the anti-hallucination contract).
-"""
+已解析的 `Board` 上的纯函数。没有 I/O，没有突变。如果一个
+查找失败调用者预计返回结构化空/未知
+回应，而不是捏造数据（根据反幻觉合同）。"""
 
 from __future__ import annotations
 
@@ -21,12 +20,12 @@ def resolve_part(board: Board, refdes: str) -> Part | None:
 
 
 def resolve_net(board: Board, net_name: str) -> Net | None:
-    """Return the Net named `net_name`, or None."""
+    """返回名为 `net_name` 的网络，或 None。"""
     return board.net_by_name(net_name)
 
 
 def resolve_pin(board: Board, refdes: str, pin_index: int) -> Pin | None:
-    """Return the Pin at `(refdes, pin_index)` (1-based within the part), or None."""
+    """返回 `(⟦PRESERVE0⟧, pin_index)` 处的引脚（部件内从 1 开始），或无。"""
     part = board.part_by_refdes(refdes)
     if part is None:
         return None
@@ -46,8 +45,7 @@ def suggest_similar(board: Board, refdes: str, k: int = 3) -> list[str]:
     The input is stripped of leading/trailing whitespace before comparison.
     An empty or whitespace-only string returns an empty list — there is no
     sensible "close match" to whitespace. This also means a padded query
-    like `" R1 "` correctly matches `R1` at distance 0 after strip.
-    """
+    like `" R1 "` correctly matches `R1` at distance 0 after strip."""
     refdes = refdes.strip()
     if not refdes:
         return []
@@ -57,11 +55,10 @@ def suggest_similar(board: Board, refdes: str, k: int = 3) -> list[str]:
 
 
 def _levenshtein(a: str, b: str) -> int:
-    """Classic iterative Wagner–Fischer DP.
+    """经典迭代 Wagner-Fischer DP。
 
-    Space-optimized to two rows. Runs in O(len(a) * len(b)) time and
-    O(min(len(a), len(b))) space.
-    """
+    空间优化为两排。运行时间为 O(len(a) * len(b)) 且
+    O(min(len(a), len(b))) 空间。"""
     if len(a) < len(b):
         return _levenshtein(b, a)
     if not b:

@@ -1,19 +1,19 @@
-// First-diagnostic coaching — a one-shot guided tour of the repair workspace,
-// played the very first time a diagnostic dashboard opens (gated by the
-// profile's `state.first_diag_seen` flag — server-side so it's cross-device —
-// via onboarding_state.js, with localStorage as a fast pre-gate). Unlike a static card, this walks the
-// real surfaces in workflow order with anchored mascot bubbles, and actually
-// NAVIGATES the rail views (PCB / schematic / graph) so the technician sees each
-// page change in context — closing the "abandoned on the repair screen" gap.
+// 第一-diagnosticcoaching — repairworkspace一次性导览，
+// 播放了第一个 time a diagnostic dashboard open（由
+// profile 的 `state.first_diag_seen` 标志 — 服务器端，因此它是 cross-device —
+// 通过onboarding_state.js，其中localStorage作为fast pre门）。与静态卡不同，this 走在
+// real 表面按工作流程顺序，带有 anchored mascot bubbles，实际上
+// 导航 rail 视图 (PCB / schematic / graph)，以便技术人员看到每个视图
+// 上下文中的页面change — closing“被遗弃在repair screen”间隙。
 //
-// Tone: a small discreet mascot accompanies the bubbles (continuity with the
-// landing onboarding), but the dense pro workbench is otherwise untouched. Every
-// step is escapable ("Skip the tour") and the whole thing plays once.
+// 声调：小圆盘reet mascot 伴奏bubbles（与
+// landing onboarding），但 dense pro workbench 在其他方面未受影响。每一个
+// 步骤是可以逃避的（“跳过游览”）并且整个 thing 播放一次。
 //
-// The persistent, replayable counterpart is the "?" affordance in the dashboard
-// header → openInfoModal("repair") (wired in dashboard.js); this module owns the
-// scripted first-run only. Styling reuses .mascot-bubble + .ob-* in
-// web/styles/onboarding.css; the mascot host is .ob-coach-mascot.
+// persistent, replayable 的对应项是“?” dashboard 的可供性
+// header → openInfoModal("repair") (wired in dashboard.js); this 模块拥有
+// 仅在首次运行时编写脚本。样式 re 使用 .mascot-bubble + .ob-*
+// web/样式/onboarding.css; mascot host 是 .ob-coach-mascot。
 
 import { t } from "../../../i18n.js";
 import { mountMascot, setMascotState } from "../../../mascot.js";
@@ -21,21 +21,21 @@ import { showBubble, hideBubble } from "../../../mascot_bubble.js";
 import { repairHash } from "../../../router.js";
 import { hasSeenOnboarding, markOnboardingSeen } from "../../../onboarding_state.js";
 
-// On the shipped demo device the tour is "live": it highlights a real component
-// on the board and pre-fills the chat with a concrete question, so the value is
-// shown rather than described. Gated on the slug — a real device gets the plain
-// tour. U14 is the MNT Reform's standby-3V3 regulator (rail LPC_VCC), the first
-// part you probe when the board won't power on.
+// 在 shipped demo 设备上，游览是“实时”的：它 highlight 是 real component
+// 在 board 和 pre 上 - 用 concrete quest离子填充聊天，因此值为
+// 显示而不是描述。在 slug 上进行门控 — real 设备获得简单信息
+// 旅游。 U14是MNT改革的备用-3V3re调节器（railLPC_VCC），第一个
+// 当您探测 when 时，board 无法开机。
 const DEMO_SLUG = "mnt-reform-motherboard";
 const DEMO_HIGHLIGHT_REFDES = "U14";
 
-let _running = false;   // re-entry guard (renderRepairDashboard re-runs on nav)
-let _forceNext = false; // one-shot bypass: replay the tour once despite the seen flag
-let _aborted = false;   // set when the tech hits "Skip the tour"
-let _wasDemo = false;   // true while the demo (example) tour is the one playing
-let _onDone = null;     // optional completion hook (example-device handoff)
-let _mascot = null;     // mounted mascot <svg>
-let _mascotHost = null; // fixed-position host element
+let _running = false;   // re-en尝试保护（renderRepairDashboardre-在导航上运行）
+let _forceNext = false; // 一键绕过：尽管有 seen 标志，replay 仍进行一次游览
+let _aborted = false;   // 设置 when 技术 hits“跳过游览”
+let _wasDemo = false;   // true while demo（示例）巡演正在播放
+let _onDone = null;     // 可选的完成挂钩（示例设备切换）
+let _mascot = null;     // 已安装 mascot <svg>
+let _mascotHost = null; // 固定 position host element
 
 function _mountMascot() {
   _mascotHost = document.createElement("div");
@@ -45,11 +45,11 @@ function _mountMascot() {
   _mascot = mountMascot(_mascotHost, { size: "sm", state: "idle" });
 }
 
-// Switch the workspace to a repair vue and resolve once it's actually on screen.
-// Navigation is async (main.js owns hashchange → syncContextFromUrl → navigate),
-// so we poll the rail's active state — the reliable "navigate() finished" signal
-// — then wait one frame so the target section has painted. Resolves regardless
-// after a short deadline so the tour can never wedge on a missed signal.
+// 将 workspace 切换到 repair vue，并在re实际位于 screen 上时进行求解。
+// 导航是async（main.js拥有hashchange→syncContextFromUrl→导航），
+// 所以我们轮询 rail 的活动状态 — re 可靠的“navigate() 完成”信号
+// — then 等待 frame，目标部分已绘制。解决re无忧无虑
+// 截止日期很短，因此旅行团永远不会错过错过的信号。
 function _navTo(rid, vue) {
   window.location.hash = repairHash(rid, vue);
   return new Promise((resolve) => {
@@ -63,12 +63,12 @@ function _navTo(rid, vue) {
       if (tries <= 0) { resolve(); return; }
       setTimeout(() => tick(tries - 1), 60);
     };
-    tick(25); // ~1.5 s ceiling
+    tick(25); // ~1.5 秒上限
   });
 }
 
-// Show one bubble and resolve when the tech advances. "Skip the tour" sets
-// _aborted and resolves too — the caller checks the flag and tears down.
+// 显示 bubble 和 re 解决en 的技术进步。 “跳过游览”套装
+// _aborted 和 re 也解决了——调用者检查标志并撕掉。
 function _step({ anchor, text, placement = "bottom", mascot = "idle", last = false, doneLabel = null, spotlight = false }) {
   if (_mascot) setMascotState(_mascot, mascot);
   return new Promise((resolve) => {
@@ -85,9 +85,9 @@ function _step({ anchor, text, placement = "bottom", mascot = "idle", last = fal
   });
 }
 
-// Arm a one-shot replay of the workspace tour, ignoring the persisted "seen"
-// flag for the next dashboard render. Used by the landing onboarding's "see the
-// example" handoff so the demo tour plays even for a tech who already saw it.
+// 武装一次workspace巡演的replay，忽略持续存在的“seen”
+// 下一个 dashboard render 的标志。由 landing onboarding 的“参见
+// 例如“交接，因此 demo 巡演为一位ready 看到的技术人员播放 even。
 export function forceNextDiagCoaching() {
   _forceNext = true;
 }
@@ -95,21 +95,21 @@ export function forceNextDiagCoaching() {
 export async function maybeShowFirstDiagCoaching(rid, { onDone = null, slug = null } = {}) {
   if (_running) return;
   if (_forceNext) {
-    _forceNext = false; // consume the one-shot bypass
+    _forceNext = false; // 消耗一次性旁路
   } else if (hasSeenOnboarding("first_diag_seen")) {
-    return; // already toured (server truth; localStorage fallback pre-hydration)
+    return; // already toured（服务器真相；localStorage后备 pre-水合作用）
   }
 
-  const isDemo = slug === DEMO_SLUG; // live tour (highlight + prefilled chat)
+  const isDemo = slug === DEMO_SLUG; // 现场巡演（highlight + pre聊天）
   _wasDemo = isDemo;
-  _onDone = onDone; // forwarded by dashboard.js from the example-device handoff
+  _onDone = onDone; // 由示例设备切换中的 dashboard.js fr 转发
   _running = true;
   _aborted = false;
   _mountMascot();
 
   const cancelled = () => _aborted || !document.body.contains(_mascotHost);
 
-  // ── Phase 1: the diagnostic dashboard (current view) ──────────────────────
+  // ── 第一阶段：diagnostic dashboard（当前ent视图）──────────────────────
   await _step({ anchor: ".rd-head", text: t("onboarding.coach.session"), placement: "bottom", mascot: "success", spotlight: true });
   if (cancelled()) return finishFirstDiagCoaching();
   await _step({ anchor: "#rdCap", text: t("onboarding.coach.cap"), placement: "bottom", mascot: "scanning", spotlight: true });
@@ -117,14 +117,14 @@ export async function maybeShowFirstDiagCoaching(rid, { onDone = null, slug = nu
   await _step({ anchor: "#rdCards", text: t("onboarding.coach.cards"), placement: "top", mascot: "idle", spotlight: true });
   if (cancelled()) return finishFirstDiagCoaching();
 
-  // ── Phase 2: walk the rail views (the page actually changes) ──────────────
-  // Anchored to each rail button (far left) so the arrow ties "this button →
-  // this page". Skipped wholesale when there's no repair id to navigate with.
+  // ── 第二阶段：遍历rail视图（页面实际上是change）──────────────
+  // Anchored 到每个 rail 按钮（最左侧），因此箭头将“this 按钮→
+  // this 页面”。跳过批发 when re 没有 repair id 进行导航。
   if (rid) {
     const railSel = (vue) => `.rail-btn[data-rail="${vue}"][data-rail-level="repair"]`;
-    // Neither the schematic nor the graph exposes a programmatic select API — both
-    // are D3 with mouse handlers — so the demo drives them by dispatching a real
-    // click on the node element (see the views' .on("click") handlers).
+    // schematic 和 graph expos 都不是程序化mmatic select API — 两者都
+    // are D3 带有鼠标处理程序 — 因此 demo 通过 dispatching a real 驱动它们
+    // 节点 element 上的click（请参阅视图的 .on("click") 处理程序）。
     const synthClick = (elOrSel) => {
       const el = typeof elOrSel === "string" ? document.querySelector(elOrSel) : elOrSel;
       if (el) el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
@@ -141,17 +141,17 @@ export async function maybeShowFirstDiagCoaching(rid, { onDone = null, slug = nu
       tick();
     });
 
-    // ── PCB — light up a real component so the bubble points at something concrete.
+    // ── PCB — 点亮real component，使bubble指向某个hing conrete。
     await _navTo(rid, "pcb");
     if (cancelled()) return finishFirstDiagCoaching();
     if (isDemo) {
-      try { window.Boardview?.apply?.({ type: "boardview.highlight", refdes: DEMO_HIGHLIGHT_REFDES }); } catch { /* best effort */ }
+      try { window.Boardview?.apply?.({ type: "boardview.highlight", refdes: DEMO_HIGHLIGHT_REFDES }); } catch { /* 尽最大努力 */ }
     }
     await _step({ anchor: railSel("pcb"), text: t(isDemo ? "onboarding.coach.demo_pcb" : "onboarding.coach.pcb"), placement: "right", mascot: "idle" });
     if (cancelled()) return finishFirstDiagCoaching();
 
-    // ── Schematic — on the demo, click the LPC_VCC rail (fallback U14) so the
-    // tech sees the schematic isolate the rail + its cascade, not just hears about it.
+    // ── 原理图 — 在 demo、click LPC_VCC rail（后备 U14）上，所以
+    // 技术人员看到schematic隔离了rail及其级联，而不仅仅是听说过。
     await _navTo(rid, "schematic");
     if (cancelled()) return finishFirstDiagCoaching();
     if (isDemo) {
@@ -161,9 +161,9 @@ export async function maybeShowFirstDiagCoaching(rid, { onDone = null, slug = nu
     await _step({ anchor: railSel("schematic"), text: t(isDemo ? "onboarding.coach.demo_schematic" : "onboarding.coach.schematic"), placement: "right", mascot: "idle" });
     if (cancelled()) return finishFirstDiagCoaching();
 
-    // ── Graph (memory) — on the demo, click a node so the right-hand detail panel
-    // opens (the "how it reasons" panel), then flip to the Raw tab to show the
-    // underlying memory, then restore Visual.
+    // ── Graph（内存）——在demo、click节点上所以右侧细节面板
+    // opens（“如何reasons”面板），then 翻转到“原始”选项卡以显示
+    // 底层内存，thenrestore视觉。
     await _navTo(rid, "graph");
     if (cancelled()) return finishFirstDiagCoaching();
     if (isDemo) {
@@ -177,12 +177,12 @@ export async function maybeShowFirstDiagCoaching(rid, { onDone = null, slug = nu
       if (cancelled()) return finishFirstDiagCoaching();
       const rawBtn = document.querySelector('.view-toggle-btn[data-view="md"]');
       if (rawBtn) {
-        synthClick(rawBtn);                                               // flip to Raw
+        synthClick(rawBtn);                                               // 翻转到原始
         await _step({ anchor: railSel("graph"), text: t("onboarding.coach.demo_graph_raw"), placement: "right", mascot: "idle" });
-        synthClick('.view-toggle-btn[data-view="graph"]');               // restore Visual
+        synthClick('.view-toggle-btn[data-view="graph"]');               // re斯托re视觉
       }
-      // #inspector is a global <aside> (sibling of #canvas) — left .open it would
-      // persist over every other view. Close it before leaving the graph.
+      // #inspector 是一个全局 <aside> （#canvas 的同级） — left .open 它会
+      // 坚持所有其他观点。在re离开graph之前Close它。
       synthClick("#inspectorClose");
       if (cancelled()) return finishFirstDiagCoaching();
     } else {
@@ -190,31 +190,31 @@ export async function maybeShowFirstDiagCoaching(rid, { onDone = null, slug = nu
       if (cancelled()) return finishFirstDiagCoaching();
     }
 
-    // Back to the diagnostic dashboard for the closing step.
+    // 回到 closing 步骤的 diagnostic dashboard。
     await _navTo(rid, "diagnostic");
     if (cancelled()) return finishFirstDiagCoaching();
   }
 
-  // ── Phase 3: how to actually diagnose ─────────────────────────────────────
-  // On the demo, open the chat and pre-fill a concrete question so the tech can
-  // send it and watch the agent reason on this real, analyzed board — the value
-  // shown, not just described. (Sending is their choice; the tour never sends.)
+  // ── 第三阶段：如何实际诊断ose ──────────────────────────────────────
+  // 在 demo、open 聊天和 pre 上填充一个 concrete question，以便技术人员可以
+  // send 它并观看 this real 上的 agent reason，分析 board — 值
+  // 显示出来，而不仅仅是描述。 （Sending是他们的选择；旅行永远不会sends。）
   if (isDemo) {
-    // Sit on the PCB view so the agent's board annotations are visible, then
-    // replay TWO real recorded Opus (deep) sessions in small NARRATED BEATS,
-    // each paused on an explainer bubble advanced with "Next". Free — no live
-    // LLM call. CONV 1 = the device's power-up sequence drawn on the board;
-    // CONV 2 (after a genuine "new conversation" gesture) = a "dead board"
-    // diagnostic that runs a measurement protocol and turns out the supply is
-    // actually healthy. Fixtures are per-locale (fr/en); fall back to fr.
+    // 坐在 PCB 视图上，以便 agent 的 board 注释 are 可见，then
+    // replay 两个 real re 录制的 Opus (deep) 个小节拍片段，
+    // 每个人都在解释器bubble上暂停，并以“下一步”前进。 Free — 没有直播
+    // LLM 电话。 CONV 1 = 在 board 上绘制的器件上电序列ence；
+    // CONV 2（在genuine“新对话”手势re之后）=“死board”
+    // diagnostic 运行measurement protocol 结果供应量为
+    // 实际上很健康。 Fixtures are per-locale (fr/en);回落到fr。
     await _navTo(rid, "pcb");
     if (cancelled()) return finishFirstDiagCoaching();
     await _step({ anchor: "#llmToggle", text: t("onboarding.coach.demo_chat"), placement: "left", mascot: "idle", doneLabel: t("onboarding.coach.demo_play") });
     if (cancelled()) return finishFirstDiagCoaching();
     hideBubble();
     const { loadRecvFrames, beginDemoReplay, playFrames, endDemoReplay, waitForBoard } = await import("./demoReplay.js");
-    // The conversation switcher is driven offline (no backend) straight on the
-    // real chat-panel DOM, so the tech sees the actual gesture, not a caption.
+    // 对话切换器直接在驱动en离线（无返回end）
+    // real 聊天面板 DOM，因此技术人员看到的是实际的手势re，而不是标题。
     const { handleDiagnosticFrame, replaySeedConversations, replayOpenConvPopover, replayCloseConvPopover } = await import("../../../llm.js");
     const loc = (window.i18n && window.i18n.locale) || "fr";
     const grab = async (name) => {
@@ -225,90 +225,90 @@ export async function maybeShowFirstDiagCoaching(rid, { onDone = null, slug = nu
     const conv1 = await grab("hero-conv1");
     const conv2 = await grab("hero-conv2");
     if (conv1.length && conv2.length) {
-      await waitForBoard(); // arrows + annotations project through the board camera; wait for it
+      await waitForBoard(); // 箭头+注释通过board相机投射；等一下
 
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       const cue = (sel, on) => { const e = document.querySelector(sel); if (e) e.classList.toggle("wb-demo-cue", on); };
       const clearCues = () => { cue("#llmConvChip", false); cue("#llmConvNew", false); };
-      const bail = () => { clearCues(); try { replayCloseConvPopover(); } catch { /* not open */ } endDemoReplay(); finishFirstDiagCoaching(); };
-      // Cosmetic conversation row the offline switcher renders (mirrors the
-      // live `conversations` payload shape: id/title/tier/turns/cost/last seen).
+      const bail = () => { clearCues(); try { replayCloseConvPopover(); } catch { /* 不操作en */ } endDemoReplay(); finishFirstDiagCoaching(); };
+      // Cosmetic 对话行离线切换器 renders（镜像
+      // 实时`conversations`支付load形状：id/title/tier/turns/cost/last seen）。
       const convRow = { id: "demo-conv-1", title: t("onboarding.coach.demo_conv1_title"), tier: "deep", turns: 1, cost_usd: 0.86, last_turn_at: new Date(Date.now() - 90_000).toISOString() };
 
-      // ── CONV 1: the power-up sequence, drawn on the board ──
+      // ── CONV 1：上电序列ence，绘制在board ──
       beginDemoReplay({ userText: t("onboarding.coach.demo_q1") });
-      await playFrames(conv1.slice(0, 28), { gapCapMs: 550 });   // reads schematic graph + components
+      await playFrames(conv1.slice(0, 28), { gapCapMs: 550 });   // re广告 schematic graph + components
       if (cancelled()) return bail();
       await _step({ anchor: _mascotHost, text: t("onboarding.coach.demo_c1_explore"), placement: "top", mascot: "scanning" });
       if (cancelled()) return bail();
-      await playFrames(conv1.slice(28, 55), { gapCapMs: 320 });  // draws the cascade (highlights, annotations, arrows)
+      await playFrames(conv1.slice(28, 55), { gapCapMs: 320 });  // 绘制级联（highlights、注释、箭头）
       if (cancelled()) return bail();
       await _step({ anchor: _mascotHost, text: t("onboarding.coach.demo_c1_board"), placement: "top", mascot: "working" });
       if (cancelled()) return bail();
-      await playFrames(conv1.slice(55, 58), { gapCapMs: 400 });  // the phase-by-phase explanation
+      await playFrames(conv1.slice(55, 58), { gapCapMs: 400 });  // 分阶段解释
       if (cancelled()) return bail();
       await _step({ anchor: _mascotHost, text: t("onboarding.coach.demo_c1_done"), placement: "top", mascot: "success" });
       if (cancelled()) return bail();
 
-      // ── INTERLUDE: a real "new conversation" gesture on the live UI (offline) ──
-      // The explainer bubble (z-index 1600) sits ABOVE the conversation popover
-      // (z-index 40), so it MUST be dismissed before the popover opens — else it
-      // hides the very gesture we're showing. Explain first (popover closed),
-      // then play the gesture silently — it's self-evident once seen.
-      replaySeedConversations([{ ...convRow, active: true }]); // chip now reads CONV 1/1
+      // ── 插曲：现场real“新对话”手势reUI（线下）──
+      // 解释者bubble（z-index 1600）位于对话上方popover
+      // （z-index 40），所以它必须在 re popover opens 之前被驳回 - 否则它
+      // hi正是我们re所展示的姿态re。先解释一下(popoverclosed),
+      // en 演奏手势re silent — 一旦en，这是不言而喻的en。
+      replaySeedConversations([{ ...convRow, active: true }]); // chip 现在 re 广告转化次数 1/1
       await _step({ anchor: "#llmConvChip", text: t("onboarding.coach.demo_switch"), placement: "left", mascot: "idle" });
       if (cancelled()) return bail();
       hideBubble();
       cue("#llmConvChip", true); await sleep(550);
       if (cancelled()) return bail();
-      replayOpenConvPopover();                               // the real popover opens — the seeded list shows
+      replayOpenConvPopover();                               // real popover opens — 种子列表显示
       cue("#llmConvChip", false); await sleep(850);
       if (cancelled()) return bail();
-      cue("#llmConvNew", true); await sleep(800);            // spotlight the "+ New conversation" control
+      cue("#llmConvNew", true); await sleep(800);            // 重点关注“+新对话”控件
       if (cancelled()) return bail();
       replaySeedConversations([
         { id: "demo-conv-2", title: t("onboarding.coach.demo_new_conv_title"), tier: "deep", turns: 0, cost_usd: 0, last_turn_at: new Date().toISOString(), active: true },
         convRow,
       ]);
-      await sleep(900); cue("#llmConvNew", false);           // hold so the refreshed list reads
+      await sleep(900); cue("#llmConvNew", false);           // 保留refr网格列表re广告
       replayCloseConvPopover(); await sleep(400);
       if (cancelled()) return bail();
 
-      // The fresh conversation must start CLEAN. The replay SKIP-lists
-      // protocol_cleared and beginDemoReplay only wipes the CHAT LOG, so CONV 1's
+      // fresh 对话必须从 CLEAN 开始。 replay 跳过列表
+      // protocol_cleared 和 beginDemoReplay 仅擦除聊天日志，因此 CONV 1 的
       // board overlays + protocol wizard would otherwise bleed into CONV 2.
-      // reset() clears the board overlays; a direct protocol_cleared nulls
-      // state.proto (also no-ops any trailing protocol_updated — no zombie wizard).
-      try { window.Boardview?.reset?.(); } catch { /* board not ready */ }
+      // reset() 清除board overlay；一个directprotocol_clearednulls
+      // state.proto（也no-ops任何trailingprotocol_updated - 没有僵尸wizard）。
+      try { window.Boardview?.reset?.(); } catch { /* board 不是 ready */ }
       handleDiagnosticFrame({ type: "protocol_cleared" });
-      await sleep(450);                                      // let the board visibly empty before the new question
+      await sleep(450);                                      // 让board在re新的quest离子之前明显为空
 
-      // ── CONV 2: a "dead board" diagnostic — protocol, measurements, twist ──
-      // Sliced into SMALL beats (one message or two per beat) so the tech can
-      // actually follow it — the agent is otherwise a long monologue. Each beat
-      // pauses on a bubble before the next chunk plays.
+      // ── CONV 2：“死board”diagnostic — protocol，measurements，扭转──
+      // 切成小节拍（每个节拍一条或两条消息），以便技术人员可以
+      // 实际上遵循它——否则agent是一个很长的独白。每个节拍
+      // 在re播放下一个块之前暂停在bubble。
       beginDemoReplay({ userText: t("onboarding.coach.demo_q2") });
-      await playFrames(conv2.slice(0, 29), { gapCapMs: 550 });   // explores, validates refdes, lays out the reasoning
+      await playFrames(conv2.slice(0, 29), { gapCapMs: 550 });   // 探索res，验证refdes，列出re推理
       if (cancelled()) return bail();
       await _step({ anchor: _mascotHost, text: t("onboarding.coach.demo_c2_diag"), placement: "top", mascot: "working" });
       if (cancelled()) return bail();
-      await playFrames(conv2.slice(29, 53), { gapCapMs: 450 });  // draws the chain + proposes a 6-step protocol
+      await playFrames(conv2.slice(29, 53), { gapCapMs: 450 });  // 绘制链条+道具os是6步protocol
       if (cancelled()) return bail();
       await _step({ anchor: _mascotHost, text: t("onboarding.coach.demo_c2_protocol"), placement: "top", mascot: "working" });
       if (cancelled()) return bail();
-      await playFrames(conv2.slice(53, 66), { gapCapMs: 500 });  // cold tests: F1 continuity + VIN→GND short
+      await playFrames(conv2.slice(53, 66), { gapCapMs: 500 });  // 冷测试：F1连续性+VIN→GND短
       if (cancelled()) return bail();
       await _step({ anchor: _mascotHost, text: t("onboarding.coach.demo_c2_cold"), placement: "top", mascot: "scanning" });
       if (cancelled()) return bail();
-      await playFrames(conv2.slice(66, 75), { gapCapMs: 500 });  // powered: 24 V present at the input
+      await playFrames(conv2.slice(66, 75), { gapCapMs: 500 });  // 功率red：24 V present 在input
       if (cancelled()) return bail();
       await _step({ anchor: _mascotHost, text: t("onboarding.coach.demo_c2_power"), placement: "top", mascot: "scanning" });
       if (cancelled()) return bail();
-      await playFrames(conv2.slice(75, 95), { gapCapMs: 450 });  // VIN healthy → pivots the suspect to U14
+      await playFrames(conv2.slice(75, 95), { gapCapMs: 450 });  // VIN 健康 → 将嫌疑人转向 U14
       if (cancelled()) return bail();
       await _step({ anchor: _mascotHost, text: t("onboarding.coach.demo_c2_u14"), placement: "top", mascot: "working" });
       if (cancelled()) return bail();
-      await playFrames(conv2.slice(95, 120), { gapCapMs: 450 }); // LPC_VCC = 3.3 V → the twist
+      await playFrames(conv2.slice(95, 120), { gapCapMs: 450 }); // LPC_VCC = 3.3V → 扭曲
       if (cancelled()) return bail();
       await _step({ anchor: _mascotHost, text: t("onboarding.coach.demo_c2_verdict"), placement: "top", mascot: "success", last: true, doneLabel: t("onboarding.coach.demo_done") });
       clearCues();
@@ -320,11 +320,11 @@ export async function maybeShowFirstDiagCoaching(rid, { onDone = null, slug = nu
   finishFirstDiagCoaching();
 }
 
-// True while the first-run tour is playing OR still owed (flag unset). Callers
-// use this to hold back competing surfaces during the tour — notably the chat
-// panel auto-open, so the early bubbles (header / capabilities / cards) aren't
-// covered. The tour's closing step points the tech at the chat toggle to open
-// it themselves.
+// 确实hi如果首轮巡回赛正在进行或仍然欠款（标志未设置）。来电者
+// 在游览过程中使用 this 阻止竞争表面——尤其是聊天
+// 面板自动操作en，所以早期的bubble（标题/功能/卡片）aren't
+// 海湾red。巡演的 closing 步骤将聊天切换处的技术指向 open
+// 它自己。
 export function firstDiagTourPending() {
   if (_running || _forceNext) return true;
   return !hasSeenOnboarding("first_diag_seen");
@@ -332,25 +332,25 @@ export function firstDiagTourPending() {
 
 export function finishFirstDiagCoaching() {
   hideBubble();
-  // Safety net: if the tech skips mid-tour, a detail panel opened by the demo's
-  // synthetic clicks (graph #inspector is a global aside; schematic #schInspector)
-  // would otherwise stay open across views. Close both.
+  // 安全net：如果技术人员在游览中途跳过，则会出现由demo 操作的详细面板en
+  // 合成 clicks（graph #inspector 是全局旁白；schematic #schInspector）
+  // 否则将保留 open acros 的视图。 Close 两者。
   try {
     document.getElementById("inspector")?.classList.remove("open");
     document.getElementById("schInspector")?.classList.remove("open");
-  } catch { /* best effort */ }
+  } catch { /* 尽最大努力 */ }
   if (_mascotHost) { _mascotHost.remove(); _mascotHost = null; _mascot = null; }
-  markOnboardingSeen("first_diag_seen"); // server (cross-device) + localStorage cache
+  markOnboardingSeen("first_diag_seen"); // 服务器（cross-设备）+localStorage缓存
   _running = false;
-  // Fire the completion hook last, after teardown + flag, so the handoff caller
-  // (landing onboarding, via window.__wbExampleTourOnDone) resumes cleanly.
+  // Fire 最后是完成钩子，在拆解 + 标志之后，因此切换调用者
+  // （landingonboarding，通过 window.__wbExampleTourOnDone）re干净利落。
   const cb = _onDone; _onDone = null;
   const wasDemo = _wasDemo; _wasDemo = false;
   if (typeof cb === "function") {
     cb();
   } else if (wasDemo) {
-    // "Ok, my turn" / skip / direct-open of the example with no landing handoff:
-    // leave the read-only example workspace instead of stranding the tech on it.
-    try { window.location.hash = "#landing"; } catch { /* best effort */ }
+    // “好吧，轮到我了”/跳过 / direct-open 没有 landing 切换的示例：
+    // 留下re仅限广告的示例workspace，而不是将技术搁置在其上。
+    try { window.location.hash = "#landing"; } catch { /* 尽最大努力 */ }
   }
 }

@@ -298,7 +298,7 @@ def test_ensure_pending_uses_active_when_index_exists(tmp_path: Path) -> None:
 
 
 def test_migration_legacy_messages_jsonl(tmp_path: Path) -> None:
-    # Set 继承repair：消息。jsonl 位于repair根，
+    # Set 继承repair：消息。 jsonl 位于repair根，
     # 还没有conversations/ subtree。
     repair_dir = _repair_root(tmp_path)
     repair_dir.mkdir(parents=True, exist_ok=True)

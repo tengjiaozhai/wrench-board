@@ -1,8 +1,7 @@
-"""Board-delta generation endpoint.
+"""Board-Delta 生成端点。
 
-POST /pipeline/packs/{slug}/board-delta  — generate + store a per-revision delta
-GET  /pipeline/packs/{slug}/board-delta/{board}  — retrieve a stored delta
-"""
+POST /pipeline/packs/{slug}/board-delta — 生成并存储每个修订版本的增量
+GET /pipeline/packs/{slug}/board-delta/{board} — 检索存储的增量"""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -26,12 +25,11 @@ async def create_board_delta(
     board_number: str = Form(...),
     x_owner_ref: str | None = Header(default=None, alias="X-Owner-Ref"),
 ):
-    """Generate and persist a board-delta for a given device revision.
+    """为给定的设备版本生成并保留板增量。
 
-    Calls the Claude agent, writes the result under
-    ``memory/{slug}/board_deltas/{board}.json``, and fires one
-    ``kind='delta'`` metering event (no-op on self-host).
-    """
+    呼叫 Claude 代理，将结果写在下面
+    ``memory/{⟦PRESERVE2⟧}/board_deltas/{board}.json``, and fires one
+    ``kind='delta'``计量事件（no-op在self-host上）。"""
     settings = get_settings()
     client = AsyncAnthropic(api_key=settings.anthropic_api_key, max_retries=settings.anthropic_max_retries)
     delta = await generate_board_delta(
@@ -56,7 +54,7 @@ async def create_board_delta(
 
 @router.get("/packs/{slug}/board-delta/{board}")
 async def get_board_delta(slug: str, board: str):
-    """Return a stored board-delta, or 404 if not yet generated."""
+    """返回存储的 board-delta，如果尚未生成，则返回 404。"""
     settings = get_settings()
     delta = read_delta(
         memory_root=Path(settings.memory_root),

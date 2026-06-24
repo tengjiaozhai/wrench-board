@@ -1,36 +1,36 @@
-// Diagnostic chat — chat-log DOM rendering + turn-block state machine (Phase
-// D.6 extraction from llm.js). Owns every node that lands in #llmLog: plain
-// message/system rows, the resume/context-lost cards, protocol system chips and
-// inline step cards, and the per-turn rail (thinking / tool steps / message /
-// cost foot). The WS message dispatcher in llm.js drives this module — it opens
-// a turn via ensureTurn(), feeds steps/messages into it, and closes it.
+// Diagnostic 聊天 — 聊天日志 DOM rendering + 转块状态 machine （阶段
+// D.6 提取actionfromllm.js）。拥有落在 #llmLog: plain 中的每个节点
+// message/system 行、resume/context-lost 卡、protocol system chip 和
+// 内联步骤卡，以及每回合 rail (thinking / 工具步骤 / 消息 /
+// cost 脚）。 llm.js中的WS消息调度程序驱动this模块——它操作ens
+// 通过 ensureTurn() 进行转弯，将步骤/消息输入其中，然后 closes 它。
 //
-// `currentTurn` is the single piece of mutable state here: the DOM node that
-// receives the next incoming thinking / tool_use / message event. llm.js no
-// longer holds it directly — it reads it back via getCurrentTurn() (cost foot)
-// and resets it via closeTurn() on (re)connect / replay-end / terminate.
+// `currentTurn` 是单个可变状态 here：DOM 节点
+// re接收下一个传入的thinking / tool_use /消息event。 llm.js 没有
+// directly 持有时间更长 — 它re通过 getCurrentTurn() 将其收回（cost 脚）
+// re通过 (re)connect / replay-end / 终止上的 closeTurn() 设置它。
 //
-// `t` resolves through the global window.t (i18n.js, a classic non-ESM script)
-// at CALL time so strings re-render on locale switch — mirrors the toolPhrases
-// convention. window.marked / window.DOMPurify are global CDN scripts, read
-// bare. escapeHTML guards every interpolated value.
+// `t` re通过全局 window.t 求解（i18n.js，经典的非ESM脚本）
+// at CALL time so strings re-render on locale switch — 镜像工具短语
+// 转换ention。 window.marked / window.DOMPurify are 全局 CDN 脚本，read
+// bare。 escapeHTML 保护每个插值。
 
 import { escapeHtml as escapeHTML } from '../../../shared/dom.js';
 import { renderAgentMarkup } from './chatMarkup.js';
 import { fmtUsd } from './costDisplay.js';
-// Same ?v=quest4 query main.js / llm.js use — ESM keys modules by URL, so a
-// bare './protocol.js' would create a second instance missing main.js's
-// Protocol.init() wiring.
+// 相同的 ?v=quest4 查询 main.js / llm.js 使用 — ESM 通过 URL 键控模块，因此
+// bare './protocol.js' 会导致re创建第二个缺少 main.js 的实例
+// Protocol.init() 接线。
 import * as Protocol from '../../../protocol.js?v=quest4';
 
 const t = (key, params) => (window.t ? window.t(key, params) : key);
 const el = (id) => document.getElementById(id);
 
-// Turn-block state machine.
-// currentTurn is the DOM node receiving the next incoming thinking / tool_use /
+// 转块状态machine。
+// currentTurn 是接收下一个传入的 thinking / tool_use / 的 DOM 节点re
 // message event. A user.message closes it (set to null). An assistant.message
-// that arrives when currentTurn already has a .turn-message opens a new turn
-// (agent emitted two messages back-to-back without a user interjection).
+// 到达 when currentTurn already 有一个 .turn-message opens 一个新回合
+// （agentemit连续发送两条消息，无需用户插入）。
 let currentTurn = null;
 
 export function logRow(cls, innerHTML) {
@@ -53,22 +53,22 @@ export function logMessage(role, text, isReplay = false) {
   );
 }
 
-// Distinct card rendered when MA dropped the prior session AND we had
-// no local JSONL backup to summarize from. The agent was recreated from
-// scratch; it has zero memory of the prior turns. Amber alert (different
-// from the violet "resumed-with-summary" card) so the tech knows their
-// next message hits a blank-slate model.
+// 不同的卡 rendered when MA 放弃了之前的会话，并且我们有
+// 没有本地 JSONL 备份到 summarize from。 agent recreated from
+// 划痕;它对先前回合的记忆为零。安珀警报（不同ent
+// from violet“resumed-with-summary”卡），以便技术人员知道他们的
+// 下一条消息hi是一个空白模型。
 export function renderContextLost(payload) {
   const oldId = payload?.old_session_id || "";
   const newId = payload?.new_session_id || "";
   const reason = payload?.reason === "ma_events_empty"
     ? t('chat.context_lost.reason_ma_empty')
     : t('chat.context_lost.reason_generic');
-  // `preserved` summarises what survived on disk independently of MA.
-  // The backend already pushed these facts to the fresh agent (intro
-  // block on resumed=False, synthetic user.message on resumed=True).
-  // This UI just tells the tech which artefacts the agent now has so they
-  // know what NOT to re-explain.
+  // `preserved` summ 产生与 MA 无关的endently 在磁盘上幸存的内容。
+  // 后面end already 将这些事实推到了fresh agent（简介
+  // 阻止 resumed=False，合成 user.message resumed=True）。
+  // This UI只是告诉技术人员hich文物agent现在有，所以他们
+  // 知道什么不应该re解释。
   const preserved = payload?.preserved || {};
   const mCount = Number(preserved.measurements || 0);
   const proto = preserved.protocol;
@@ -104,9 +104,9 @@ export function renderContextLost(payload) {
   );
 }
 
-// Distinct card rendered when an expired MA session had to be recreated and
-// Haiku summarised the prior conversation for the fresh agent. Shows the
-// same block the new agent is seeing, so the tech knows what carried over.
+// 不同的卡 rendered when 过期red MA 会话必须recreated 并且
+// Haikusumm出现了freshagent之前的对话。显示
+// 新的agent看到的是同一个区块，所以技术人员知道继承了什么。
 export function renderResumeSummary(payload) {
   const summary = payload?.summary || "";
   const tokIn = payload?.tokens_in ?? "n/a";
@@ -115,7 +115,7 @@ export function renderResumeSummary(payload) {
   if (typeof window.marked !== "undefined" && typeof window.DOMPurify !== "undefined") {
     try {
       bodyHTML = window.DOMPurify.sanitize(window.marked.parse(summary));
-    } catch (e) { /* keep escaped fallback */ }
+    } catch (e) { /* 保持逃脱后备 */ }
   }
   logRow(
     "resume-summary",
@@ -132,11 +132,11 @@ export function logSys(text, isErr = false) {
   logRow(isErr ? "sys err" : "sys", escapeHTML(text));
 }
 
-// Append a small terminal-state chip to the chat log (abandoned / completed).
-// Distinct visual from agent/user messages — centered, muted, mono — so the
-// tech can scroll back through the conv and see when a sequence was dropped
-// or finished, and why. Idempotent on protocol_id+kind to avoid duplicates
-// when the same event arrives twice (replay race, double-emit, etc.).
+// 应用程序en向聊天日志添加了一个小型终端状态chip（已放弃/已完成）。
+// 独特的视觉 from agent/用户消息 — centered、静音、单声道 — 所以
+// 技术人员可以向后滚动浏览并查看 when 序列ence 被删除
+// 或完成了，为什么。 protocol_id+kind 上的 Idempotent 以避免重复
+// when 同一个 event 到达两次（replay 比赛、双emit 等）。
 export function appendProtocolSystemEvent(kind, { protocol_id, reason } = {}) {
   const log = el("llmLog");
   if (!log) return;
@@ -148,8 +148,8 @@ export function appendProtocolSystemEvent(kind, { protocol_id, reason } = {}) {
   const label = kind === "abandoned"
     ? (window.t?.("protocol.system_event.abandoned") || "Protocol abandoned")
     : (window.t?.("protocol.system_event.completed") || "Protocol completed");
-  // Inline SVG matches the project's icon convention (16/12 px,
-  // stroke="currentColor", stroke-width=1.6) — no font icon dependency.
+  // 内联SVG匹配项目的图标转换ention（16/12px，
+  // stroke="currentColor", stroke-width=1.6) — 无字体图标 dependency。
   const icon = kind === "abandoned"
     ? `<svg class="pse-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6l-12 12"/></svg>`
     : `<svg class="pse-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>`;
@@ -164,9 +164,9 @@ export function appendProtocolSystemEvent(kind, { protocol_id, reason } = {}) {
   log.scrollTop = log.scrollHeight;
 }
 
-// Mode C — inline protocol step card in the chat stream when no board is loaded.
-// Renders only the active step (past steps are summarized in the wizard).
-// One card per active step id; subsequent events for the same id no-op.
+// 模式 C — 聊天中的内联 protocol 步骤卡ream en 没有 board loaded。
+// 仅 Renders 活动步骤（过去的步骤 are summarized 在 wizard 中）。
+// 每个活动步骤 ID 一张卡；相同 id no-op 的子后续ent events。
 export function renderInlineProtocolCard(_ev) {
   const proto = Protocol.getProtocol?.();
   if (!proto) return;
@@ -189,7 +189,7 @@ export function renderInlineProtocolCard(_ev) {
   log.scrollTop = log.scrollHeight;
 }
 
-// Create a fresh turn-block container and append it to the log.
+// Create一个fresh转块容器并应用en将其写入日志。
 function createTurn() {
   const log = el("llmLog");
   const turn = document.createElement("div");
@@ -211,8 +211,8 @@ export function closeTurn() {
   currentTurn = null;
 }
 
-// The turn currently receiving events, or null. llm.js reads this to attach
-// the cost foot to the live turn after a turn_cost event.
+// 当前ently re接收事件ents，或null。 llm.js re要附加的广告 thi
+// 在一个turn_cost event之后，cost脚到达实时转弯。
 export function getCurrentTurn() {
   return currentTurn;
 }
@@ -237,17 +237,17 @@ function clearPendingNode(turn) {
   if (p) p.remove();
 }
 
-// Append a .step into the turn's rail. kind ∈ {"thinking","mb","bv","mem",...}.
-// phraseHTML is trusted HTML (callers escape user-provided fragments
-// themselves — currently only tool names + refdes which are validated).
+// 应用程序end .step 进入回合的rail。 kind ∈ {"thinking","mb","bv","mem",...}。
+// phraseHTML 是受信任的 HTML（调用者转义用户提供的 fragments
+// 它们本身 — 当前en仅工具名称 + refdes which are 已验证）。
 //
-// `group` (optional) = { key, item } enables coalescing: when the agent fires
-// the SAME tool several times back-to-back (five component lookups, a burst of
-// memory reads, repeated globs) we don't stack five rows — we fold each new
-// occurrence's target chip into the previous step's inline list and dim the
+// `group` (可选) = { key, item } en可合并：when agent fires
+// 同一个工具连续进行几次time（五次component查找，一系列
+// 内存re广告，re重复的球体）我们不堆叠五行——我们折叠每行新的
+// 将发生者ence的目标chip放入pre上一步的内联列表中并将其变暗
 // whole run. A lone call (no following same-key call) renders normally. Returns
-// the live step node either way (the existing one when merged) so the caller's
-// addExpandToStep() attaches/accumulates the payload onto it.
+// 任一方式的实时步骤节点（现有的 when 合并），因此调用者的
+// addExpandToStep() 将 payload 附加/累积到其上。
 export function appendStep(turn, kind, phraseHTML, group = null) {
   clearPendingNode(turn);
   const rail = turn.querySelector(".turn-rail");
@@ -274,10 +274,10 @@ export function appendStep(turn, kind, phraseHTML, group = null) {
   return step;
 }
 
-// Fold one more same-tool occurrence into an existing step. With a target chip
-// (refdes / path / pattern) it joins a comma-separated inline list; without one
-// (variable-less ops) it just bumps a small ×N counter. `.grouped` dims the run
-// and lets the phrase wrap (see llm.css) so the full list stays readable.
+// 将一个 more 同工具发生ence 折叠到现有步骤中。目标chip
+// （refdes / 路径 / 模式）它加入一个 comma 分隔的内联列表；没有一个
+// （无变量操作）它只是碰撞一个小的 ×N 计数器。 `.grouped` 使运行变暗
+// 并让短语换行（参见llm.css），以便完整列表保持re可用。
 function mergeIntoGroup(step, group) {
   const count = (Number(step.dataset.groupCount) || 1) + 1;
   step.dataset.groupCount = String(count);
@@ -291,7 +291,7 @@ function mergeIntoGroup(step, group) {
       items.className = "step-items";
       phrase.appendChild(items);
     }
-    // group.item is trusted HTML built by toolPhrases.js (already escaped).
+    // group.item 是由 toolPhrases.js 构建的受信任 HTML（already 已转义）。
     items.insertAdjacentHTML("beforeend", `<span class="step-item-sep">, </span>${group.item}`);
   } else {
     let badge = phrase.querySelector(".step-count");
@@ -305,9 +305,9 @@ function mergeIntoGroup(step, group) {
 }
 
 export function addExpandToStep(step, payloadObj) {
-  // Grouped steps accumulate every occurrence's payload behind ONE chevron:
-  // when appendStep() merges a run, it returns the same node here repeatedly, so
-  // we push onto step._payloads and re-render rather than stacking buttons.
+  // Grouped 步骤累积每个发生者ence 的报酬load 成为hind 一个 V 形：
+  // when appendStep() 合并一次 run，它 re 反复转动同一个节点 here re，所以
+  // 我们推入step._payloads和re-render而不是堆叠按钮。
   if (!step._payloads) step._payloads = [];
   step._payloads.push(payloadObj);
 
@@ -343,7 +343,7 @@ export function addExpandToStep(step, payloadObj) {
       ? JSON.stringify(p, null, 2)
       : JSON.stringify(p, null, 2) + "\n\n" + t('chat.step.no_result');
   } else {
-    // A coalesced run: dump the per-occurrence payloads as an ordered array.
+    // 合并运行：将每次发生ence payloads 转储为 ordered 数组。
     pre.textContent = JSON.stringify(payloads, null, 2);
   }
 }
@@ -351,7 +351,7 @@ export function addExpandToStep(step, payloadObj) {
 export function appendTurnMessage(turn, text) {
   let msg = turn.querySelector(".turn-message");
   if (msg) {
-    // Second assistant message in the same turn — open a new turn.
+    // 同一个回合中的第二个助理消息 — open 新回合。
     closeTurn();
     turn = ensureTurn();
     msg = null;
@@ -366,7 +366,7 @@ export function appendTurnMessage(turn, text) {
 }
 
 export function appendTurnFoot(turn, payload) {
-  // Terminal signal for this turn — clear transient indicators.
+  // this 转弯的终端信号 — 清除中转ent 指示器。
   clearPendingNode(turn);
   let foot = turn.querySelector(".turn-foot");
   if (!foot) {

@@ -142,7 +142,7 @@ async def test_managed_forwarder_no_note_when_board_unchanged():
 
 # --------------------------------------------------------------------------- #
 # Direct runtime — 源代码级锁（循环太大，无法利用 here；
-# 与 test_runtime_conv_id_dispatch.py​​ 相同的规则）
+# 与 test_runtime_conv_id_dispatch.py​​​​ 相同的规则）
 # --------------------------------------------------------------------------- #
 
 def test_direct_loop_refreshes_board_and_recomputes_snapshot():

@@ -1,10 +1,9 @@
-"""Atomic file writes for the bench generator.
+"""为工作台生成器写入原子文件。
 
-Four per-run artefacts + the cross-run `_latest.json` aggregate + the
-runtime-consumed `memory/{slug}/simulator_reliability.json` + source
-archive snapshots. Every write uses tempfile + os.replace to avoid
-half-written files on crash.
-"""
+四个每次运行工件 + 交叉运行 `_latest.json` 聚合 +
+运行时消耗的 `memory/{⟦PRESERVE0⟧}/simulator_reliability.json` + 源
+存档快照。每次写入都使用 tempfile + os.replace 来避免
+崩溃时写了一半的文件。"""
 
 from __future__ import annotations
 
@@ -57,7 +56,7 @@ def write_per_run_files(
     manifest: RunManifest,
     scorecard: Scorecard,
 ) -> None:
-    """Write the four per-run files atomically."""
+    """以原子方式写入四个每次运行的文件。"""
     base = output_dir / f"{slug}-{run_date}"
     _atomic_write_text(
         Path(str(base) + ".jsonl"),
@@ -92,8 +91,8 @@ def update_latest_json(
     scorecard: Scorecard,
     run_date: str,
 ) -> None:
-    """Merge this run's score into the aggregate _latest.json under an
-    fcntl advisory lock so concurrent runs don't clobber each other."""
+    """将此运行的分数合并到聚合下的 _latest.json 中
+    fcntl 咨询锁，因此并发运行不会互相干扰。"""
     latest_path.parent.mkdir(parents=True, exist_ok=True)
     with open(latest_path, "a+", encoding="utf-8") as fh:
         fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
@@ -126,7 +125,7 @@ def write_source_archives(
     archive_dir: Path,
     scenarios: list[ProposedScenario],
 ) -> None:
-    """One text file per accepted scenario. Overwritten on re-run."""
+    """每个接受的场景一个文本文件。重新运行时覆盖。"""
     archive_dir.mkdir(parents=True, exist_ok=True)
     for s in scenarios:
         archive_path = archive_dir / f"{s.id}.txt"
@@ -135,7 +134,7 @@ def write_source_archives(
 
 
 def write_reliability_card(*, memory_dir: Path, card: ReliabilityCard) -> None:
-    """Write memory/{slug}/simulator_reliability.json for runtime consumption."""
+    """编写 memory/{slug}/simulator_reliability.json 用于运行时消耗。"""
     _atomic_write_text(
         memory_dir / "simulator_reliability.json",
         json.dumps(card.model_dump(), indent=2),

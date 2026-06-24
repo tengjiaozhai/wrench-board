@@ -20,9 +20,9 @@ from api.tools.validation import _known_refdes
 def _graph(refdes: str, kind: str) -> dict:
     """ElectricalGraph minimal valide avec UN composant `refdes` de `kind`
     (les deux lecteurs valident le graphe entier via ElectricalGraph)."""
-    # `type` et `kind` sont deux Literals distincts dans ElectricalGraph :
-    # type ∈ {resistor, ic, …}, kind ∈ {ic, passive_r, …}. _lookup_comp_kind
-    # lit `kind`, _known_refdes la clé refdes.
+    # `type` 和 `kind` 是 ElectricalGraph 中两个不同的 Literal：
+    # 类型 ∈ {resistor, ic, …}，种类 ∈ {ic, Passive_r, …}。 _lookup_comp_kind
+    # 读取“kind”，_known_refdes 键refdes。
     comp_type = "ic" if kind == "ic" else "resistor"
     return {
         "device_slug": "iphone-x",
@@ -65,7 +65,7 @@ def test_known_refdes_resolves_per_owner(tmp_path: Path) -> None:
 
     assert known_a == {"U_A"}
     assert known_b == {"U_B"}
-    # Croisé : A ne voit pas le composant de B et inversement.
+    # 交叉：A 看不到 B 的分量，反之亦然。
     assert "U_B" not in known_a
     assert "U_A" not in known_b
 
@@ -121,7 +121,7 @@ def test_lookup_comp_kind_resolves_per_owner(tmp_path: Path) -> None:
         set_owner_ref(None)
 
     assert kind_a_own == "ic"
-    assert kind_a_other is None  # le composant de B est invisible pour A
+    assert kind_a_other is None  # B 的组件对于 A 来说是不可见的
     assert kind_b_own == "passive_r"
     assert kind_b_other is None
 

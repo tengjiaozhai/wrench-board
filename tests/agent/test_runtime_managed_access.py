@@ -31,7 +31,7 @@ async def test_memory_store_attached_read_only(monkeypatch, tmp_path):
     class FakeSessions:
         async def create(self, **kwargs):
             captured.update(kwargs)
-            raise Exception("stop here")  # bail before streaming
+            raise Exception("stop here")  # re streaming 之前保释
         async def retrieve(self, sid):
             raise Exception("none")
     class FakeBeta:
@@ -40,7 +40,7 @@ async def test_memory_store_attached_read_only(monkeypatch, tmp_path):
         beta = FakeBeta()
     monkeypatch.setattr(rm, "AsyncAnthropic", lambda **_kw: FakeClient())
 
-    # Run until session create raises; we only care about the payload.
+    # 运行直到会话 create 引发；我们只需要re关于工资load。
     try:
         await rm.run_diagnostic_session_managed(ws, "demo", tier="fast")
     except Exception:

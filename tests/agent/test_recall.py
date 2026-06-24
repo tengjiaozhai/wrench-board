@@ -46,7 +46,7 @@ def _write_report(memory_root: Path, slug: str, refdes: str, symptom: str, cause
     (d / f"{fr.report_id}.md").write_text(fr.to_markdown(), encoding="utf-8")
 
 
-# --- field reports -----------------------------------------------------------
+# --- field reports ----------------------------------------------------------------------
 
 
 def test_recall_field_reports_filters_by_query(tmp_path: Path) -> None:
@@ -78,14 +78,14 @@ def test_recall_field_reports_empty_when_none(tmp_path: Path) -> None:
     assert out == []
 
 
-# --- patterns (real seed_data) -----------------------------------------------
+# --- 模式 (real 种子数据) --------------------------------------------------------------
 
 
 def test_search_patterns_matches_keyword() -> None:
     out = search_patterns("short")
     names = [p["name"] for p in out]
     assert any("short-to-gnd" in n for n in names), names
-    # each hit carries readable content for the agent.
+    # 每个 hit 都承载 agent 的 readable content。
     assert all(p.get("content") for p in out)
 
 
@@ -93,7 +93,7 @@ def test_search_patterns_no_match_returns_empty() -> None:
     assert search_patterns("zzz-no-such-archetype-xyz") == []
 
 
-# --- playbooks (real seed_data) ----------------------------------------------
+# --- 剧本 (real seed_data) ----------------------------------------------------------
 
 
 def test_search_playbooks_matches_symptom() -> None:
@@ -108,7 +108,7 @@ def test_search_playbooks_no_match_returns_empty() -> None:
     assert search_playbooks("symptom-that-no-playbook-covers") == []
 
 
-# --- dispatch wiring in runtime_direct ---------------------------------------
+# --- runtime_direct 调度接线 ------------------------------------------
 
 
 async def test_dispatch_recall_field_reports(tmp_path: Path) -> None:

@@ -85,9 +85,9 @@ def test_every_tool_name_appears_in_markdown(group_attr: str) -> None:
     body = DOCS_PATH.read_text(encoding="utf-8")
     for tool in getattr(manifest, group_attr):
         name = tool["name"]
-        # The script renders each tool as a `### \`name\`` heading; we
-        # match the backtick-wrapped form to avoid accidental hits in
-        # prose paragraphs.
+        # 脚本将每个工具renders为`### \`name\`标题；我们
+        # 匹配反引号包裹的形式以避免 accidental hits
+        # 散文图。
         needle = f"`{name}`"
         assert needle in body, (
             f"tool {name} from {group_attr} missing from docs/tools.md — "
@@ -99,7 +99,7 @@ def test_summary_table_counts_match_module() -> None:
     """The Sommaire table at the top must list the actual group sizes."""
     _run_script()
     body = DOCS_PATH.read_text(encoding="utf-8")
-    # Each family heading also embeds the count: "## <label> — N tool(s)".
+    # 每个系列标题还嵌入计数：“## <标签> — N 工具”。
     expected_counts = {
         "MB_TOOLS": len(manifest.MB_TOOLS),
         "BV_TOOLS": len(manifest.BV_TOOLS),
@@ -109,7 +109,7 @@ def test_summary_table_counts_match_module() -> None:
         "CAM_TOOLS": len(manifest.CAM_TOOLS),
         "CONSULT_TOOLS": len(manifest.CONSULT_TOOLS),
     }
-    # Spot-check via the per-family heading lines.
+    # 通过每个家庭的标题行进行抽查。
     headings = re.findall(r"^## .+ — (\d+) tool\(s\)$", body, flags=re.M)
     actual_counts = [int(c) for c in headings]
     assert actual_counts == [
@@ -138,9 +138,9 @@ def test_manifest_docstring_mentions_actual_family_counts() -> None:
         "CONSULT_TOOLS": len(manifest.CONSULT_TOOLS),
     }
     for group_name, expected in cases.items():
-        # We require the docstring to mention the family name AND its
-        # exact count somewhere in the same logical line (separated only
-        # by punctuation/whitespace).
+        # 我们require文档字符串来mention姓氏及其
+        # 同一逻辑行中某处re的精确计数（仅分隔
+        # 按标点符号/whitespace）。
         pattern = re.compile(
             rf"{re.escape(group_name)}\s*:\s*{expected}\b",
             flags=re.IGNORECASE,

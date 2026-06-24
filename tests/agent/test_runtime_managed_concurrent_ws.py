@@ -71,8 +71,8 @@ class _FakeStream:
 
     async def __anext__(self):
         if self._gate is not None and not self._events:
-            # Once the queue is drained, hold open until the test releases
-            # — mimics MA keeping the SSE connection alive between turns.
+            # 一旦队列被清空，保留 open 直到测试 re 释放
+            # — 模仿 MA 在en 回合之间保持 SSE 连接处于活动状态。
             await self._gate.wait()
         if self._events:
             return self._events.pop(0)
@@ -118,7 +118,7 @@ def _stale_settings(monkeypatch, rm, *, timeout: float = 600.0) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 1 — shared events_by_id but per-task responded_tool_ids: BUG REVEALED
+# 测试 1 — shared events_by_id 但每个任务responded_tool_ids：BUG 已暴露
 # ---------------------------------------------------------------------------
 
 
@@ -152,9 +152,9 @@ async def test_two_ws_same_conv_dedup_tool_ids(monkeypatch, tmp_path):
 
     _stale_settings(monkeypatch, rm)
 
-    # Count dispatch invocations across both forwarders.
+    # 计算两个转发器的调度调用 acros。
     dispatch_calls: list[tuple[str, dict]] = []
-    dispatch_lock = asyncio.Lock()  # serializes append; not on the SUT
+    dispatch_lock = asyncio.Lock()  # 序列化 append；不在 SUT 上
 
     async def fake_dispatch(name, payload, *_a, **_kw):
         async with dispatch_lock:
@@ -163,8 +163,8 @@ async def test_two_ws_same_conv_dedup_tool_ids(monkeypatch, tmp_path):
 
     monkeypatch.setattr(rm, "_dispatch_tool", fake_dispatch)
 
-    # Same eid across both streams — the entire point of the test. A
-    # shared events_by_id dict is what would simulate "both forwarders
+    # 相同的 eid acros 两个 streams — 测试的 entire 点。一个
+    # shared events_by_id 字典就是simulate“两个转发器
     # see the same upstream tool_use".
     eid = "sevt_shared_001"
 
@@ -195,8 +195,8 @@ async def test_two_ws_same_conv_dedup_tool_ids(monkeypatch, tmp_path):
     ws_a = _make_ws()
     ws_b = _make_ws()
 
-    # CRITICAL: shared events_by_id between the two forwarders (the only
-    # state that, by signature, COULD be shared today).
+    # 关键：两个转发器之间的 shared events_by_id（唯一
+    # 声明，通过签名re，今天可能会被red）。
     shared_events_by_id: dict = {}
 
     session_state_a = SessionState.from_device("nonexistent-slug")
@@ -221,11 +221,11 @@ async def test_two_ws_same_conv_dedup_tool_ids(monkeypatch, tmp_path):
         ),
     )
 
-    # CURRENT BEHAVIOR — see audit: both forwarders dispatch the same
-    # tool independently because responded_tool_ids is per-call local
-    # state, not shared across forwarders. The "ideal" outcome would
-    # be exactly 1, but the runtime does not coordinate across
-    # concurrent forwarders today.
+    # 当前行为 — 请参阅审核：两个货运代理均派发相同的货物
+    # 工具独立endently，因为responded_tool_ids 是每次调用本地的
+    # 状态，而不是 shared across 转发器。 “理想”的结果是
+    # 恰好为 1，但 runtime 不协调 across
+    # 今天同意ent 转发器。
     assert len(dispatch_calls) == 2, (
         "Expected the documented bug: two concurrent forwarders sharing a "
         "session each run their own dispatch for the same tool_use eid. "
@@ -235,8 +235,8 @@ async def test_two_ws_same_conv_dedup_tool_ids(monkeypatch, tmp_path):
         call == ("bv_highlight_component", {"refdes": "U7"})
         for call in dispatch_calls
     )
-    # Each forwarder also posts its own user.custom_tool_result back to
-    # MA — the second one is what MA would reject with 400 in production.
+    # 每个转发器还 posts 自己的 user.custom_tool_result 返回
+    # MA — 第二个是 MA 在生产 400 台时 re 喷射的东西。
     sent_a = [
         ev for call in client_a.beta.sessions.events.send.await_args_list
         for ev in call.kwargs.get("events", [])
@@ -254,7 +254,7 @@ async def test_two_ws_same_conv_dedup_tool_ids(monkeypatch, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Test 2 — WS close mid-tool-dispatch must drain mirror tasks cleanly
+# 测试 2 — WS close mid-tool-dispatch 必须干净地耗尽镜像任务
 # ---------------------------------------------------------------------------
 
 
@@ -280,15 +280,15 @@ async def test_ws_close_mid_tool_dispatch_cleanup(monkeypatch, tmp_path):
     _stale_settings(monkeypatch, rm)
 
     dispatch_started = asyncio.Event()
-    dispatch_release = asyncio.Event()  # never set in this test
+    dispatch_release = asyncio.Event()  # 从未在 this 测试中设置
 
     async def hanging_dispatch(name, payload, *_a, **_kw):
         dispatch_started.set()
-        # Hang as if the tool were waiting on a slow downstream call.
+        # 就像我们re等待缓慢下降的re呼叫一样，挂起该工具。
         try:
             await dispatch_release.wait()
         except asyncio.CancelledError:
-            # Real dispatch tools must cooperate with cancel — propagate.
+            # 真正的调度工具必须配合cancel-propagate。
             raise
         return {"ok": True}
 
@@ -305,8 +305,8 @@ async def test_ws_close_mid_tool_dispatch_cleanup(monkeypatch, tmp_path):
         type="session.status_idle",
         stop_reason=SimpleNamespace(type="requires_action", event_ids=[eid]),
     )
-    # gate keeps the stream open after the queue drains so the forwarder
-    # is genuinely stuck inside _dispatch_tool when we cancel.
+    # 队列耗尽后，gate 会保留 stream open，以便转发器
+    # en完全卡在 _dispatch_tool 中，我们取消了en。
     keep_open = asyncio.Event()
     stream = _FakeStream(events=[tool_use, requires_action], gate=keep_open)
     client = _make_client(stream)
@@ -326,13 +326,13 @@ async def test_ws_close_mid_tool_dispatch_cleanup(monkeypatch, tmp_path):
         name="session->ws",
     )
 
-    # Wait until the dispatch is in-flight, then trigger the WS-close path
-    # by cancelling the forwarder (this is what _run_session_loop does
-    # when its sibling task raises WebSocketDisconnect).
+    # 等到调度正在飞行中，en触发WS-close路径
+    # 通过取消转发器（this 是 _run_session_loop 的作用
+    # when 它的兄弟任务会引发WebSocketDisconnect）。
     await asyncio.wait_for(dispatch_started.wait(), timeout=1.0)
     forwarder.cancel()
 
-    # Drain the forwarder, mirror the orchestrator's per-task wait pattern.
+    # 排空转发器，镜像 orchestrator 的每任务等待模式。
     await asyncio.wait({forwarder}, timeout=1.0)
     assert forwarder.done(), "forwarder must observe its cancel within the budget"
     assert forwarder.cancelled(), (
@@ -340,18 +340,18 @@ async def test_ws_close_mid_tool_dispatch_cleanup(monkeypatch, tmp_path):
         "orchestrator's post-cancel telemetry sees the right state"
     )
 
-    # No orphan tasks may linger in session_mirrors past wait_drain.
-    # In this test we never spawned via mirrors, but wait_drain must still
-    # return promptly even with an empty pool — it's the contract the
-    # orchestrator's finally block relies on.
+    # 在 wait_drain 之后，任何孤立任务都不会停留在 session_mirrors 中。
+    # 在 this 测试中，我们从未通过镜像生成，但 wait_drain 仍然必须
+    # re立即转向 even 并使用空池 - 这是合约
+    # orchestrator 的最终块 re 位于。
     await asyncio.wait_for(session_mirrors.wait_drain(timeout=1.0), timeout=2.0)
     assert len(session_mirrors._pending) == 0, (
         "session_mirrors pool must be empty after WS-close cleanup; got "
         f"{len(session_mirrors._pending)} orphan tasks"
     )
 
-    # Allow the gate to release any held tasks so pytest doesn't surface
-    # a "task pending" warning at session teardown.
+    # 允许门re出租任何保留的任务，这样pytest就不会浮出水面
+    # 会话拆卸时出现“task pending”警告。
     keep_open.set()
 
 
@@ -381,15 +381,15 @@ async def test_ws_close_mid_dispatch_drains_mirror_spawned_tasks(
         await asyncio.sleep(0.02)
         delivered.append(label)
 
-    # Simulate a dispatch that fires-and-forgets several mirror sends
-    # before returning, then the WS closes.
+    # 模拟一次 fires-and-forgets 多个镜像 sends 的调度
+    # 在rere转弯之前，第enWScloses。
     mirrors.spawn(slow_mirror_send("frame_a"))
     mirrors.spawn(slow_mirror_send("frame_b"))
     mirrors.spawn(slow_mirror_send("frame_c"))
 
-    # The orchestrator's finally block runs wait_drain BEFORE cleaning
-    # up the WS / global emitters; assert the mirrored sends survive
-    # the cancellation of the forwarder above.
+    # orchestrator 的 finally 块在清理之前运行 wait_drain
+    # 向上 WS / 全局 emitters；断言 mirrored sends 存活
+    # 上述货运代理的取消。
     await mirrors.wait_drain(timeout=2.0)
     assert sorted(delivered) == ["frame_a", "frame_b", "frame_c"], (
         f"all mirror sends must drain before teardown; got {delivered!r}"
@@ -398,7 +398,7 @@ async def test_ws_close_mid_dispatch_drains_mirror_spawned_tasks(
 
 
 # ---------------------------------------------------------------------------
-# Test 3 — two forwarders on the same device, different tiers, isolated
+# 测试 3 — 同一设备上的两个转发器，不同ent tiers，隔离
 # ---------------------------------------------------------------------------
 
 
@@ -421,8 +421,8 @@ async def test_two_ws_different_tiers_isolated_state(monkeypatch, tmp_path):
     )
 
     def _build_events(tag: str):
-        # Each forwarder sees a unique text payload tagged with its tier
-        # so we can assert non-crossover at the WS layer.
+        # 每个转运商都会看到一个独特的文本 payload 并标记有其 tier
+        # 所以我们可以在WS层断言非crossover。
         return [
             SimpleNamespace(
                 type="agent.message",
@@ -482,8 +482,8 @@ async def test_two_ws_different_tiers_isolated_state(monkeypatch, tmp_path):
     assert len(turn_fast) == 1
     assert len(turn_deep) == 1
 
-    # Strict no-crosstalk check: the FAST text never landed on the deep WS
-    # and vice versa.
+    # 严格的 no-crosstalk 检查：FAST 文本从未落在 deep WS 上
+    # 反之亦然。
     deep_texts = {p.get("text") for p in payloads_deep if "text" in p}
     fast_texts = {p.get("text") for p in payloads_fast if "text" in p}
     assert "hello from FAST" not in deep_texts
@@ -491,7 +491,7 @@ async def test_two_ws_different_tiers_isolated_state(monkeypatch, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Test 4 — concurrent mutation of a shared SessionState.highlights set
+# 测试 4 — shared SessionState.highlights 集的并发ent 突变
 # ---------------------------------------------------------------------------
 
 
@@ -526,14 +526,14 @@ async def test_two_ws_concurrent_session_state_board_mutation(
 
     _stale_settings(monkeypatch, rm)
 
-    # We need a real bv_highlight_component dispatch so `session.highlights`
-    # actually mutates. Build a minimal Board-shaped object whose
-    # `validator.is_valid_refdes` accepts U7 and R5.
+    # 我们需要一个 real bv_highlight_component 调度，所以 `session.highlights`
+    # 实际上会变异。构建一个最小 Board 形状的物体 whose
+    # `validator.is_valid_refdes` 接受 U7 和 R5。
     class _StubBoard:
         def __init__(self, refdes_set: set[str]):
             self._refdes = refdes_set
-            # The validator does `not is_valid_refdes(session.board, ...)`,
-            # which calls `board.part_by_refdes(r)` — provide a dict.
+            # validator 不会 `not is_valid_refdes(session.board, ...)`，
+            # which 调用 `board.part_by_refdes(r)` — 提供一个字典。
             self._part_by_refdes_cache = {r: SimpleNamespace(refdes=r) for r in refdes_set}
 
         def part_by_refdes(self, refdes: str):
@@ -543,8 +543,8 @@ async def test_two_ws_concurrent_session_state_board_mutation(
         def parts(self):
             return [SimpleNamespace(refdes=r) for r in self._refdes]
 
-    # Patch the validator's `is_valid_refdes` so our stub board is accepted
-    # without going through the real `Board` model_post_init machinery.
+    # 修补 validator 的 `is_valid_refdes`，以便我们的存根 board 被接受
+    # 无需经过 real `Board` model_post_init machinery。
     from api.board import validator as _v
 
     real_is_valid = _v.is_valid_refdes
@@ -609,10 +609,10 @@ async def test_two_ws_concurrent_session_state_board_mutation(
         ),
     )
 
-    # CURRENT BEHAVIOR — see audit F4: with `additive=True` both writes
-    # merge into the shared set without any data loss because each call
-    # only does a `session.highlights.update([refdes])`. Both refdes must
-    # be present.
+    # 当前行为 — 请参阅审核 F4：使用 `additive=True` 都写入
+    # 合并到 shared 集合中，没有任何数据 loss，因为每次调用
+    # 只执行 `session.highlights.update([refdes])`。 refdes 都必须
+    # 为 present。
     assert shared_session.highlights == {"U7", "R5"}, (
         "additive bv_highlight calls on a shared session must merge into "
         f"a {{U7, R5}} set; got {shared_session.highlights!r}. "
@@ -685,7 +685,7 @@ async def test_two_ws_concurrent_non_additive_highlight_documents_clobber(
                 type="agent.custom_tool_use",
                 id=eid,
                 name="bv_highlight",
-                input={"refdes": refdes},  # additive defaults to False
+                input={"refdes": refdes},  # 加法默认为 False
             ),
             SimpleNamespace(
                 type="session.status_idle",
@@ -723,8 +723,8 @@ async def test_two_ws_concurrent_non_additive_highlight_documents_clobber(
         ),
     )
 
-    # CURRENT BEHAVIOR — see audit F4: only one refdes survives. Which
-    # one depends on scheduler ordering — both are valid outcomes today.
+    # 当前行为 — 请参阅审核 F4：只有一个 refdes 幸存。 Which
+    # 调度程序排序依赖ends — 今天都是re 有效结果。
     final = shared_session.highlights
     assert final in ({"U7"}, {"R5"}), (
         "with additive=False on a shared session, the final highlights set "
