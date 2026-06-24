@@ -17,6 +17,17 @@ except ImportError as e:  # pragma: no cover - system dep
     sys.stderr.write(f"pcbnew not available: {e}\n")
     sys.exit(2)
 
+# KiCad 10.0 requires wxApp before pcbnew.LoadBoard()
+# Redirect wx debug messages to stderr so they don't pollute stdout JSON
+import os, io
+os.environ["wxLOG"] = ""
+_real_stdout = sys.stdout
+sys.stdout = sys.stderr
+import wx
+_app = wx.App(False)
+_app.ExitMainLoop
+sys.stdout = _real_stdout
+
 
 NM_PER_MIL = 25400  # 1 mil = 25400 nm
 
@@ -39,7 +50,7 @@ def main(path: str) -> None:
 
     # Outline: use GetBoardPolygonOutlines, take first polygon
     outlines = pcbnew.SHAPE_POLY_SET()
-    pcb.GetBoardPolygonOutlines(outlines)
+    pcb.GetBoardPolygonOutlines(outlines, True)  # True = infer outline if necessary
     outline_pts: list[dict] = []
     if outlines.OutlineCount() > 0:
         o = outlines.Outline(0)

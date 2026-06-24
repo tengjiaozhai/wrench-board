@@ -28,6 +28,41 @@ from api.board.parser.test_link import _GROUND_RE, _POWER_RE
 _EXTRACT_SCRIPT = Path(__file__).parent / "_kicad_extract.py"
 KICAD_PARSE_TIMEOUT = 30  # seconds — MNT Reform at ~400 KB parses in ~2s
 
+_KICAD_PYTHON_PATHS = [
+    # macOS KiCad.app bundled Python
+    "/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/3.9/bin/python3.9",
+    "/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/3.11/bin/python3.11",
+    # Linux typical paths
+    "/usr/bin/kicad-cli",
+]
+
+
+def _find_kicad_python() -> str | None:
+    """Find a Python interpreter that has pcbnew available."""
+    import sys
+
+    # Check if current Python already has pcbnew
+    try:
+        import pcbnew  # noqa: F401
+        return sys.executable
+    except ImportError:
+        pass
+
+    # Check known KiCad Python paths
+    for p in _KICAD_PYTHON_PATHS:
+        if Path(p).exists():
+            try:
+                result = subprocess.run(
+                    [p, "-c", "import pcbnew"],
+                    capture_output=True,
+                    timeout=5,
+                )
+                if result.returncode == 0:
+                    return p
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                pass
+    return None
+
 
 class KicadSubprocessError(InvalidBoardFile):
     """Raised when the KiCad extractor subprocess fails (non-zero exit, stderr, timeout)."""
@@ -72,7 +107,7 @@ class KicadPcbParser(BoardParser):
             except (OSError, ValueError, KeyError):
                 pass  # unreadable/corrupt sidecar → fall through to the extractor
 
-        python3 = shutil.which("python3") or "/usr/bin/python3"
+        python3 = _find_kicad_python() or shutil.which("python3") or "/usr/bin/python3"
         try:
             result = subprocess.run(
                 [python3, str(_EXTRACT_SCRIPT), str(path)],
