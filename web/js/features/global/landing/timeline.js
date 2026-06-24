@@ -1,34 +1,34 @@
-// 着陆 pipeline timeline — 技术人员监视的 narrated 相带
-// while knowledge factory 构建fresh 设备包 (Phase D.8 extraction
-// fromlanding/index.js）。 Pure DOM ren在#landing时间轴上排序 /
-// #landingPhaseList 标记：show/hide，已过的time 股票代码，每阶段
-// 状态+旁白，动态schematic/设备类型行，以及干净的
-// reen 运行之间的阶段行集。
+// Landing pipeline timeline — the narrated phase strip the technician watches
+// while the knowledge factory builds a fresh device pack (Phase D.8 extraction
+// from landing/index.js). Pure DOM rendering over the #landingTimeline /
+// #landingPhaseList markup: show/hide, the elapsed-time ticker, per-phase
+// state + narration, the dynamic schematic/device-kind rows, and a clean
+// reset of the phase rows between runs.
 //
-// 无编排状态 here — index.js 拥有 WS 订阅，
-// 设备类暂停面板，以及 `_landingPaused`；它驱动 this 模块 from
-// progress-event 处理程序。 `window.t` (i18n.js) 是 read 在调用 time 所以字符串
-// re-render位于locale开关上； _escapeHtml 保护插入的标签键。
+// No orchestration state here — index.js owns the WS subscription, the
+// device-kind pause panel, and `_landingPaused`; it drives this module from its
+// progress-event handler. `window.t` (i18n.js) is read at call time so strings
+// re-render on locale switch; _escapeHtml guards interpolated label keys.
 
 import { escapeHtml as _escapeHtml } from '../../../shared/dom.js';
 
-// 固定 5 相工厂pipeline，按en顺序排列。导出是因为
-// index.js 的 progress 处理程序 + 缓存-timeline 播放器迭代它。
+// The fixed 5-phase factory pipeline, in render order. Exported because
+// index.js's progress handler + cached-timeline player iterate it.
 export const PHASE_ORDER = ["scout", "registry", "mapper", "writers", "audit"];
 
-// 动态相仅注入 when orchestrator emit（schematic
-// 向上load路径）。 Map跳转到他们的i18n标签键。不在 PHASE_ORDER 中 — 他们
-// are rendered 按需from phase_started events。导出是因为index.js的
-// 处理程序测试“LANDING_DYNAMIC_PHASES 中的阶段”。
+// Dynamic phases injected only when the orchestrator emits them (schematic
+// upload path). Mapped to their i18n label keys. Not in PHASE_ORDER — they
+// are rendered on demand from phase_started events. Exported because index.js's
+// handler tests `phase in LANDING_DYNAMIC_PHASES`.
 export const LANDING_DYNAMIC_PHASES = {
   schematic_ingest: "landing.timeline.phase_schematic_ingest",
   device_kind: "landing.timeline.phase_device_kind",
 };
 
-// 飞行中运行的挂钟开始，显示已过去的time 股票代码。
+// Wall-clock start of the in-flight run, for the elapsed-time ticker.
 let pipelineStartedAt = 0;
-// ETA 股票代码句柄 — 模块本地（原为 window.__landingEtaTimer；删除了
-// D.8 中是全局的，因为 landing 是唯一的所有者）。 time 处有一个间隔。
+// ETA ticker handle — module-local (was window.__landingEtaTimer; dropped the
+// global in D.8 since landing is the only owner). One interval at a time.
 let _etaTimer = null;
 
 export function showTimeline() {
@@ -77,24 +77,24 @@ export function ensureLandingPhase(phaseKey) {
     `</div>` +
     `<ul class="landing-phase-log" data-role="log" hidden></ul>`;
   const scout = list.querySelector('.landing-phase[data-phase="scout"]');
-  list.insertBefore(li, scout);  // null 侦察 → 应用ended（安全）
+  list.insertBefore(li, scout);  // null scout → appended (safe)
 }
 
 export function setPhaseState(phase, state) {
-  // 状态 ∈ “运行” | “完成”| “失败的”
+  // state ∈ "running" | "done" | "failed"
   const li = document.querySelector(`.landing-phase[data-phase="${phase}"]`);
   if (!li) return;
-  li.hidden = false;  // 映射器启动 hidden 直到 phase_started 到达
+  li.hidden = false;  // mapper starts hidden until a phase_started arrives
   li.classList.remove("is-running", "is-done", "is-failed");
   if (state === "running") li.classList.add("is-running");
   if (state === "done") li.classList.add("is-done");
   if (state === "failed") li.classList.add("is-failed");
 }
 
-// 实时子步骤落地：refresh 始终可见的紧凑线（最新
-// 步骤）和 append 到每阶段详细日志（revealed 由“详细信息”
-// 切换）。两者均由 orchestrator 的 `phase_step` events 提供。 `文本`是
-// pre-由调用者本地化（index.js PhaseStepText）。
+// A live sub-step landed: refresh the always-visible compact line (latest
+// step) AND append to the per-phase detail log (revealed by the "détail"
+// toggle). Both fed by the orchestrator's `phase_step` events. `text` is
+// pre-localized by the caller (index.js phaseStepText).
 export function setPhaseStep(phase, text) {
   const li = document.querySelector(`.landing-phase[data-phase="${phase}"]`);
   if (!li) return;
@@ -106,16 +106,16 @@ export function setPhaseStep(phase, text) {
     item.textContent = text;
     log.appendChild(item);
   }
-  // 只有当该阶段有 ≥1 个子步骤时，细节切换才会获得其位置
-  // （registry/映射器emit没有，所以他们的保持hidden）。
+  // The detail toggle only earns its place once the phase has ≥1 sub-step
+  // (registry / mapper emit none, so theirs stays hidden).
   const btn = li.querySelector('[data-role="detail-toggle"]');
   if (btn) btn.hidden = false;
   li.classList.add("has-steps");
 }
 
-// 一个委托的click列表ener处理每个阶段的“详细信息”切换（静态
-// + 动态注入的行）。 Idempotent — 由 dataset 标志守护，因此
-// re重复的 showTimeline() 调用不会堆叠列表eners。
+// One delegated click listener handles every phase's "détail" toggle (static
+// + dynamically-injected rows). Idempotent — guarded by a dataset flag so
+// repeated showTimeline() calls don't stack listeners.
 export function initTimelineToggles() {
   const list = document.getElementById("landingPhaseList");
   if (!list || list.dataset.toggleWired) return;
@@ -129,7 +129,7 @@ export function initTimelineToggles() {
     const open = li.classList.toggle("is-open");
     log.hidden = !open;
     btn.setAttribute("aria-expanded", open ? "true" : "false");
-    // 保持 data-i18n 同步，以便 locale 开关 re-ren 获得正确的标签。
+    // Keep data-i18n in sync so a locale switch re-renders the right label.
     const key = open ? "landing.timeline.detail_hide" : "landing.timeline.detail";
     btn.setAttribute("data-i18n", key);
     btn.textContent = (window.t || ((k) => k))(key);
@@ -141,10 +141,10 @@ export function setTimelineTitle(text) {
   if (t) t.textContent = text;
 }
 
-// Error 500 (Server Error)!!1500.That’s an error.There was an error. Please try again later.That’s all we know.
+// Reset the phase ROWS for a fresh run: clear the fixed phases' state/narration
 // (re-hiding mapper) and drop any dynamically-injected rows. Orchestration
-// 状态（_landingPaused，设备类型面板）保留在index.js中，which调用
-// this fr来自它自己的resetTimeline() 包装器。
+// state (_landingPaused, the device-kind panel) stays in index.js, which calls
+// this from its own resetTimeline() wrapper.
 export function resetTimelineRows() {
   PHASE_ORDER.forEach((p) => {
     const li = document.querySelector(`.landing-phase[data-phase="${p}"]`);
@@ -163,7 +163,7 @@ export function resetTimelineRows() {
       btn.textContent = (window.t || ((k) => k))("landing.timeline.detail");
     }
   });
-  // 删除所有动态注入的相行，以便 fresh 运行开始干净。
+  // Drop any dynamically-injected phase rows so a fresh run starts clean.
   document.querySelectorAll('#landingPhaseList .landing-phase').forEach((li) => {
     if (li.dataset.phase in LANDING_DYNAMIC_PHASES) li.remove();
   });
