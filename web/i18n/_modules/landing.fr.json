@@ -10,7 +10,8 @@
     "state_paused": "À confirmer",
     "state_failed": "Échec du build",
     "locked_hint": "Le pack de connaissances se construit. Tu peux fermer cette page, ça continue.",
-    "resume_aria": "Voir la progression de ce build"
+    "resume_aria": "Voir la progression de ce build",
+    "tour_btn": "Refaire le tour"
   },
   "hero": {
     "title": "Ton assistant de réparation hardware.",

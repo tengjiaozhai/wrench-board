@@ -17,7 +17,7 @@ import i18n from '../../../i18n.js';
 import { escapeHtml as _escapeHtml } from '../../../shared/dom.js';
 import { initProfileMenu, refreshProfileMenu } from './profile_menu.js';
 import { initCatalogue, closeCatalogue } from './catalogue.js';
-import { maybeStartOnboarding, preGateOnboarding } from './onboarding.js';
+import { maybeStartOnboarding, preGateOnboarding, replayOnboarding } from './onboarding.js';
 import { openInfoModal } from '../../../info_modal.js';
 import { packedOnly, hideUploads, planHints } from '../../../cloud_hints.js';
 
@@ -298,6 +298,12 @@ export function showLanding() {
   // localStorage flag, and drives the hero mascot through its states.
   refreshProfileMenu();
   maybeStartOnboarding({ setMascotState: setLandingMascot });
+
+  // Sidebar tour button — manual replay of the onboarding tour
+  document.getElementById("landingSidebarTour")
+    ?.addEventListener("click", () => {
+      replayOnboarding({ setMascotState: setLandingMascot });
+    });
 }
 
 export function hideLanding() {

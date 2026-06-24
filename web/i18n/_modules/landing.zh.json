@@ -10,7 +10,8 @@
     "state_paused": "需要确认",
     "state_failed": "构建失败",
     "locked_hint": "知识包正在构建中。您可以关闭此页面，构建会继续。",
-    "resume_aria": "查看此次构建的进度"
+    "resume_aria": "查看此次构建的进度",
+    "tour_btn": "重新引导"
   },
   "hero": {
     "title": "您的硬件维修助手。",

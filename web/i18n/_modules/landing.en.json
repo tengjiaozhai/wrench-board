@@ -10,7 +10,8 @@
     "state_paused": "Needs confirmation",
     "state_failed": "Build failed",
     "locked_hint": "Knowledge pack is building. You can close this page; it keeps going.",
-    "resume_aria": "Watch this build's progress"
+    "resume_aria": "Watch this build's progress",
+    "tour_btn": "Take the tour"
   },
   "hero": {
     "title": "Your hardware repair assistant.",

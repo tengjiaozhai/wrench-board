@@ -295,3 +295,14 @@ export function finish() {
   markOnboardingSeen("onboarding_seen"); // server (cross-device) + localStorage cache
   _mascotState("idle");
 }
+
+// ── Manual replay: sidebar "Take the tour" button ───────────────────────
+// Bypasses the profile gate and repairs-count gate — the button is only
+// visible on the landing cockpit, so the profile is already set. Jumps
+// straight to the welcome modal.
+export function replayOnboarding(ctl) {
+  _ctl = ctl || {};
+  _overlay()?.classList.add("ob-running");
+  _mascotState("scanning");
+  _stepWelcome();
+}
