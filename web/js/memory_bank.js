@@ -1,24 +1,24 @@
-// Memory Bank section — single-page reader for one knowledge pack.
+//  记忆库部分——一个知识包的单页阅读器。
 //
-// Fetches /pipeline/packs (list) to populate the pack picker, then
-// /pipeline/packs/{slug}/full to render registry, knowledge graph,
-// rules, dictionary, and audit verdict. Missing fields render as "—"
-// (hard rule #5: never fabricate).
+//  获取/pipeline/packs（列表）以填充包选择器，然后
+//  /pipeline/packs/{slug}/full 用于渲染注册表、知识图谱、
+//  规则、字典和审计结论。缺失字段呈现为“—”
+//  （硬性规则#5：绝不捏造）。
 
 import { escapeHtml as escHtml, prettifySlug } from "./shared/dom.js";
 import { listPacks, getPackFull } from "./services/packs.js";
 import { getDeviceSlug } from "./shared/context.js";
 
 const STATE = {
-  packs: [],        // PackSummary[] from /pipeline/packs
+  packs: [],        //  PackSummary[] 来自 /pipeline/packs
   currentSlug: null,
-  pack: null,       // Full payload for currentSlug, or null while loading
+  pack: null,       //  currentSlug 的完整负载，或加载时为 null
   loading: false,
 };
 
 function el(id) { return document.getElementById(id); }
 
-// Local shortcut that always falls back to the key when i18n hasn't booted.
+//  当 i18n 未启动时，本地快捷键总是回退到该键。
 function tr(key, params) {
   return (window.t ? window.t(key, params) : key);
 }
@@ -29,7 +29,7 @@ function fmt(value, fallback = "…") {
   return value;
 }
 
-/* ---------- fetch helpers ---------- */
+/*  ---------- 获取助手 ----------  */
 
 async function fetchPacks() {
   try {
@@ -49,7 +49,7 @@ async function fetchFullPack(slug) {
   }
 }
 
-/* ---------- header rendering ---------- */
+/*  ---------- 头部渲染 ----------  */
 
 function renderPackPicker() {
   const sel = el("mbPackSelect");
@@ -104,7 +104,7 @@ function renderVerdict() {
       <span class="mb-score">${escHtml(tr("memory_bank.verdict.consistency"))} <b>${score}</b></span>`;
   }
 
-  // Counts from the pack contents.
+  //  从包装内容中计数。
   const reg = pack.registry || {};
   const kg = pack.knowledge_graph || {};
   const rules = pack.rules || {};
@@ -127,9 +127,9 @@ function renderDeviceLabel() {
     h1.textContent = tr("memory_bank.title");
     return;
   }
-  // Prefer a clean `{brand} {model}` from taxonomy; append the form_factor as
-  // a small subordinate chip so the header reads "what we're fixing" without
-  // repeating the board type inside the name.
+  //  更喜欢分类中干净的“{brand} {model}”；将 form_factor 附加为
+  //  一个小的下属chip，因此标题显示“我们正在修复的内容”，而无需
+  //  在名称中重复板类型。
   const tax = (STATE.pack.registry || {}).taxonomy || {};
   const nameParts = [tax.brand, tax.model].filter(Boolean);
   const deviceName = nameParts.length > 0
@@ -139,7 +139,7 @@ function renderDeviceLabel() {
   h1.innerHTML = tr("memory_bank.title_with_device", { device: escHtml(deviceName), form });
 }
 
-/* ---------- blocks rendering ---------- */
+/*  ---------- 块渲染 ----------  */
 
 function renderRegistry(registry) {
   const body = el("mbBlockRegistry");
@@ -285,7 +285,7 @@ function renderRules(rules) {
       </div>`;
   }).join("");
 
-  // Accordion wire.
+  //  手风琴线。
   body.querySelectorAll(".mb-rule-head").forEach(h => {
     h.addEventListener("click", () => {
       h.parentElement.classList.toggle("open");
@@ -382,7 +382,7 @@ function renderAudit(verdict) {
   el("mbBlockAuditCount").innerHTML = `<b>${status}</b>`;
 }
 
-/* ---------- master rendering ---------- */
+/*  ----------主渲染----------  */
 
 function renderPack() {
   renderDeviceLabel();
@@ -409,36 +409,36 @@ function hideEmptyState() {
   el("mbEmpty").classList.add("hidden");
 }
 
-/* ---------- search ---------- */
+/*  ---------- 搜索 ----------  */
 
 function applySearchFilter(query) {
   const q = query.trim().toLowerCase();
   const root = el("memoryBank");
 
-  // Table rows.
+  //  表行。
   root.querySelectorAll("tr[data-search]").forEach(tr => {
     tr.classList.toggle("hidden", q !== "" && !tr.dataset.search.includes(q));
   });
 
-  // Edge rows (grid, `display:contents` so we toggle a hidden flag).
+  //  边缘行（网格，“显示：内容”，因此我们切换隐藏标志）。
   root.querySelectorAll(".mb-edge-row[data-search]").forEach(row => {
     row.classList.toggle("hidden", q !== "" && !row.dataset.search.includes(q));
   });
 
-  // Rules accordions.
+  //  规则手风琴。
   root.querySelectorAll(".mb-rule[data-search]").forEach(rule => {
     rule.classList.toggle("hidden", q !== "" && !rule.dataset.search.includes(q));
   });
 }
 
-/* ---------- public API ---------- */
+/*  ---------- 公共API ----------  */
 
 export async function loadMemoryBank() {
   if (STATE.loading) return;
   STATE.loading = true;
   try {
     STATE.packs = await fetchPacks();
-    // Prefer the active device if present, else first available pack, else empty state.
+    //  首选活动设备（如果存在），否则第一个可用包，否则为空状态。
     const deviceParam = getDeviceSlug();
     if (deviceParam && STATE.packs.some(p => p.device_slug === deviceParam)) {
       STATE.currentSlug = deviceParam;
@@ -467,9 +467,9 @@ export async function loadMemoryBank() {
 }
 
 export function initMemoryBank() {
-  // Re-render the imperatively-built table cells (headers, counts, missing
-  // banners) when the locale toggles. The DOM-level [data-i18n] hooks in
-  // index.html are refreshed by i18n.applyDom; this hook handles the rest.
+  //  重新渲染强制构建的表格单元格（标题、计数、缺失
+  //  横幅）当区域设置切换时。 DOM 级别的 [data-i18n] 挂钩
+  //  index.html通过i18n.applyDom刷新；这个钩子处理剩下的事情。
   if (window.i18n && typeof window.i18n.onChange === "function") {
     window.i18n.onChange(() => {
       if (STATE.pack) renderPack();

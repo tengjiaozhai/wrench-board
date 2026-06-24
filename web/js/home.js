@@ -1,14 +1,14 @@
-// Home (journal des réparations) + the "nouvelle réparation" modal.
+//  主页（journal des réparations）+“nouvelle réparation”模式。
 //
-// renderHome() renders the repair grid from a /pipeline/repairs response
-// (taxonomy supplies the brand > model > version grouping). The pure
-// pack list at /pipeline/packs is no longer surfaced here — repairs own
-// the home view and reuse pack metadata via the taxonomy payload.
-// initNewRepairModal() wires the modal's open/close/submit handlers plus
-// its own document-level keydown interceptor. The keydown listener is
-// intentionally registered before main.js adds its global Cmd+K / Esc
-// handler — stopImmediatePropagation() in this handler only works if it
-// runs first.
+//  renderHome() 从 /pipeline/repairs 响应渲染修复网格
+//  （分类提供品牌 > 型号 > 版本分组）。纯粹的
+//  /pipeline/packs 中的包列表不再显示在此处 — 自行修复
+//  主页视图并通过分类有效负载重用包元数据。
+//  initNewRepairModal() 连接模式的打开/关闭/提交处理程序以及
+//  它自己的文档级 keydown 拦截器。 keydown 监听器是
+//  故意在 main.js 添加其全局 Cmd+K / Esc 之前注册
+//  handler — 此处理程序中的 stopImmediatePropagation() 仅在以下情况下才有效
+//  首先运行。
 
 import { openPipelineProgress } from './pipeline_progress.js';
 import { leaveSession } from './router.js';

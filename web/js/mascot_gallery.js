@@ -1,5 +1,5 @@
-// Mascot animation gallery — renders one live card per state from the
-// shared registry. Pulls the REAL mascot SVG template from index.html so
+// 吉祥物动画画廊 — 从每个州渲染一张实时卡片
+// 共享注册表。从index.html 中提取真正的吉祥物SVG 模板，以便
 // there is no markup duplication, then reuses mountMascot/setMascotState.
 
 import { MASCOT_STATES } from "./mascot_states.js";
@@ -8,15 +8,15 @@ import { mountMascot } from "./mascot.js";
 const grid = document.getElementById("mgGrid");
 const countEl = document.getElementById("mgCount");
 
-let speed = 1; // animation playback rate multiplier
+let speed = 1; // 动画播放速率倍增器
 
-// --- replay icon (inline SVG, matches the app's icon language) ---
+// --- 重播图标（内联 SVG，与应用程序的图标语言匹配）---
 const REPLAY_SVG =
   '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" ' +
   'stroke-linecap="round" stroke-linejoin="round">' +
   '<path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13.5 2v3h-3"/></svg>';
 
-/** Pull <template id="tpl-mascot"> from index.html into this document once. */
+/** 将 <template id="tpl-mascot"> 从 index.html 拉入此文档一次。 */
 async function ensureTemplate() {
   if (document.getElementById("tpl-mascot")) return true;
   try {
@@ -37,13 +37,13 @@ async function ensureTemplate() {
   }
 }
 
-/** Apply the current speed multiplier to every running CSS animation. */
+/** 将当前速度倍增器应用于每个正在运行的 CSS 动画。 */
 function applySpeed() {
   if (typeof document.getAnimations !== "function") return;
   for (const anim of document.getAnimations()) anim.playbackRate = speed;
 }
 
-/** (Re)mount the mascot for one card's stage in its state. Restarts anims. */
+/**（重新）安装一张卡牌舞台吉祥物的状态。重新启动动画。 */
 function mountCard(stage, state) {
   mountMascot(stage, { size: "md", state });
 }
@@ -90,8 +90,8 @@ function buildGrid() {
     card.appendChild(meta);
     frag.appendChild(card);
 
-    // mount after the stage is in the fragment; actual anim starts once
-    // attached to the document, so we apply speed after the grid mounts.
+    // 在fragment中的stage之后挂载；实际动画开始一次
+    // 附加到文档中，因此我们在网格安装后应用速度。
     mountCard(stage, s.id);
   }
 
@@ -100,7 +100,7 @@ function buildGrid() {
 }
 
 function wireControls() {
-  // size
+  // 尺寸
   const sizeBar = document.getElementById("mgSize");
   sizeBar.addEventListener("click", (e) => {
     const b = e.target.closest("button[data-size]");
@@ -111,7 +111,7 @@ function wireControls() {
   });
   grid.style.setProperty("--mg-size", "160px");
 
-  // speed
+  // 速度
   const speedEl = document.getElementById("mgSpeed");
   const speedVal = document.getElementById("mgSpeedVal");
   speedEl.addEventListener("input", () => {
@@ -120,7 +120,7 @@ function wireControls() {
     applySpeed();
   });
 
-  // light/dark stage
+  // 明/暗阶段
   const lightBtn = document.getElementById("mgLight");
   const lightLabel = document.getElementById("mgLightLabel");
   lightBtn.addEventListener("click", () => {
@@ -128,7 +128,7 @@ function wireControls() {
     lightLabel.textContent = isLight ? "Fond sombre" : "Fond clair";
   });
 
-  // replay everything (remount all cards → restart every animation)
+  // 重放所有内容（重新安装所有卡→重新启动每个动画）
   document.getElementById("mgReplayAll").addEventListener("click", () => {
     grid.querySelectorAll(".mg-stage").forEach((stage, i) => {
       mountCard(stage, MASCOT_STATES[i].id);

@@ -1,15 +1,15 @@
-// web/js/pipeline_progress.js
-// Pipeline progress drawer — 首页「新建 repair」弹窗的另一条 WS 消费路径。
+//  网页/js/pipeline_progress.js
+//  管道进度drawer — 首页「新建修复」弹窗的另一条WS消费路径。
 //
 // 【完整流程中的位置】
-//   与 landing/index.js 共用 pipelineSocket.js connectProgress（Step 6）
-//   openPipelineProgress(repairResponse) — home.js 新建 repair 后调用
-//   pipeline_started=false → 跳过 drawer，直接跳转 graph
-//   pipeline_started=true  → subscribeProgress() → handleEvent 更新 stepper
+//      与 landing/index.js 消耗 pipelineSocket.js connectProgress（第6步）
+//      openPipelineProgress(repairResponse) — home.js 新建修复后调用
+//      pipeline_started=false → 跳过drawer，直接跳转图
+//      pipeline_started=true → subscribeProgress() → handlerEvent 更新 stepper
 //
-// Entry point: openPipelineProgress({repair_id, device_slug, device_label,
-// pipeline_started}). When pipeline_started=false the pack is already
-// complete on disk, so we skip the drawer and redirect immediately.
+//  入口点：openPipelineProgress({repair_id, device_slug, device_label,
+//  pipeline_started}）。当 pipeline_started=false 时，包已经存在
+//  在磁盘上完成，因此我们立即跳过 drawer 和 redirect。
 
 import { escapeHtml as escHtml } from "./shared/dom.js";
 import { connectProgress, fetchPendingKind } from "./services/pipelineSocket.js";
@@ -25,10 +25,10 @@ const PHASES = [
 function _phaseLabel(key)  { return t(PHASES.find(p => p.key === key)?.labelKey || ""); }
 function _phaseSub(key)    { return t(PHASES.find(p => p.key === key)?.subKey || ""); }
 
-// Dynamic phases the orchestrator only emits when a schematic is ingested.
-// They render as extra .pp-step rows, prepended before Scout, the first time
-// their phase_started arrives — so a schematic-less build keeps the 4 static
-// steps. Keyed by phase name to match phase_started/phase_finished payloads.
+//  编排器仅在摄取 schematic 时发出动态阶段。
+//  它们呈现为额外的 .pp-step 行，第一次添加在 Scout 之前
+//  他们的 phase_started 到达了——所以 schematic 少的构建使 4 保持静态
+//  步骤。按阶段名称键入以匹配 phase_started/phase_finished 有效负载。
 const DYNAMIC_PHASES = {
   schematic_ingest: { label: "pipeline.phase.schematic_ingest.label", sub: "pipeline.phase.schematic_ingest.sub" },
   device_kind:      { label: "pipeline.phase.device_kind.label",      sub: "pipeline.phase.device_kind.sub" },
@@ -47,8 +47,8 @@ function ensureDynamicStep(phaseKey) {
     <div class="pp-step-lbl" data-i18n="${meta.label}">${escHtml(t(meta.label))}</div>
     <div class="pp-step-sub" data-i18n="${meta.sub}" data-role="sub">${escHtml(t(meta.sub))}</div>
     <div class="pp-step-time" data-role="time">${escHtml(t("pipeline.step.time_placeholder"))}</div>`;
-  // Prepend before the first static step (scout) so ingestion/classification
-  // read first: Schéma → Type → Scout → Registry → Writers → Audit.
+  //  在第一个静态步骤（侦察）之前添加，以便进行摄取/分类
+  //  首先阅读：模式 → 类型 → Scout → Registry → Writers → 审核。
   const firstStatic = body.querySelector('.pp-step[data-step="scout"]');
   body.insertBefore(step, firstStatic);
   if (window.i18n && window.i18n.applyDom) window.i18n.applyDom(step);
@@ -122,9 +122,9 @@ function openDrawer(deviceLabel) {
   setStatusKey("pipeline.status.connecting");
   el("ppCta").classList.add("hidden");
   el("ppCta").textContent = "";
-  // Reset step states. Drop dynamic steps injected by a prior run first so a
-  // fresh open starts clean — they re-inject when their phase_started arrives
-  // again — then reset the static steps.
+  //  重置步骤状态。首先删除先前运行注入的动态步骤，以便
+  //  新鲜的开放开始干净——当他们的phase_started到达时他们会重新注入
+  //  再次 - 然后重置静态步骤。
   document.querySelectorAll("#pipelineProgressDrawer .pp-step").forEach(s => {
     if (s.dataset.step in DYNAMIC_PHASES) { s.remove(); return; }
     s.classList.remove("running", "done", "error");
@@ -138,10 +138,10 @@ function openDrawer(deviceLabel) {
       }
     }
   });
-  // Remove any lingering error panel
+  //  删除任何残留的错误面板
   document.getElementById("ppErrorDetail")?.remove();
-  // Remove any stale device-kind confirmation panel (plain div in ppBody,
-  // not a dynamic .pp-step so it survives the loop above).
+  //  删除任何过时的设备类型确认面板（ppBody 中的普通 div，
+  //  不是动态 .pp-step，因此它可以在上面的循环中幸存下来）。
   document.getElementById("ppKindPanel")?.remove();
   requestAnimationFrame(() => {
     el("pipelineProgressDrawer").classList.add("open");
@@ -186,8 +186,8 @@ function setStepCounts(phaseKey, counts) {
   sub.textContent = parts.join(" · ");
 }
 
-// setStatus accepts pre-resolved HTML text (for paths that interpolate <b>);
-// setStatusKey accepts an i18n key + params and re-resolves on locale switch.
+//  setStatus 接受预先解析的 HTML 文本（对于插入 <b> 的路径）；
+//  setStatusKey 接受 i18n 键 + 参数并在区域设置切换上重新解析。
 function setStatus(text, klass) {
   const s = el("ppStatus");
   if (!s) return;
@@ -222,13 +222,13 @@ function _refreshStatusOnLocaleChange() {
 if (window.i18n && window.i18n.onChange) {
   window.i18n.onChange(() => {
     _refreshStatusOnLocaleChange();
-    // Re-translate dynamic step time/sub cells whose text follows a known token.
+    //  重新翻译其文本遵循已知标记的动态步骤时间/子单元格。
     document.querySelectorAll("#pipelineProgressDrawer .pp-step").forEach(s => {
       const time = s.querySelector('[data-role="time"]');
       if (!time) return;
-      // Static placeholder → re-localize. "running…" / "failed" cells follow,
-      // but the running state flips when the next event lands so transient
-      // localization drift is tolerable.
+      //  静态占位符 → 重新本地化。随后是“正在运行...”/“失败”单元格，
+      //  但当下一个事件发生时，运行状态会发生翻转，如此短暂
+      //  定位漂移是可以容忍的。
       if (s.classList.contains("running")) time.textContent = t("pipeline.step.in_progress");
       else if (s.classList.contains("error")) time.textContent = t("pipeline.step.failed");
     });
@@ -255,16 +255,16 @@ function showErrorDetail(msg) {
 }
 
 function handleEvent(ev) {
-  // Step 7（drawer 路径）：消费 progress WS 事件，驱动右下角 4 步 stepper
+  //  Step 7（drawer路径）：消费进度WS事件，驱动右下角4步stepper
   switch (ev.type) {
     case "subscribed":
-      // Ack — the pipeline may already have started. Wait for pipeline_started
-      // or the first phase_started to flip the UI.
+      //  Ack——管道可能已经启动。等待pipeline_started
+      //  或第一个 phase_started 翻转 UI。
       break;
 
     case "queued": {
-      // Build en attente derrière le cap de builds concurrents : position visible,
-      // décroît à mesure que la file se vide ; pipeline_started prendra le relais.
+      //  构建并发时注意构建并发：位置可见，
+      //  décroît à mesure que la file se vide ； pipeline_started prendra le relais。
       const position = ev.position || 1;
       const ahead = ev.ahead != null ? ev.ahead : Math.max(0, position - 1);
       setStatusKey("pipeline.status.queued", { position, ahead });
@@ -300,14 +300,14 @@ function handleEvent(ev) {
         true,
         () => redirectToMemoryBank(),
       );
-      // Auto-redirect after 2s unless the user clicks Close first.
+      //  2 秒后自动重新direct，除非用户先单击“关闭”。
       STATE.redirectTimer = setTimeout(redirectToMemoryBank, 2000);
       break;
     }
 
     case "pipeline_failed": {
       STATE.failed = true;
-      // Paint the currently running step as error.
+      //  将当前运行的步骤绘制为错误。
       const running = document.querySelector("#pipelineProgressDrawer .pp-step.running");
       if (running) {
         running.classList.remove("running");
@@ -331,7 +331,7 @@ function handleEvent(ev) {
       break;
 
     default:
-      // Unknown event type — ignore silently; forward-compat.
+      //  未知事件类型——默默忽略；向前兼容。
       break;
   }
 }
@@ -343,9 +343,9 @@ function redirectToMemoryBank() {
     STATE.redirectTimer = null;
   }
   closeDrawer();
-  // Land on the repair's graph vue in markdown (memory-bank) mode. view=md lives
-  // in the real query string (Decision A). Fall back to the global list — never
-  // silently no-op — if no repair scope was captured.
+  //  以 markdown（内存库）模式登陆修复的 graph vue。查看=md 生活
+  //  在真实的查询字符串中（Decision A）。回落到全球名单——永远不会
+  //  默默地 no-op — 如果没有捕获修复范围。
   if (STATE.repairId) {
     seedSlugForRepair(STATE.repairId, STATE.slug);
     window.location.href = `?view=md${repairHash(STATE.repairId, "graph")}`;
@@ -355,15 +355,15 @@ function redirectToMemoryBank() {
 }
 
 function subscribeProgress() {
-  // Step 6：与 landing subscribeToProgress 相同 — connectProgress(STATE.slug)
+  //  Step 6：与 landing subscribeToProgress 相同 — connectProgress(STATE.slug)
   STATE.conn = connectProgress(STATE.slug, {
     onEvent: handleEvent,
     onError: () => setStatusKey("pipeline.status.lost_connection", null, "err"),
     onClose: () => {
       STATE.conn = null;
-      // Paused is a deliberate stop (the build coroutine returned) — not a
-      // failure. If the pipeline didn't reach a terminal event before the
-      // close, flag it.
+      //  暂停是有意停止（构建协程返回）——而不是
+      //  失败。如果管道在之前没有到达终止事件
+      //  关闭，标记它。
       if (!STATE.done && !STATE.failed && !STATE.paused) {
         setStatusKey("pipeline.status.closed_early", null, "err");
         showCta(t("pipeline.cta.close"), "", false, closeDrawer);
@@ -372,13 +372,13 @@ function subscribeProgress() {
   });
 }
 
-/* ---------- pause / device-kind confirmation ---------- */
+/*  ---------- 暂停/设备类型确认 ----------  */
 
 function _kindLabel(k) {
   if (!k) return t("pipeline.kind.undeclared");
   if (k === "unknown") return t("pipeline.kind.undeclared");
   const label = t("repair.device_kind.options." + k);
-  // t() returns the raw key on miss → fall back to the slug itself.
+  //  t() 在未命中时返回原始密钥 → 回退到 slug 本身。
   return label === ("repair.device_kind.options." + k) ? k : label;
 }
 
@@ -390,8 +390,8 @@ function renderKindConfirm(ev) {
   const candidates = [];
   if (ev.graph_inferred) candidates.push({ k: ev.graph_inferred, recommended: true });
   if (ev.user_declared && ev.user_declared !== ev.graph_inferred) candidates.push({ k: ev.user_declared });
-  // No inferred or declared kind → fall back to a single "unknown" radio so the
-  // panel still has an actionable choice (confirm posts "unknown", pipeline proceeds).
+  //  没有推断或声明的类型 → 退回到单个“未知”无线电，因此
+  //  小组仍然有一个可行的选择（确认帖子“未知”，管道继续）。
   if (candidates.length === 0) candidates.push({ k: "unknown", recommended: true });
   const radios = candidates.map((c, i) => `
     <label class="pp-kind-opt">
@@ -425,8 +425,8 @@ async function confirmKind(deviceKind) {
     ok = res.ok;
   } catch (_) { ok = false; }
   if (!ok) {
-    // A 4xx/5xx (or network failure) means the pipeline did NOT resume — surface
-    // it and stop, instead of re-subscribing into a confusing "closed early".
+    //  4xx/5xx（或网络故障）意味着管道没有恢复 - 表面
+    //  它并停止，而不是重新订阅到令人困惑的“提前关闭”。
     setStatusKey("pipeline.status.lost_connection", null, "err");
     showCta(t("pipeline.cta.close"), "", false, closeDrawer);
     return;
@@ -435,20 +435,20 @@ async function confirmKind(deviceKind) {
   const step = document.querySelector('#pipelineProgressDrawer .pp-step[data-step="device_kind"]');
   if (step) { step.classList.remove("paused"); setStepState("device_kind", "done"); }
   setStepTime("device_kind", t("pipeline.kind.confirmed"));
-  // Fresh build started by confirm-kind — watch the re-run on the same slug.
+  //  由confirm-kind开始的全新构建——观看在相同的slug上重新运行。
   STATE.paused = false; STATE.done = false; STATE.failed = false;
   if (STATE.conn) { STATE.conn.close(1000, "resubscribe"); STATE.conn = null; }
   subscribeProgress();
 }
 
-/* ---------- public API ---------- */
+/*  ---------- 公共API ----------  */
 
 export function openPipelineProgress(repairResponse) {
   if (!repairResponse || !repairResponse.device_slug) return;
 
-  // Pack already complete on disk — skip the drawer and open the repair's graph
-  // vue. Consistent with clicking a home card: the user lands on the rich visual
-  // representation of the pack, not the read-only data dump.
+  //  磁盘上的打包已完成 — 跳过 drawer 并打开修复的图表
+  //  视图。与点击主页卡一致：用户登陆丰富的视觉效果
+  //  包的表示，而不是只读数据转储。
   if (repairResponse.pipeline_started === false) {
     if (repairResponse.repair_id) {
       seedSlugForRepair(repairResponse.repair_id, repairResponse.device_slug);
@@ -471,8 +471,8 @@ export function openPipelineProgress(repairResponse) {
   STATE.paused = false;
   subscribeProgress();
 
-  // If a prior build is parked on a kind disagreement (e.g. after a reload),
-  // the live pipeline_paused event is gone — rebuild the panel from disk.
+  //  如果先前的构建因某种分歧而被搁置（例如重新加载后），
+  //  实时 pipeline_paused 事件消失了——从磁盘重建面板。
   fetchPendingKind(STATE.slug).then(pending => {
     if (pending) {
       handleEvent({
@@ -486,7 +486,7 @@ export function openPipelineProgress(repairResponse) {
 }
 
 export function initPipelineProgress() {
-  // Future-proof hook — currently the drawer is lazy-built when first shown,
-  // so there's nothing to wire at bootstrap. Kept symmetric with the other
-  // init* modules so main.js stays consistent.
+  //  面向未来的钩子 - 目前 drawer 在首次显示时是惰性构建的，
+  //  所以在引导时没有什么可以连接的。与另一方保持对称
+  //  init* 模块，因此 main.js 保持一致。
 }

@@ -1,5 +1,5 @@
-// Stock section — donor management + search.
-// See docs/superpowers/specs/2026-05-08-stock-inventory-design.md §11.
+//  库存部分 — 捐赠者管理 + 搜索。
+//  请参阅 docs/superpowers/specs/2026-05-08-stock-inventory-design.md §11。
 
 import { t } from "./i18n.js";
 import { escapeHtml } from "./shared/dom.js";
@@ -10,8 +10,8 @@ const STOCK_INFO_FLAG = "wb_stock_info_seen";
 
 const API = "/api/stock";
 
-// One-letter type codes for the dense column layout. Keeps the row scanable
-// at a glance — the full type name is in the tooltip.
+//  用于密集列布局的单字母类型代码。保持行可扫描
+//  一目了然 - 完整的类型名称位于工具提示中。
 const TYPE_LABEL = {
   capacitor: "C",
   resistor: "R",
@@ -37,18 +37,18 @@ const TYPE_LABEL = {
 };
 
 const TYPE_FAMILY = {
-  // Passives → cyan family
+  //  被动→青色家族
   capacitor: "passive", resistor: "passive", inductor: "passive",
   diode: "passive", ferrite: "passive",
-  // Actives → violet
+  //  活性物质 → 紫罗兰色
   ic: "active", transistor: "active", led: "active",
   oscillator: "active", crystal: "active",
-  // Mechanical → amber
+  //  机械 → 琥珀色
   connector: "mech", switch: "mech", fuse: "mech",
   test_point: "mech", mounting: "mech", antenna: "mech",
 };
 
-// Keep state for the harvest mode so filter + sort survive checkbox toggles.
+//  保持收获模式的状态，以便过滤+排序在复选框切换中幸存。
 const _harvestState = {
   donorId: null,
   parts: [],
@@ -60,8 +60,8 @@ const _harvestState = {
 async function fetchJson(path, opts) {
   const r = await fetch(API + path, opts);
   if (!r.ok) {
-    // Mirror shared/api.js: a lapsed session (401) gets surfaced globally so
-    // the host can re-auth, instead of dying silently into an empty view.
+    //  镜像共享/api.js：失效的会话（401）在全球范围内出现，因此
+    //  主机可以重新验证，而不是默默地死在空洞的视野中。
     if (r.status === 401) notifyUnauthorized();
     throw new Error(`${r.status} ${r.statusText}`);
   }
@@ -83,9 +83,9 @@ function critDot(crit) {
   return `<span class="crit-dot crit-${crit}" title="${escapeHtml(crit)}"></span>`;
 }
 
-// A donor card. `pending` = the device has no parts_index yet (graph not
-// ready) → nothing to harvest, so the card is dimmed, carries a "waiting"
-// badge, and drops the Harvest action.
+//  捐赠卡。 `pending` = 设备还没有 parts_index （图表没有）
+//  准备好）→没有什么可收获的，所以卡片变暗，带有“等待”
+//  徽章，并掉落收获动作。
 function donorCard(d, pending) {
   const head = pending
     ? `<span class="donor-pending-badge mono">${escapeHtml(t("stock.pending_badge"))}</span>`
@@ -129,8 +129,8 @@ async function loadDonors() {
   try {
     ({ donors } = await fetchJson("/donors"));
   } catch {
-    // Don't die into a silent empty view (the 0/0/0 + "no donors" trap of a
-    // lapsed session). Show why; the 401 path also fires wb:unauthorized.
+    //  不要陷入无声的空洞视野（0/0/0 +“无捐助者”陷阱）
+    //  已失效的会话）。说明原因； 401 路径也会触发 wb:unauthorized。
     if (list) list.innerHTML = `<div class="stock-empty stock-error">${escapeHtml(t("stock.load_error"))}</div>`;
     return;
   }
@@ -141,8 +141,8 @@ async function loadDonors() {
   for (const d of donors) {
     totalAvail += d.parts_available;
     totalCons += d.parts_consumed;
-    // "Ready" = parts are searchable/harvestable (parts_index present). A pack
-    // can exist with no index yet → the donor waits for its graph.
+    //  “就绪”=零件可搜索/可收获（存在零件索引）。一包
+    //  可以在没有索引的情况下存在 → 捐赠者等待它的图表。
     (d.has_parts_index ? ready : pending).push(d);
   }
 
@@ -232,7 +232,7 @@ function _renderHarvestRows() {
     </tr>
   `).join("");
 
-  // Header summary count
+  //  标题摘要计数
   const countEl = document.getElementById("harvest-row-count");
   if (countEl) countEl.textContent = `${rows.length} / ${_harvestState.parts.length}`;
 }
@@ -245,8 +245,8 @@ async function openHarvestMode(donorId) {
   _harvestState.typeFilter = "";
   _harvestState.sort = "refdes";
 
-  // Build the type filter options from what's actually present, in the
-  // canonical order. Caps + resistors first (most populous on most boards).
+  //  根据实际存在的内容构建类型过滤器选项
+  //  规范顺序。首先是电容+电阻（大多数主板上最多）。
   const typeCounts = {};
   for (const p of parts) typeCounts[p.type] = (typeCounts[p.type] || 0) + 1;
   const orderedTypes = Object.keys(typeCounts).sort((a, b) => typeCounts[b] - typeCounts[a]);
@@ -332,7 +332,7 @@ async function openHarvestMode(donorId) {
     } else {
       await fetchJson(`/donors/${donorId}/consume/${ref}`, { method: "DELETE" });
     }
-    // Update local state so the row's class / sort survives a re-render.
+    //  更新本地状态，以便行的类/排序在重新渲染后仍然存在。
     const part = _harvestState.parts.find(p => p.refdes === ref);
     if (part) part.available = !cb.checked;
   });
@@ -419,15 +419,15 @@ function renderSearchResults(res) {
   };
 }
 
-/* ---------- Add-donor modal — device selector (board type → brand → search) ---------- */
+/*  ---------- 添加捐助者模式 — 设备选择器（板类型 → 品牌 → 搜索） ----------  */
 
-// Flat list of known devices from /pipeline/taxonomy, cached for the session.
-// The selector only offers devices that already have a pack on disk (mark_donor
-// requires the slug to exist); readiness (parts_index) is shown per row.
+//  来自 /pipeline/taxonomy 的已知设备的平面列表，为会话缓存。
+//  选择器仅提供磁盘上已包含包的设备 (mark_donor
+//  要求 slug 存在）；每行显示准备情况 (parts_index)。
 let _deviceEntries = null;
 
-// Inline SVGs for the device picker rows — a board glyph (leading) and the
-// selection tick (revealed by CSS on the selected row). 16×16, currentColor.
+//  设备选择器行的内联 SVG — 板字形（前导）和
+//  选择勾选（由所选行上的 CSS 显示）。 16×16，当前颜色。
 const _AD_BOARD_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h4M7 12h4M7 16h2"/><circle cx="16.5" cy="13" r="2.4"/></svg>`;
 const _AD_CHECK_ICON = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>`;
 
@@ -445,14 +445,14 @@ async function loadDeviceEntries() {
   return entries;
 }
 
-// lowercase, strip accents, collapse to single spaces — case/accent-agnostic match.
+//  小写、去掉重音、折叠为单个空格——大小写/重音无关的匹配。
 function _normalize(s) {
   return (s || "").toString().toLowerCase()
     .normalize("NFD").replace(/[̀-ͯ]/g, "")
     .replace(/[^a-z0-9]+/g, " ").trim();
 }
 
-// Human label for a device_kind; falls back to the raw kind when no i18n key.
+//  device_kind 的人工标签；当没有 i18n 键时，回退到原始类型。
 function _kindLabel(kind) {
   const key = `stock.kind_${kind}`;
   const lab = t(key);
@@ -465,16 +465,16 @@ async function showAddDonorDialog() {
   try {
     entries = await loadDeviceEntries();
   } catch {
-    // A lapsed session (or any taxonomy failure) used to leave the picker
-    // silently empty. Flag it so the list reports the failure instead.
+    //  用于离开选取器的失效会话（或任何分类失败）
+    //  默默地空着。对其进行标记，以便列表报告失败。
     entries = [];
     loadError = true;
   }
 
   const state = { kind: "", brand: "", query: "", slug: null, label: null };
 
-  // Labels shared by >1 pack (e.g. a bench/variant pack with the same human
-  // label but a different slug). For those, show the slug to disambiguate.
+  //  >1 个包共享的标签（例如，具有相同人类的工作台/变体包）
+  //  标签但不同的slug）。对于这些，请显示 slug 以消除歧义。
   const _labelCounts = {};
   for (const e of entries) {
     const k = _normalize(e.device_label);
@@ -556,7 +556,7 @@ async function showAddDonorDialog() {
   const submitBtn = overlay.querySelector("#dn-submit");
   const errorEl = overlay.querySelector("#dn-error");
 
-  // Board-type options from the kinds actually present in the taxonomy.
+  //  分类中实际存在的类型的板类型选项。
   const kindsPresent = [...new Set(entries.map(e => e.device_kind).filter(k => k && k !== "unknown"))].sort();
   kindSel.innerHTML = `<option value="">${escapeHtml(t("stock.all_kinds"))}</option>`
     + kindsPresent.map(k => `<option value="${escapeHtml(k)}">${escapeHtml(_kindLabel(k))}</option>`).join("");
@@ -688,7 +688,7 @@ export function initStockSection() {
   document.getElementById("stock-add-donor-btn").onclick = showAddDonorDialog;
   const back = document.getElementById("stock-back-btn");
   if (back) back.onclick = () => { window.location.hash = "#home"; };
-  // "?" explainer — always available; also auto-opens on the first visit.
+  //  “？”讲解员——随时可用；首次访问时也会自动打开。
   const info = document.getElementById("stock-info-btn");
   if (info) info.onclick = () => openInfoModal("stock");
   try {
@@ -696,6 +696,6 @@ export function initStockSection() {
       localStorage.setItem(STOCK_INFO_FLAG, "1");
       openInfoModal("stock");
     }
-  } catch { /* private mode — skip the one-shot */ }
+  } catch { /*  私人模式——跳过一次性  */ }
   loadDonors();
 }

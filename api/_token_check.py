@@ -11,10 +11,10 @@ import secrets
 
 
 def extract_bearer(header: str | None) -> str | None:
-    """'Authorization: Bearer <token>' → <token>，否则 None。
+    """'授权：承载<token>' → <token>，否则无。
 
     使用 partition(' ') 保持 WS 历史语义：scheme 为第一个空格前，
-    presented 为之后。scheme 非 'Bearer' 或 presented 为空时返回 None。"""
+    呈现为之后。scheme 非 'Bearer' 或呈现为空时返回 None。"""
     scheme, _, presented = (header or "").partition(" ")
     if scheme == "Bearer" and presented:
         return presented

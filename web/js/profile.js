@@ -1,21 +1,21 @@
-// Technician profile section.
-// On first activation, fetches web/profil.html (the section's DOM partial)
-// and injects it into #profileSection. Subsequent activations skip the fetch.
-// Consumes GET /profile and renders identity / tools / skills / preferences.
-// Tool toggles → PUT /profile/tools ; preference changes → PUT /profile/preferences
-// ; skill click opens the evidence drawer. Identity modal handler lands in Task 12.
+//  技术人员简介部分。
+//  第一次激活时，获取 web/profil.html （该部分的 DOM 部分）
+//  并将其注入#profileSection。后续激活将跳过提取。
+//  使用 GET /profile 并呈现身份/工具/技能/偏好。
+//  工具切换 → PUT /profile/tools ；首选项更改 → PUT /profile/preferences
+//  ;技能点击打开证据drawer。身份模式处理程序落在任务 12 中。
 
 import { escapeHtml as escHtml } from "./shared/dom.js";
 
-let _state = null;    // {profile, derived, catalog}
+let _state = null;    //  {概要、派生、目录}
 let _partialLoaded = false;
 
 const STATUS_KEYS = ["mastered", "practiced", "learning", "unlearned"];
 const VERBOSITIES = ["auto", "concise", "normal", "teaching"];
 const LANGUAGES = ["en", "fr", "zh", "hi"];
-// Native display label per locale (the stored value stays the ISO code).
+//  每个区域设置的本机显示标签（存储的值保持 ISO 代码）。
 const LANGUAGE_LABELS = { en: "English", fr: "Français", zh: "中文", hi: "हिन्दी" };
-// BCP-47 tag per locale for Intl date/number formatting.
+//  每个语言环境的 BCP-47 标记，用于 Intl 日期/数字格式。
 const DATE_LOCALES = { en: "en-US", fr: "fr-FR", zh: "zh-CN", hi: "hi-IN" };
 
 async function ensurePartial() {
@@ -74,8 +74,8 @@ function renderHead() {
   document.getElementById("profUpdated").textContent = fmtUpdated(_state.profile.updated_at);
 }
 
-// Ribbon = the four-rung XP track. The active rung gets data-state="active",
-// every prior rung gets data-state="done", every later rung stays empty.
+//  Ribbon = 四级 XP 轨道。活动梯级获取 data-state="active"，
+//  每个先前的梯级都会获得 data-state=“done”，每个后面的梯级保持为空。
 function renderRibbon() {
   const ribbon = document.getElementById("profRibbon");
   const level = _state.derived.level;
@@ -95,8 +95,8 @@ function renderRibbon() {
   });
 }
 
-// Stat cards — counts + visual progress vs total. Pure derivations from
-// _state.derived.skills_by_status + _state.profile.tools, no extra fetch.
+//  统计卡 — 计数 + 视觉进度与总数。纯衍生自
+//  _state.衍生.skills_by_status + _state.profile.tools，无需额外获取。
 function renderStats() {
   const buckets = _state.derived.skills_by_status;
   const totalSkills = (buckets.mastered.length + buckets.practiced.length
@@ -113,12 +113,12 @@ function renderStats() {
   setStat("Mastered",  buckets.mastered.length,  totalSkills, skillsSub);
   setStat("Practiced", buckets.practiced.length, totalSkills, skillsSub);
   setStat("Learning",  buckets.learning.length,  totalSkills, skillsSub);
-  // Tools: count of "true" entries vs catalog size.
+  //  工具：“真实”条目的计数与目录大小。
   const toolsOn = Object.values(_state.profile.tools).filter(Boolean).length;
   const toolsTotal = _state.catalog.tools.length || 1;
   setStat("Tools", toolsOn, toolsTotal, window.t("profile.stats.sub_tools", { total: toolsTotal }));
 
-  // Block-level counts (next to the section h2s).
+  //  块级计数（位于 h2s 部分旁边）。
   const totalEl = document.getElementById("profSkillsTotal");
   if (totalEl) totalEl.textContent = window.t("profile.stats.block_skills_total", { n: totalSkills });
   const toolsTotalEl = document.getElementById("profToolsTotal");
@@ -164,9 +164,9 @@ function renderSkills() {
     const ids = buckets[status] || [];
     col.innerHTML = `<h3>${escHtml(window.t(`profile.status.${status}`))} <span class="profile-skill-col-count">${ids.length}</span></h3>`;
 
-    // Unlearned skills are rendered as compact chips (no bar, no count) — the list
-    // is long and the user mostly cares about what they HAVE practiced. Other
-    // status columns render full cards with progress bar + usage count.
+    //  未学过的技能呈现为紧凑的 chips（无条，无计数）——列表
+    //  很长，用户最关心的是他们已经练习过的内容。其他
+    //  状态列呈现带有进度条+使用计数的完整卡片。
     if (status === "unlearned") {
       const chips = document.createElement("div");
       chips.className = "profile-skill-chips";
@@ -273,7 +273,7 @@ function wireDrawerClose() {
   });
 }
 
-// ============ Identity edit modal ============
+//  ============ 身份编辑模式 ============
 function openIdentityModal() {
   const form = document.getElementById("profIdentityForm");
   const id = _state.profile.identity;
@@ -318,14 +318,14 @@ async function submitIdentity(evt) {
 function wireIdentityModal() {
   document.getElementById("profEditIdentityBtn").addEventListener("click", openIdentityModal);
   const backdrop = document.getElementById("profIdentityBackdrop");
-  // Backdrop catch — only close if the click actually landed on the backdrop
-  // itself (otherwise inner-modal clicks bubble up and would dismiss).
+  //  背景捕捉 - 仅当点击实际落在背景上时才关闭
+  //  本身（否则内部模式点击会冒泡并消失）。
   backdrop.addEventListener("click", (e) => {
     if (e.target === backdrop) closeIdentityModal();
   });
-  // Explicit dismiss buttons (close ✕, Annuler) — close unconditionally.
-  // The close icon wraps an <svg>/<path> so e.target isn't always the button
-  // itself; we use currentTarget via the listener binding and skip the backdrop.
+  //  显式关闭按钮（关闭 ✕、Annuler）— 无条件关闭。
+  //  关闭图标包含 <svg>/<path> 因此 e.target 并不总是按钮
+  //  本身；我们通过监听器绑定使用 currentTarget 并跳过背景。
   backdrop.querySelectorAll("button[data-dismiss]").forEach(btn => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();

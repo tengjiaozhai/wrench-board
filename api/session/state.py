@@ -1,4 +1,4 @@
-"""Per-session state for the boardview panel."""
+"""boardview 面板的 per-session 状态。"""
 
 from __future__ import annotations
 
@@ -17,10 +17,9 @@ logger = logging.getLogger("wrench_board.session")
 
 Side = Literal["top", "bottom"]
 
-# Extension priority: richer formats first. .kicad_pcb wins, then .brd
-# (Test_Link / BRD2), then the legacy text-format dialects in roughly the
-# order their parsers landed. Any format not listed here cannot auto-load
-# even if its parser is registered — add it here when fixtures stabilise.
+# 扩展名优先级：更丰富的格式优先。.kicad_pcb 优先，其次 .brd
+#（Test_Link / BRD2），再是各 legacy 文本方言（大致按 parser 落地顺序）。
+# 未列于此的格式即使已注册 parser 也无法自动加载 — 待 fixture 稳定后再加入。
 _BOARD_EXT_PRIORITY = (
     ".kicad_pcb",
     ".brd",

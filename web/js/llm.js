@@ -1,27 +1,27 @@
-// Diagnostic agent panel — WS client to /ws/diagnostic/{device_slug}.
-// The panel is push-mode: when open, body.llm-open is set and the main
-// content zones shrink 420px on the right.
+//  诊断代理面板 — WS 客户端至 /ws/diagnostic/{device_slug}。
+//  面板是推送模式：打开时，设置 body.llm-open 并且主要
+//  右侧内容区域缩小 420 像素。
 //
-// Wire protocol (matches api/agent/runtime_{managed,direct}.py):
-//   send: {type: "message", text: "..."}
-//         {type: "client.capabilities", camera_available, ...}     (Files+Vision)
-//         {type: "client.upload_macro", base64, mime, filename}    (Flow A)
-//         {type: "client.capture_response", request_id, base64,    (Flow B)
-//                  mime, device_label}
-//         {type: "client.protocol_confirmation", tool_use_id,      (Pattern 4)
-//                  decision: "accept"|"reject", reason?}
-//   recv: {type: "session_ready", mode, device_slug, session_id?, memory_store_id?}
-//         {type: "message", role: "assistant", text}
-//         {type: "tool_use", name, input}
-//         {type: "thinking", text}                 (managed mode only)
-//         {type: "error", text}
-//         {type: "session_terminated"}
-//         {type: "server.capture_request", request_id, tool_use_id, reason}
-//         {type: "server.upload_macro_error", reason}
-//         {type: "protocol_pending_confirmation", tool_use_id, title, …}
-//         {type: "protocol_confirmation_timeout", tool_use_id}
+//  有线协议（匹配 api/agent/runtime_{managed,direct}.py）：
+//      发送：{类型：“消息”，文本：“...”}
+//                  {类型：“client.capabilities”，camera_available，...} (Files+Vision)
+//                  {类型：“client.upload_macro”，base64，mime，文件名}（Flow A）
+//                  {类型：“client.capture_response”，request_id，base64，（Flow B）
+//                                    mime、设备标签}
+//                  {类型：“client.protocol_confirmation”，tool_use_id，（Pattern 4）
+//                                    决定：“接受”|“拒绝”，原因是什么？}
+//      接收：{类型：“session_ready”，模式，device_slug，会话ID？，内存存储ID？}
+//                  {类型：“消息”，角色：“助理”，文本}
+//                  {类型：“tool_use”，名称，输入}
+//                  {type: "thinking", text}（仅限managed模式）
+//                  {类型：“错误”，文本}
+//                  {类型：“会话终止”}
+//                  {类型：“server.capture_request”，request_id，tool_use_id，原因}
+//                  {类型：“server.upload_macro_error”，原因}
+//                  {类型：“protocol_pending_confirmation”，tool_use_id，标题，…}
+//                  {类型：“协议确认超时”，tool_use_id}
 //
-// Activated by ⌘/Ctrl+J and by clicking the topbar "Agent" button.
+//  通过 ⌘/Ctrl+J 并单击 topbar“代理”按钮激活。
 
 import {
   selectedCameraDeviceId,
@@ -36,13 +36,13 @@ import { mountMascot, setMascotState } from './mascot.js';
 import { escapeHtml as escapeHTML } from './shared/dom.js';
 import { getDeviceSlug, getRepairId } from './shared/context.js';
 import { connectDiagnostic } from './services/diagnosticSocket.js';
-// Same ?v=quest4 query main.js uses — ESM keys modules by URL, so a bare
-// './protocol.js' would create a second instance with its own state, missing
-// the Protocol.init() wiring main.js applied.
+//  相同的？v=quest4查询main.js使用-ESM通过URL键模块，所以一个裸露的
+//  './protocol.js' 将创建具有自己状态的第二个实例，但缺少
+//  应用 Protocol.init() 接线 main.js。
 import * as Protocol from './protocol.js?v=quest4';
-// SimulationController owns the schematic observation UI; we mirror agent
-// measurement events onto it. Same ?v=fitzoom query main.js uses (single
-// module instance). schematic.js does not import llm.js → no cycle.
+//  SimulationController拥有schematic观察UI；我们镜像代理
+//  测量事件到它上面。相同 ?v=fitzoom 查询 main.js 使用（单个
+//  模块实例）。 schematic.js 不导入 llm.js → 没有循环。
 import { SimulationController } from './schematic.js?v=fitzoom';
 import { store } from './store.js';
 import {
@@ -80,15 +80,15 @@ import {
 } from './features/repair/diagnostic/chatLog.js';
 
 let ws = null;
-// Route scope the live socket was dialed with ({slug, repairId}). openPanel()
-// compares it to the CURRENT route: SPA navigation repair A → repair B never
-// closes the old socket, and a live socket used to short-circuit the
-// reconnect — leaving the panel (and every typed message) bound to repair A.
+//  使用（{slug，repairId}）拨打实时套接字的路由范围。打开面板()
+//  与当前路线比较：SPA导航修复A→修复B从不
+//  关闭旧插座，以及用于短路的带电插座
+//  重新连接 — 使面板（以及每条输入的消息）绑定到修复 A。
 let wsScope = null;
 let currentTier = "deep";
-// Cached <svg.mascot> mounted into #llmMascot at panel-fragment init time.
-// `setPanelMascot()` is the single chokepoint for animating it from WS events
-// and form submission — null-safe when the fragment hasn't loaded yet.
+//  缓存的 <svg.mascot> 在面板片段初始化时安装到 #llmMascot 中。
+//  `setPanelMascot()` 是通过 WS 事件对其进行动画处理的单一阻塞点
+//  和表单提交——当片段尚未加载时，空安全。
 let panelMascot = null;
 let _errorRecoveryT = null;
 let _typingHoldT = null;
@@ -107,10 +107,10 @@ function setPanelMascot(state) {
     }, 1800);
   }
 }
-// The WS delivers the assistant message as one block (no token stream), so
-// "typing" wouldn't otherwise be visible. Flash it for a readable window when
-// the answer lands, then settle to idle — unless the turn does more work
-// (a tool_use flips it to "working", cancelling this hold).
+//  WS 将辅助消息作为一个块（无令牌流）传递，因此
+//  否则“打字”将不可见。当以下情况时，将其闪烁为可读窗口：
+//  答案落地，然后闲置——除非转弯做更多的工作
+//  （tool_use将其翻转为“工作”，取消此保持）。
 function flashPanelMascotTyping() {
   if (!panelMascot) return;
   _clearMascotTimers();
@@ -120,28 +120,28 @@ function flashPanelMascotTyping() {
     setMascotState(panelMascot, "idle");
   }, 1800);
 }
-// True once the tech has explicitly chosen a tier this page-load (clicked
-// the popover, or any path that calls switchTier). Until that happens,
-// session_ready may auto-realign currentTier with the resumed conv's
-// preferred tier — opening a Sonnet/Haiku conv shouldn't silently land on
-// its almost-empty Opus thread because the URL default was `deep`.
+//  一旦技术人员明确选择了 tier 此页面加载（单击
+//  popover，或任何调用 switchTier 的路径）。直到那件事发生之前，
+//  session_ready 可以自动将 currentTier 与恢复的 conv 重新对齐
+//  首选 tier — 打开 Sonnet/Haiku 转化不应默默地登陆
+//  它的 Opus 线程几乎为空，因为 URL 默认为 `deep`。
 let userPickedTier = false;
-// Multi-conversation state. `currentConvId` is captured from session_ready.
-// `conversationsCache` backs the popover render. `pendingConvParam` is the
-// ?conv value to use on the next connect() — "new" to force a fresh conv,
-// a concrete id to target an existing one, null to let the backend resolve
-// to the active conv.
+//  多方对话状态。 `currentConvId` 是从 session_ready 捕获的。
+//  `conversationsCache` 支持 popover 渲染。 `pendingConvParam` 是
+//  ? 下一个 connect() 使用的 conv 值 — “new” 强制进行新的 conv，
+//  一个具体的 id 来定位现有的 id，null 让后端解析
+//  至活跃转化次数
 let currentConvId = null;
 let conversationsCache = [];
 let pendingConvParam = null;
-// Auto-reconnect after an UNEXPECTED socket drop (idle-cut by an upstream proxy,
-// a brief network blip, a cloud redeploy). The cloud relay now keep-alives the
-// tunnel, so these are rare — but when one slips through we resume the same
-// conversation transparently instead of stranding the tech on "erreur socket"
-// with a manual reload. Voluntary closes (tier/conv switch, route change, panel
-// teardown) reassign or null the module `ws`, so the closing socket is no longer
-// the live one and we DON'T reconnect it. Capped exponential backoff; after the
-// last attempt we surface the error and stop.
+//  意外套接字丢失后自动重新连接（由上游代理空闲切断，
+//  短暂的网络故障、云重新部署）。云中继现在保持活动状态
+//  隧道，所以这种情况很少见——但当有人滑过时，我们会恢复同样的情况
+//  透明地进行对话，而不是将技术搁置在“错误套接字”上
+//  手动重新加载。自动关闭（tier/转换开关、路线变更、面板
+//  拆解）重新分配或清空模块“ws”，因此关闭套接字不再是
+//  实时的，我们不会重新连接它。上限指数退避；之后
+//  最后一次尝试我们发现错误并停止。
 let _reconnectT = null;
 let _reconnectAttempts = 0;
 const _RECONNECT_DELAYS_MS = [1000, 2000, 4000, 8000, 15000];
@@ -177,11 +177,11 @@ function setSendEnabled(enabled) {
   el("llmStop").disabled = !enabled;
 }
 
-// Interrupt the live agent turn. The server translates this into an
-// official `user.interrupt` session event (see
-// https://platform.claude.com/docs/en/managed-agents/events-and-streaming).
-// MA guarantees the agent halts mid-execution; the session stays alive so
-// the tech can keep typing right after without reconnecting.
+//  Inter中断现场代理回合。服务器将其转换为
+//  官方 `user.interrupt` 会话事件（参见
+//  https://platform.claude.com/docs/en/managed-agents/events-and-streaming）。
+//  MA保证代理在执行过程中停止；会话保持活动状态，因此
+//  技术人员可以在之后立即继续打字，而无需重新连接。
 function interruptAgent() {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
   logSys(t('chat.session.interrupt_sent'));
@@ -193,8 +193,8 @@ function interruptAgent() {
 }
 
 function connect() {
-  // Any fresh dial supersedes a queued reconnect (tier/conv switch, route
-  // change all funnel through here).
+  //  任何新的拨号都会取代排队的重新连接（tier/转换开关、路由
+  //  通过这里更改所有漏斗）。
   _clearReconnect();
   const slug = currentDeviceSlug();
   if (!slug) {
@@ -202,9 +202,9 @@ function connect() {
     return;
   }
   const repairId = currentRepairId();
-  // The shipped example repair is READ-ONLY (the cloud refuses its agent WS to
-  // protect quota/credits). Don't even dial — surface a notice instead of a
-  // silent failed socket. Defense-in-depth; the security boundary is the cloud.
+  //  附带的示例修复是只读的（云拒绝其代理 WS
+  //  保护配额/信用）。甚至不用拨号——显示通知而不是
+  //  沉默失败的套接字。纵深防御；安全边界是云。
   if (repairId && String(repairId).startsWith("example-")) {
     statusTone("closed", t('chat.status.idle'));
     logSys(t('chat.demo.read_only'));
@@ -220,14 +220,14 @@ function connect() {
     const human = slug.replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
     title.textContent = human;
   }
-  // New connection = new cost scope. Replayed history doesn't re-bill so we
-  // reset here and let live turns accumulate fresh.
+  //  新的连接=新的成本范围。重播历史不会重新计费，所以我们
+  //  在这里重置，让实时回合积累新鲜感。
   resetCost();
   closeTurn();
   currentConvId = null;
-  // Clear the log — the next session_ready / history_replay_start will
-  // rebuild the right content. Without this, switching conv or tier
-  // appends the replayed history below the old conv's visible messages.
+  //  清除日志——下一个session_ready/history_replay_start将
+  //  重建正确的内容。如果没有这个，切换转换或tier
+  //  将重播的历史记录附加到旧 conv 的可见消息下方。
   const log = el("llmLog");
   if (log) {
     log.innerHTML = "";
@@ -235,7 +235,7 @@ function connect() {
   }
   updateCostTotal();
   const conv = pendingConvParam;
-  pendingConvParam = null;  // consume after this connect
+  pendingConvParam = null;  //  此连接后消耗
   statusTone("connecting", t('chat.status.connecting', { slug, tier: currentTier }));
 
   try {
@@ -245,22 +245,22 @@ function connect() {
       { tier: currentTier, repairId, conv },
       {
         onOpen: () => {
-          // A clean open clears any pending reconnect: we're live again.
+          //  干净的打开会清除任何待处理的重新连接：我们又恢复正常了。
           _clearReconnect();
           statusTone("connected", t('chat.status.connected', { slug, tier: currentTier }));
           setSendEnabled(true);
-          // Files+Vision : announce camera availability so the backend gates
-          // cam_capture in the manifest (runtime_direct) and can short-circuit
-          // empty captures (managed runtime).
+          //  Files+Vision：宣布相机可用性，以便后端门
+          //  清单中的cam_capture（runtime_direct）并且可以短路
+          //  空捕获（managed运行时）。
           sendCapabilities();
         },
         onClose: (ev) => {
           statusTone("closed", t('chat.status.closed'));
           setSendEnabled(false);
           setPanelMascot("idle");
-          // Reconnect only if THIS is still the live socket (a voluntary close
-          // reassigned/nulled `ws` first) — see scheduleReconnect for the rest
-          // of the guards (panel open + same route).
+          //  仅当这仍然是活动套接字时才重新连接（自愿关闭
+          //  首先重新分配/清空`ws`) - 其余部分请参见scheduleReconnect
+          //  守卫（面板打开+相同路线）。
           if (ev && ev.target === ws) scheduleReconnect();
         },
         onError: () => {
@@ -284,21 +284,21 @@ function connect() {
   });
 }
 
-// Schedule a reconnect after an unexpected drop. Bails (no reconnect) when the
-// panel is closed (reopening dials fresh) or the live route has moved on since
-// the socket was dialed — reconnecting then would resume the WRONG session.
-// Otherwise it redials on a capped backoff, resuming the SAME conversation
-// (pendingConvParam = currentConvId), and gives up after the last delay.
+//  安排意外断开后的重新连接。保释（不重新连接）时
+//  面板已关闭（重新打开拨号盘）或实时路线已继续
+//  套接字已被拨号 - 然后重新连接将恢复错误的会话。
+//  否则，它会在有上限的退避时间内重拨，恢复相同的对话
+//  (pendingConvParam = currentConvId)，并在最后一次延迟后放弃。
 function scheduleReconnect() {
-  if (_reconnectT) return; // a retry is already queued
+  if (_reconnectT) return; //  重试已排队
   const panelOpen = el("llmPanel")?.classList.contains("open");
   const sameRoute = wsScope
     && wsScope.slug === currentDeviceSlug()
     && wsScope.repairId === (currentRepairId() || null);
   if (!panelOpen || !sameRoute) return;
   if (_reconnectAttempts >= _RECONNECT_DELAYS_MS.length) {
-    // Out of attempts — leave the tech on the socket error so a manual reload
-    // is the clear next step.
+    //  尝试次数不足 — 将技术保留在套接字错误上，以便手动重新加载
+    //  是明确的下一步。
     statusTone("error", t('chat.status.error_socket'));
     return;
   }
@@ -306,40 +306,40 @@ function scheduleReconnect() {
   statusTone("connecting", t('chat.status.connecting', { slug: currentDeviceSlug(), tier: currentTier }));
   _reconnectT = setTimeout(() => {
     _reconnectT = null;
-    // Resume the same thread; connect() consumes pendingConvParam then resets
-    // currentConvId, so capture it here first.
+    //  恢复同一个线程； connect() 消耗pendingConvParam然后重置
+    //  currentConvId，所以先在这里捕获它。
     pendingConvParam = currentConvId || null;
     ws = null;
     connect();
   }, delay);
 }
 
-// Dispatch a single diagnostic-WS frame (boardview/protocol/simulation routing
-// + the main type switch). Extracted from the live socket listener so the
-// onboarding demo replayer can feed recorded frames through the EXACT same
-// rendering path. All helpers + module state it references (ws, currentTier,
-// currentConvId, pendingConvParam, Protocol, window.Boardview, el, logSys,
-// recordTurnCost, setPanelMascot, …) are module-scoped, so it behaves
-// identically whether driven by a live frame or a replayed one.
+//  调度单个 diagnostic-WS 帧 (boardview/协议/模拟路由
+//  + 主类型开关）。从实时套接字侦听器中提取，因此
+//  onboarding 演示重放器可以通过完全相同的方式提供录制的帧
+//  渲染路径。所有帮助器 + 模块都声明它引用（ws、currentTier、
+//  currentConvId，pendingConvParam，协议，窗口。Boardview，el，logSys，
+//  recordTurnCost, setPanelMascot, …) 是模块范围的，所以它的行为
+//  无论是由实时帧还是重播帧驱动，都是相同的。
 export function handleDiagnosticFrame(payload) {
-    // Boardview events are visual mutations — not chat content. Route them
-    // to the renderer (or its pending buffer if the renderer hasn't mounted).
+    //  Boardview 事件是视觉突变——而不是聊天内容。路由它们
+    //  到渲染器（或其挂起的缓冲区，如果渲染器尚未安装）。
     if (typeof payload.type === "string" && payload.type.startsWith("boardview.")) {
       window.Boardview.apply(payload);
       return;
     }
 
-    // Protocol events drive the stepwise diagnostic wizard. Route them to
-    // the Protocol module which owns state + renderer (protocol.js). When
-    // no board is loaded, also render an inline card in the chat stream
-    // (Mode C) so the tech still sees the active step + form even without
-    // the wizard column visible.
+    //  协议事件驱动逐步 diagnostic 向导。将它们路由到
+    //  拥有状态+渲染器的协议模块（protocol.js）。当
+    //  没有加载板，还在聊天流中渲染内联卡
+    //  （模式 C）因此即使没有，技术人员仍然可以看到活动步骤 + 形式
+    //  向导列可见。
     if (typeof payload.type === "string" && payload.type.startsWith("protocol_")) {
       Protocol.applyEvent(payload);
-      // Surface terminal-state chips in the chat stream regardless of board
-      // mode — abandon and completion are session-level events the tech
-      // should see in their scrollback. Reason is the human-supplied
-      // textarea entry from the abandon modal (or "tech_dismiss" default).
+      //  无论板如何，聊天流中都会出现最终状态 chips
+      //  模式 - 放弃和完成是技术的会话级事件
+      //  应该在他们的回滚中看到。理性是人类提供的
+      //  放弃模式中的文本区域条目（或“tech_dismiss”默认值）。
       if (payload.type === "protocol_updated") {
         if (payload.action === "abandoned" || payload.status === "abandoned") {
           appendProtocolSystemEvent("abandoned", {
@@ -356,8 +356,8 @@ export function handleDiagnosticFrame(payload) {
           protocol_id: payload.protocol_id,
         });
       }
-      // Pending confirmation + timeout drive the modal only — do not render
-      // an inline card in the chat stream (the modal is a global blocker).
+      //  等待确认+超时仅驱动模态 - 不渲染
+      //  聊天流中的内联卡（该模式是全局拦截器）。
       const isModalOnly = (
         payload.type === "protocol_pending_confirmation" ||
         payload.type === "protocol_confirmation_timeout"
@@ -369,9 +369,9 @@ export function handleDiagnosticFrame(payload) {
       return;
     }
 
-    // Simulation observation events mirror the agent's measurement tools
-    // onto the schematic UI in real time. Same one-way channel, different
-    // controller (SimulationController lives in schematic.js).
+    //  模拟观察事件反映了代理的测量工具
+    //  实时显示到schematic UI。相同的单向通道，不同的
+    //  控制器（SimulationController位于schematic.js）。
     if (typeof payload.type === "string" && payload.type.startsWith("simulation.")) {
       const SC = SimulationController;
       if (payload.type === "simulation.observation_set" && SC) {
@@ -385,7 +385,7 @@ export function handleDiagnosticFrame(payload) {
       } else if (payload.type === "simulation.repair_validated") {
         const btn = document.getElementById("dashboardFixBtn");
         if (btn) {
-          // Clear any pending safety timeout from the dashboard-side.
+          //  从仪表板端清除任何待处理的安全超时。
           if (btn._fixTimeoutId) { clearTimeout(btn._fixTimeoutId); btn._fixTimeoutId = null; }
           const n = payload.fixes_count || 1;
           btn.innerHTML = ICON_CHECK + " " + escapeHTML(t(n > 1 ? 'chat.fix.validated_many' : 'chat.fix.validated_one', { n }));
@@ -412,12 +412,12 @@ export function handleDiagnosticFrame(payload) {
           : t('chat.session.ready', { mode, model }));
         currentConvId = payload.conv_id || null;
         loadConversations();
-        // Auto-align tier with the resumed conv when the tech hasn't
-        // explicitly picked one this session AND the conv was created on
-        // a different tier. Without this, defaulting to fast/Haiku silently
-        // resumed the (almost empty) per-tier thread of a Sonnet conv —
-        // the user saw "0 messages" on a 31-turn conversation because
-        // they were looking at the wrong thread.
+        //  当技术尚未完成时，自动将 tier 与恢复的转换对齐
+        //  本次会议明确选择了一个，并且会议是在以下时间创建的
+        //  不同的tier。如果没有这个，默认为fast/Haiku
+        //  恢复了 Sonnet 转换的（几乎为空的）每 tier 线程 —
+        //  用户在 31 轮对话中看到“0 条消息”，因为
+        //  他们看错了方向。
         const convTier = payload.conv_tier;
         if (
           convTier &&
@@ -426,8 +426,8 @@ export function handleDiagnosticFrame(payload) {
           ["fast", "normal", "deep"].includes(convTier)
         ) {
           logSys(t('chat.session.tier_auto_align', { tier: convTier }));
-          // Mirror switchTier logic but skip the "user-chose" mark so a
-          // future explicit tier pick still gates this auto-align.
+          //  镜像 switchTier 逻辑，但跳过“用户选择”标记，因此
+          //  未来显式 tier pick 仍然会控制此自动对齐。
           currentTier = convTier;
           const chip = el("llmTierChip");
           if (chip) {
@@ -439,10 +439,10 @@ export function handleDiagnosticFrame(payload) {
             btn.classList.toggle("on", btn.dataset.tier === convTier);
           });
           if (ws && ws.readyState <= 1) {
-            try { ws.close(); } catch (_) { /* ignore */ }
+            try { ws.close(); } catch (_) { /*  忽略  */ }
           }
           ws = null;
-          // Keep the same conv_id on reconnect so we land on the right thread.
+          //  重新连接时保持相同的 conv_id，以便我们到达正确的线程。
           pendingConvParam = currentConvId || null;
           connect();
         }
@@ -467,13 +467,13 @@ export function handleDiagnosticFrame(payload) {
         renderResumeSummary(payload);
         break;
       case "context_lost":
-        // The Anthropic Managed Agents session has been silently dropped /
-        // compacted by the beta backend, AND we had no local JSONL backup
-        // to summarize. The freshly created session has no memory of the
-        // prior turns — anything the tech asks now will be answered as if
-        // it's the first turn of the conversation. Without this card the
-        // chat panel pretends nothing happened and the tech wastes minutes
-        // wondering why the agent forgot the symptom they discussed.
+        //  Anthropic Managed Agents 会话已被默默删除/
+        //  由 beta 后端压缩，并且我们没有本地 JSONL 备份
+        //  总结一下。新创建的会话没有记忆
+        //  之前的回合 - 技术现在提出的任何问题都会得到回答，就像
+        //  这是谈话的第一轮。如果没有这张卡
+        //  聊天面板假装什么都没发生，技术浪费了几分钟
+        //  想知道为什么代理忘记了他们讨论的症状。
         renderContextLost(payload);
         break;
       case "message":
@@ -504,10 +504,10 @@ export function handleDiagnosticFrame(payload) {
         break;
       }
       case "memory_tool_use": {
-        // MA-native filesystem ops on /mnt/memory/{slug}/. These can arrive
-        // after the assistant's message (next agent inference step starting),
-        // so open a fresh turn in that case — otherwise the new step would
-        // render in the rail above the message.
+        //  MA 本机文件系统操作在 /mnt/memory/{slug}/ 上。这些可以到达
+        //  在助理发出消息后（下一个代理推理步骤开始），
+        //  因此，在这种情况下，请重新开始——否则新的步骤将
+        //  渲染在消息上方的 rail 中。
         let turn = ensureTurn();
         if (turn.querySelector(".turn-message")) {
           closeTurn();
@@ -531,8 +531,8 @@ export function handleDiagnosticFrame(payload) {
         recordTurnCost(payload);
         const ct = getCurrentTurn();
         if (ct) appendTurnFoot(ct, payload);
-        // Offline demo replay has no live conversation list to refresh — skip
-        // the network round-trip (it would 404-flood on the demo repair id).
+        //  离线演示重播没有实时对话列表可供刷新 - 跳过
+        //  网络round-trip（它会在演示修复 ID 上出现 404 泛洪）。
         if (!_demoOffline) {
           clearTimeout(window._llmConvRefreshT);
           window._llmConvRefreshT = setTimeout(() => loadConversations(), 500);
@@ -541,18 +541,18 @@ export function handleDiagnosticFrame(payload) {
       }
       case "error":
         logSys(t('chat.error.generic', { text: payload.text }), true);
-        // If the dashboard fix button is pending, clear its spinner so the
-        // tech can retry instead of staring at "… Claude valide" forever.
-        // The dashboard subscribes to this store key (it owns the button).
+        //  如果仪表板修复按钮处于待处理状态，请清除其微调器，以便
+        //  技术人员可以重试，而不是永远盯着“……Claude valide”。
+        //  仪表板订阅此商店密钥（它拥有该按钮）。
         store.set("fixButtonReset", true);
         setPanelMascot("error");
         break;
       case "stream_error":
-        // Terminal: the engine ended the turn (Anthropic API error — e.g. a
-        // spending-limit 400 — or a stream stall) and will NOT stream more.
-        // Without this the "thinking" mascot spins forever (the symptom Alex
-        // hit). Surface the message, close the turn, settle the indicator.
-        // The engine sends `message` (not `text`); fall back across both.
+        //  终端：引擎结束了转弯（Anthropic API 错误 — 例如
+        //  支出限制 400 — 或流停止）并且不会流更多。
+        //  如果没有这个，“思维”mascot就会永远旋转（症状亚历克斯
+        //  击中）。浮出消息，关闭转弯，稳定指示器。
+        //  引擎发送“消息”（不是“文本”）；回落到两者之间。
         logSys(t('chat.error.generic', { text: payload.message || payload.text || '' }), true);
         store.set("fixButtonReset", true);
         closeTurn();
@@ -564,8 +564,8 @@ export function handleDiagnosticFrame(payload) {
         setPanelMascot("idle");
         break;
       case "server.capture_request":
-        // Flow B: agent called cam_capture. Snap from the metabar-selected
-        // device and post back client.capture_response (success or empty).
+        //  Flow B：代理名为cam_capture。从metabar选择的快照
+        //  设备并回发 client.capture_response （成功或空）。
         handleCaptureRequest(payload).catch((err) => {
           console.error("capture handler crash", err);
         });
@@ -574,32 +574,32 @@ export function handleDiagnosticFrame(payload) {
         logSys(t('chat.upload.rejected', { reason: payload.reason || t('chat.error.unknown_reason') }), true);
         break;
       case "turn_complete":
-        // Internal signal for benchmarks (end of an agent tech-turn). UI
-        // doesn't render it — turn boundaries are already conveyed by the
-        // turn_cost foot and the next user message. Don't cut a just-started
-        // typing flash short; its own timer settles to idle.
+        //  Inter基准测试的最终信号（代理技术转向结束）。用户界面
+        //  不渲染它 - 转弯边界已经由
+        //  turn_cost脚和下一个用户消息。不要剪掉刚刚开始的
+        //  打字快闪短；它自己的计时器闲置。
         if (!_typingHoldT) setPanelMascot("idle");
         break;
       default:
-        // Unknown WS event type — typically means the backend grew a new
-        // signal that the frontend handler list hasn't caught up with, OR
-        // the browser is serving a stale cached llm.js. Either way, raw
-        // JSON in the chat log is meaningless to the tech (looked like
-        // garbage `? {...}` rows in production). Surface to the dev console
-        // for debug instead so the chat stream stays readable.
+        //  未知的 WS 事件类型 — 通常意味着后端生成了一个新的
+        //  发出前端处理程序列表尚未跟上的信号，或者
+        //  浏览器正在提供陈旧的缓存 llm.js。不管怎样，生的
+        //  聊天日志中的 JSON 对技术人员来说毫无意义（看起来像
+        //  垃圾`？ {...}` 生产中的行）。开发控制台的表面
+        //  用于调试，以便聊天流保持可读。
         console.warn("[llm] unhandled WS event:", payload?.type, payload);
     }
 }
 
-// ── Demo replay (offline) ────────────────────────────────────────────────
-// When the onboarding plays a recorded session, there is NO live socket and no
-// real repair: frames are fed straight to handleDiagnosticFrame. This flag tells
-// the dispatcher to skip live-only side-effects (conversation-list refresh).
+//  ── 演示重播（离线）────────────────────────────────────────────────
+//  当onboarding播放录制的会话时，没有实时套接字，也没有
+//  真正的修复：帧直接送入handleDiagnosticFrame。这个标志告诉
+//  调度程序跳过仅实时副作用（对话列表刷新）。
 let _demoOffline = false;
 export function setDemoOffline(on) { _demoOffline = !!on; }
 
-// Open the chat panel chrome for a replay — WITHOUT dialing a WebSocket. Clears
-// the log + cost scope so the recorded turns render into a clean panel.
+//  打开聊天面板 chrome 进行重播 — 无需拨打 WebSocket。清除
+//  日志+成本范围，以便记录的结果渲染成一个干净的面板。
 export function openPanelForReplay() {
   resetCost();
   closeTurn();
@@ -613,26 +613,26 @@ export function openPanelForReplay() {
   el("llmToggle").classList.add("on");
 }
 
-// `targetConv` (optional): "new" or an existing conv id. When set, the panel
-// opens directly on that conversation in a single connect() — avoids the
-// double-connect race where openPanel() first lands on the active conv and
-// switchConv() then immediately reconnects to the right one (which spawned
-// useless 0-turn slots before the lazy-materialize landing).
+//  `targetConv`（可选）：“新”或现有的转换 ID。设置后，面板
+//  在单个 connect() 中打开 directly — 避免
+//  双连接竞赛，其中 openPanel() 首先落在活动的 conv 上，并且
+//  switchConv() 然后立即重新连接到正确的那个（产生了
+//  在惰性实现landing之前有无用的0转槽）。
 export function openPanel(targetConv) {
   if (targetConv && targetConv !== currentConvId) {
     pendingConvParam = targetConv;
     if (ws && ws.readyState <= 1) {
-      try { ws.close(); } catch (_) { /* ignore */ }
+      try { ws.close(); } catch (_) { /*  忽略  */ }
     }
     ws = null;
   }
-  // Stale-route guard: SPA navigation never tears the socket down, so a live
-  // socket may still be bound to the PREVIOUS repair/device. Reusing it would
-  // show — and send into — the other repair's conversation. Close + redial.
+  //  陈旧路线守卫：SPA 导航永远不会拆掉插座，所以活下去
+  //  套接字可能仍绑定到先前的修复/设备。重复使用它会
+  //  显示并发送到其他维修人员的对话。关闭+重拨。
   if (ws && ws.readyState <= 1 && wsScope
       && (wsScope.slug !== currentDeviceSlug()
           || wsScope.repairId !== (currentRepairId() || null))) {
-    try { ws.close(); } catch (_) { /* ignore */ }
+    try { ws.close(); } catch (_) { /*  忽略  */ }
     ws = null;
   }
   el("llmPanel").classList.add("open");
@@ -650,14 +650,14 @@ function closePanel() {
   el("llmToggle").classList.remove("on");
 }
 
-// Force-close the chat panel and tear down the live WS when the conversation
-// it points at has just been deleted from the dashboard. Prevents the panel
-// from sitting on a dead conv_id and trying to send to a now-404 session.
+//  对话时强制关闭聊天面板并拆除实时 WS
+//  它指向刚刚从仪表板中删除。防止面板
+//  从坐在死的 conv_id 上并尝试发送到 now-404 会话。
 export function closePanelIfConv(convId) {
   if (!convId || convId !== currentConvId) return;
   _clearReconnect();
   if (ws && ws.readyState <= 1) {
-    try { ws.close(); } catch (_) { /* ignore */ }
+    try { ws.close(); } catch (_) { /*  忽略  */ }
   }
   ws = null;
   currentConvId = null;
@@ -671,8 +671,8 @@ function togglePanel() {
 
 function switchTier(newTier) {
   if (newTier === currentTier) return;
-  // Mark as explicit user choice — disables the conv_tier auto-align that
-  // session_ready otherwise applies on default landings.
+  //  标记为显式用户选择 — 禁用 conv_tier 自动对齐
+  //  session_ready 否则适用于默认 landing。
   userPickedTier = true;
   currentTier = newTier;
   const chip = el("llmTierChip");
@@ -686,27 +686,27 @@ function switchTier(newTier) {
   });
   logSys(t('chat.session.tier_switch', { tier: newTier }));
   if (ws && ws.readyState <= 1) {
-    try { ws.close(); } catch (_) { /* ignore */ }
+    try { ws.close(); } catch (_) { /*  忽略  */ }
   }
   ws = null;
-  pendingConvParam = "new";  // new tier = new conversation
+  pendingConvParam = "new";  //  新tier=新对话
   connect();
 }
 
-// Auto-open the panel when the URL carries ?repair=<id>. Called from the
-// main bootstrap so that clicking a repair card on Home lands the user
-// directly in the conversation — no extra click needed.
+//  当URL带有?repair=<id>时自动打开面板。调用自
+//  主引导程序，以便单击主页上的修复卡可以引导用户
+//  direct仅在对话中 — 无需额外点击。
 export function openLLMPanelIfRepairParam() {
   const rid = currentRepairId();
   const slug = getDeviceSlug();
   if (rid && slug) {
-    // Defer one frame so the DOM is definitely wired (openPanel touches
-    // llmInput, llmToggle, etc.) and the status bar has mounted.
+    //  推迟一帧，这样 DOM 就肯定是有线的（openPanel 接触
+    //  llmInput、llmToggle 等）并且状态栏已安装。
     requestAnimationFrame(() => openPanel());
   }
 }
 
-// ============ Conversation switcher helpers ============
+//  ============ 对话切换助手 ============
 
 async function loadConversations() {
   const rid = currentRepairId();
@@ -744,7 +744,7 @@ async function deleteConvFromPanel(convId) {
 
   if (wasCurrent) {
     if (ws && ws.readyState <= 1) {
-      try { ws.close(); } catch (_) { /* ignore */ }
+      try { ws.close(); } catch (_) { /*  忽略  */ }
     }
     ws = null;
     currentConvId = null;
@@ -841,13 +841,13 @@ export function switchConv(convIdOrNew) {
     try { ws.close(); } catch (_) {}
   }
   ws = null;
-  // Route connect() to target the requested conv on reopen.
+  //  路由 connect() 以在重新打开时定位请求的转换。
   pendingConvParam = convIdOrNew;
-  // Picking a different conv defers tier choice back to the conv: its
-  // active per-tier thread is what the tech actually means to see, even
-  // if they had picked a tier earlier in this session. "+ Nouvelle
-  // conversation" keeps the explicit tier choice intact (no conv_tier
-  // to align to anyway).
+  //  选择不同的转换会将tier的选择推迟回转换：其
+  //  每个tier线程的活动是技术实际上意味着看到的，即使
+  //  如果他们在本次会议早些时候选择了tier。 ” + 新
+  //  对话”保持显式 tier 选择完好无损（没有 conv_tier
+  //  无论如何都要对齐）。
   if (convIdOrNew !== "new") {
     userPickedTier = false;
   }
@@ -858,7 +858,7 @@ function openConvPopover() {
   const chip = el("llmConvChip");
   const pop = el("llmConvPopover");
   if (!chip || !pop) return;
-  loadConversations(); // refresh on open
+  loadConversations(); //  打开时刷新
   pop.hidden = false;
   chip.setAttribute("aria-expanded", "true");
 }
@@ -875,16 +875,16 @@ function toggleConvPopover() {
   if (pop.hidden) openConvPopover(); else closeConvPopover();
 }
 
-// ── Demo replay: the conversation switcher, offline ───────────────────────
-// The onboarding shows the REAL conversation UI being used — the chip, the
-// popover, the "+ New conversation" button — so the tech sees the actual
-// gesture, not a description of it. But offline there is no backend to list or
-// create conversations (and `openConvPopover` would fire a 404-flooding fetch),
-// so these helpers drive the very same DOM the live code does, from a
-// caller-supplied COSMETIC list. Deterministic, free, no network.
+//  ── 演示重播：对话切换器，离线────────────────────────
+//  onboarding 显示正在使用的真实对话 UI — chip、
+//  popover，“+ 新对话”按钮 — 这样技术人员就能看到实际情况
+//  手势，而不是对其的描述。但离线时没有后端可以列出或
+//  创建对话（并且 `openConvPopover` 将触发 404 泛洪获取），
+//  所以这些助手驱动与实时代码完全相同的 DOM，从
+//  来电者提供的化妆品清单。确定性、免费、无需网络。
 export function replaySeedConversations(list) {
   conversationsCache = Array.isArray(list) ? list.slice() : [];
-  // currentConvId drives the active-row marker + the "CONV n/total" chip label.
+  //  currentConvId 驱动活动行标记 +“CONV n/total”chip 标签。
   const active = conversationsCache.find((c) => c.active);
   currentConvId = (active || conversationsCache[0] || {}).id || null;
   renderConvItems();
@@ -892,31 +892,31 @@ export function replaySeedConversations(list) {
 export function replayOpenConvPopover() {
   const chip = el("llmConvChip"), pop = el("llmConvPopover");
   if (!chip || !pop) return;
-  renderConvItems();          // render the seeded cache — NO network fetch
+  renderConvItems();          //  渲染种子缓存 — 无网络获取
   pop.hidden = false;
   chip.setAttribute("aria-expanded", "true");
 }
 export function replayCloseConvPopover() { closeConvPopover(); }
 
-// Fetch the chat panel fragment from web/llm_panel.html and inject it
-// into #llmRoot. Isolating the markup in its own file keeps parallel
-// work on web/index.html from colliding with chat-panel edits.
+//  从 web/llm_panel.html 获取聊天面板片段并注入
+//  进入#llmRoot。将标记隔离在自己的文件中保持并行
+//  处理 web/index.html，避免与聊天面板编辑发生冲突。
 async function mountPanelFragment() {
   const root = el("llmRoot");
   if (!root) return false;
-  if (root.childElementCount > 0) return true; // already mounted (hot-reload guard)
+  if (root.childElementCount > 0) return true; //  已安装（热重装防护）
   try {
     const res = await fetch("llm_panel.html", { cache: "no-cache" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     root.innerHTML = await res.text();
-    // Translate the freshly-injected markup. Wait for dictionaries first
-    // so the initial paint is in the right language; the i18n core falls
-    // back to the inline English text if anything is missing.
+    //  翻译新注入的标记。先等词典
+    //  所以最初的绘画语言是正确的； i18n核心掉落
+    //  如果缺少任何内容，请返回内联英文文本。
     if (window.i18n) {
       try {
         await window.i18n.ready;
         window.i18n.applyDom(root);
-      } catch (e) { /* keep the inline fallback */ }
+      } catch (e) { /*  保持内联后备  */ }
     }
     return true;
   } catch (err) {
@@ -931,16 +931,16 @@ export async function initLLMPanel() {
 
   panelMascot = mountMascot(el("llmMascot"), { size: "sm", state: "idle" });
 
-  // Re-render imperative bits (status pill, conv chip) on locale switch.
-  // The static markup is handled by `data-i18n` + i18n.applyDom; everything
-  // emitted from JS (status text, conv label, replayed log lines) needs an
-  // explicit redraw hook.
+  //  在区域设置开关上重新渲染命令位（状态丸，转换chip）。
+  //  静态标记由 `data-i18n` + i18n.applyDom 处理；一切
+  //  从 JS 发出（状态文本、转换标签、重播日志行）需要一个
+  //  显式重绘钩子。
   if (window.i18n && typeof window.i18n.onChange === "function") {
     window.i18n.onChange(() => {
-      // Conv chip (label + items) reads localized strings on every render.
+      //  Conv chip（标签+项目）在每次渲染时读取本地化字符串。
       renderConvItems();
-      // Status text — only refresh the current tone's label so we don't
-      // overwrite an active "connecting" with a stale "idle".
+      //  状态文本 - 仅刷新当前音调的标签，因此我们不会
+      //  用陈旧的“空闲”覆盖活动的“连接”。
       const statusEl = el("llmStatus");
       if (statusEl) {
         const txt = el("llmStatusText");
@@ -960,7 +960,7 @@ export async function initLLMPanel() {
   el("llmClose")?.addEventListener("click", closePanel);
   el("llmStop")?.addEventListener("click", interruptAgent);
 
-  // Tier chip → popover → switchTier.
+  //  层级 chip → popover → 切换层级。
   const tierChip = el("llmTierChip");
   const tierPopover = el("llmTierPopover");
   function openTierPopover() {
@@ -1001,7 +1001,7 @@ export async function initLLMPanel() {
     }
   });
 
-  // Conversation chip + popover.
+  //  对话chip + popover。
   const convChip = el("llmConvChip");
   const convPopover = el("llmConvPopover");
   const convNew = el("llmConvNew");
@@ -1037,7 +1037,7 @@ export async function initLLMPanel() {
   input?.addEventListener("input", autoGrow);
 
   input?.addEventListener("keydown", (e) => {
-    // Enter (without Shift) → submit. Shift+Enter → newline (default).
+    //  输入（不带 Shift）→ 提交。 Shift+Enter → 换行符（默认）。
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       form?.requestSubmit();
@@ -1054,9 +1054,9 @@ export async function initLLMPanel() {
     }
     logMessage("user", text);
     ws.send(JSON.stringify({ type: "message", text }));
-    // Immediate feedback: open a fresh turn and show the pending indicator
-    // before the backend has produced its first event. Subsequent tool_use /
-    // thinking / message events reuse this turn via ensureTurn().
+    //  立即反馈：打开新的转弯并显示待处理指示器
+    //  在后端产生第一个事件之前。后续tool_use /
+    //  思考/消息事件通过ensureTurn()重用本回合。
     closeTurn();
     const turn = ensureTurn();
     ensurePendingNode(turn);
@@ -1068,14 +1068,14 @@ export async function initLLMPanel() {
   });
 
   document.addEventListener("keydown", e => {
-    // ⌘J / Ctrl+J toggle
+    //  ⌘J / Ctrl+J 切换
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "j") {
       e.preventDefault();
       togglePanel();
       return;
     }
-    // Escape when panel focused: if the agent is live + connected, interrupt
-    // it first; second Escape closes the panel.
+    //  当面板聚焦时退出：如果代理处于活动状态并且已连接，则中断
+    //  首先；第二个 Escape 关闭面板。
     if (e.key === "Escape" && document.body.classList.contains("llm-open")) {
       if (document.activeElement && el("llmPanel").contains(document.activeElement)) {
         if (ws && ws.readyState === WebSocket.OPEN) {
@@ -1088,7 +1088,7 @@ export async function initLLMPanel() {
     }
   });
 
-  // --- Files+Vision: upload button + drag-drop + preview toggle --------
+  //  --- Files+Vision：上传按钮+拖放+预览切换 --------
   const uploadBtn = el("llmUploadBtn");
   const uploadInput = el("llmUploadInput");
   const dropzone = el("llmDropzone");
@@ -1123,7 +1123,7 @@ export async function initLLMPanel() {
   uploadBtn?.addEventListener("click", () => uploadInput?.click());
   uploadInput?.addEventListener("change", (e) => {
     const file = e.target.files && e.target.files[0];
-    e.target.value = "";  // allow re-uploading the same file
+    e.target.value = "";  //  允许重新上传同一文件
     handleMacroUpload(file);
   });
 

@@ -15,26 +15,26 @@ import {
 import { escapeHtml as escHtml } from "./shared/dom.js";
 import { getDeviceSlug as ctxDeviceSlug, getRepairId as ctxRepairId } from "./shared/context.js";
 
-// Schematic section V5 — Power Diagnostic Dashboard.
+//  原理图部分 V5 — 电源诊断仪表板。
 //
-// Not a KiCad replica — a view that answers questions the PDF cannot:
-//   - Where does +3V3 come from, end-to-end?
-//   - If U7 dies, what else loses power?
-//   - Which rails stabilise in which boot phase?
+//  不是 KiCad 复制品 — 该视图可以回答 PDF 无法回答的问题：
+//      - 端到端的+3V3从何而来？
+//      - 如果U7死了，还有什么会失去力量？
+//      - 哪些rail稳定在哪个启动阶段？
 //
-// Scope: only the ~115 components that matter for power diagnostics on
-// MNT-class boards — rails + their source ICs + consumer ICs + decoupling
-// caps. The 300 signal-only routing passives (R*, C*) stay in the PDF.
+//  范围：仅约 115 个对电源 diagnostic 起作用的组件
+//  MNT 级板 — rails + 其源 IC + 消费 IC + 去耦
+//  上限。 300 个纯信号路由无源器件（R*、C*）保留在 PDF 中。
 //
-// Layout: X = causal depth in the power tree (BFS from root rails), not
-// voltage buckets or schematic pages. Root rails (external supplies) sit
-// far left, downstream regulators flow right. Y is force-determined with
-// soft column clustering + strong collide.
+//  布局：X = 幂树中的因果深度（从根 rails 开始的 BFS），而不是
+//  电压桶或schematic页。根rails（外部供应）坐
+//  最左边，下游调节器流向右边。 Y 由力决定
+//  软柱簇+强碰撞。
 //
-// Killer features:
-//   - Kill-switch cascade: click a node → highlight everything that dies.
-//   - Boot timeline: swim-lane of the 4 boot phases at the bottom.
-//   - Rich inspector: rail consumers, enable chains, decoupling margin.
+//  杀手特色：
+//      - 终止开关级联：单击一个节点→突出显示所有终止的节点。
+//      - Boot timeline：底部 4 个启动阶段的泳道。
+//      - 丰富inspector：rail消费者，赋能链条，解耦边际。
 
 const STATE = {
   slug: null,
@@ -42,30 +42,30 @@ const STATE = {
   model: null,
   zoom: null,
   selectedId: null,
-  killswitch: false,         // when true, focus mode shows the full cascade
+  killswitch: false,         //  当 true 时，聚焦模式显示完整级联
   showSignals: false,
   showAllPins: false,
-  // Declutter the full-board layouts (powertree / grid): hide the decoupling
-  // caps / sense resistors (≈60% of nodes) so rails + functional ICs read.
+  //  整理全板布局（powertree / grid）：隐藏解耦
+  //  电容 / 检测电阻（约 60% 的节点），因此 rails + 功能 IC 读取。
   hidePassives: ((typeof localStorage !== "undefined" && localStorage.getItem("schHidePassives")) ?? "1") !== "0",
-  // "railfocus" (default, one rail at a time), "powertree" (all rails stacked),
-  // "grid" (phase × voltage 2D). Persisted to localStorage so the user's
-  // choice sticks.
+  //  “railfocus”（默认，一次一个rail），“powertree”（所有rail堆叠），
+  //  “电网”（相位×电压2D）。坚持到 localStorage 所以用户的
+  //  选择棒。
   layoutMode: (typeof localStorage !== "undefined" && localStorage.getItem("schLayoutMode")) || "boot",
-  // In railfocus mode, which rail is currently shown in the canvas.
+  //  在rail焦点模式下，rail当前显示在画布中。
   selectedRailId: (typeof localStorage !== "undefined" && localStorage.getItem("schSelectedRail")) || null,
-  // "graph" (default, derived views) or "pdf" (original schematic pages).
-  // Persisted so the user's pick survives section re-entries.
+  //  “graph”（默认，派生视图）或“pdf”（原始 schematic 页）。
+  //  保留，以便用户的选择在重新输入部分后仍然有效。
   surface: (typeof localStorage !== "undefined" && localStorage.getItem("schSurface")) || "graph",
-  // PDF viewer state — pages payload, last primed slug, current zoom.
+  //  PDF 查看器状态 — 页面有效负载、上次启动 slug、当前缩放。
   pdfPrimedSlug: null,
-  pdfPages: null,        // server response {count, pages:[{n,url,width_pt,height_pt,anchors}]}
-  pdfZoom: 1.0,          // CSS zoom multiplier applied to each .sch-pdf-page
-  pdfCurrentPage: 1,     // dominant page in viewport (updated by scroll observer)
+  pdfPages: null,        //  服务器响应 {count，pages:[{n,url,width_pt,height_pt,anchors}]}
+  pdfZoom: 1.0,          //  应用于每个 .sch-pdf-page 的 CSS 缩放乘数
+  pdfCurrentPage: 1,     //  视口中的主导页面（由滚动观察者更新）
 };
 
-// Infer the nominal voltage from a canonical rail label.
-// "+3V3" → 3.3, "+5V" → 5, "+1V8" → 1.8, "+12V" → 12. Unknown labels → null.
+//  从规范的 rail 标签推断标称电压。
+//  “+3V3”→ 3.3，“+5V”→ 5，“+1V8”→ 1.8，“+12V”→ 12。未知标签→ null。
 function inferRailNominalV(label) {
   if (typeof label !== "string") return null;
   const m = label.match(/^\+?(\d+)V(\d+)?$/i);
@@ -76,14 +76,14 @@ function inferRailNominalV(label) {
   return whole + frac;
 }
 
-// Client-side mirror of api/agent/measurement_memory.py::auto_classify.
-// Keep thresholds in sync with the Python constants.
+//  api/agent/measurement_memory.py::auto_classify 的客户端镜像。
+//  使阈值与 Python 常量保持同步。
 function clientAutoClassify(kind, value, unit, nominal) {
   if (kind === "rail" && (unit === "V" || unit === "mV")) {
     if (nominal == null || nominal === "") return null;
-    // Normalise the reading to V. `nominal` is the rail's SI target
-    // (stored in V everywhere in the stack), so we never divide it by
-    // 1000 — see api/agent/measurement_memory.py for the matching fix.
+    //  将读数标准化为 V。“标称”是 rail 的 SI 目标
+    //  （存储在堆栈中各处的 V 中），因此我们永远不会将其除以
+    //  1000 — 请参阅 api/agent/measurement_memory.py 以获取匹配的修复。
     const v = unit === "mV" ? value / 1000 : value;
     const nom = nominal;
     if (v < 0.05) return "dead";
@@ -98,28 +98,28 @@ function clientAutoClassify(kind, value, unit, nominal) {
   return null;
 }
 
-/* ---------------------------------------------------------------------- *
- * SIMULATION                                                             *
- * Drives the behavioral simulator UI: fetches a SimulationTimeline from  *
- * POST /pipeline/packs/{slug}/schematic/simulate, exposes playback       *
- * controls, and applies sim-* CSS classes to nodes/rails for each phase. *
- * Scaffold for now — scrubber UI and state-class propagation land in     *
- * subsequent commits.                                                    *
- * ---------------------------------------------------------------------- */
+/*  ---------------------------------------------------------------------------------- *
+ * 模拟 *
+ * 驱动行为模拟器 UI：从 * 获取模拟时间线
+ * POST /pipeline/packs/{slug}/schematic/simulate，公开播放 *
+ * 控制，并将 sim-* CSS 类应用于每个阶段的节点/rail。 *
+ * 现在的脚手架 - 洗涤器 UI 和状态级传播土地 *
+ * 后续提交。                                                    *
+ * ----------------------------------------------------------------------  */
 
 export const SimulationController = {
-  timeline: null,          // server response
-  killedRefdes: [],        // user-injected faults
+  timeline: null,          //  服务器响应
+  killedRefdes: [],        //  用户注入的故障
   observations: {
-    state_comps:   new Map(),     // refdes → "dead" | "alive" | "anomalous" | "hot"
-    state_rails:   new Map(),     // rail label → "dead" | "alive" | "shorted"
-    metrics_comps: new Map(),     // refdes → {measured, unit, nominal?, note?, ts}
-    metrics_rails: new Map(),     // rail → {measured, unit, nominal?, note?, ts}
+    state_comps:   new Map(),     //  refdes→“死”| “活着”| “异常”| “热”
+    state_rails:   new Map(),     //  rail 标签→“死”| “活着”| “短路”
+    metrics_comps: new Map(),     //  refdes → {测量，单位，标称？，注释？，ts}
+    metrics_rails: new Map(),     //  rail → {测量，单位，标称？，注释？，ts}
   },
   hypotheses: null,
   playing: false,
-  speedMs: 800,            // ms per phase at 1×
-  cursor: 0,               // current phase index within timeline.states
+  speedMs: 800,            //  1× 时每相毫秒
+  cursor: 0,               //  当前阶段索引在 timeline.states 内
   _timer: null,
 
   async refresh(slug) {
@@ -148,9 +148,9 @@ export const SimulationController = {
   },
 
   render() {
-    // Repaint the unified boot player (transport label, active pip, active
-    // card) and the graph state-classes for the current cursor. The player
-    // DOM scaffold itself is built by renderBootTimeline() on fullRender.
+    //  重新绘制统一引导播放器（传输标签、活动 pip、活动
+    //  卡）和当前光标的图形状态类。玩家
+    //  DOM 脚手架本身是由 fullRender 上的 renderBootTimeline() 构建的。
     this._syncPlayer();
     const on = ((typeof localStorage !== "undefined" && localStorage.getItem("simStatesVisible")) ?? "1") !== "0";
     if (on && this.timeline) {
@@ -160,15 +160,15 @@ export const SimulationController = {
     }
   },
 
-  // The boot phase index (model.boot[].index) the cursor points at, or null.
+  //  光标指向的启动阶段索引 (model.boot[].index)，或者为 null。
   currentPhaseIndex() {
     const state = this.timeline?.states?.[this.cursor];
     return state ? state.phase_index : null;
   },
 
-  // Drive the player from a boot phase index (what the pips carry). Maps the
-  // phase onto its simulation state when a timeline exists; otherwise just
-  // focuses the graph and refreshes the card (navigation without sim data).
+  //  将玩家从引导阶段指数（点数所携带的内容）中驱使。地图
+  //  当 timeline 存在时，进入模拟状态；否则只是
+  //  聚焦图形并刷新卡片（无需 sim 数据即可导航）。
   seekToPhase(phaseIndex) {
     if (this.timeline) {
       const idx = this.timeline.states.findIndex(s => s.phase_index === phaseIndex);
@@ -187,8 +187,8 @@ export const SimulationController = {
     });
   },
 
-  // Reflect cursor state into the player chrome without touching graph focus
-  // (focus is driven explicitly by seek/seekToPhase so playback can dim).
+  //  将光标状态反映到播放器镶边中，无需触摸图形焦点
+  //  （焦点由seek/seekToPhase 显式驱动，因此播放可能会变暗）。
   _syncPlayer() {
     const phaseIdx = this.currentPhaseIndex();
     this._markActivePip(phaseIdx);
@@ -206,7 +206,7 @@ export const SimulationController = {
     }
   },
 
-  // Toggle whether the graph carries the per-phase sim-* state overlay.
+  //  切换图是否带有每相 sim-* 状态 overlay。
   toggleStates() {
     const on = ((typeof localStorage !== "undefined" && localStorage.getItem("simStatesVisible")) ?? "1") !== "0";
     try { localStorage.setItem("simStatesVisible", on ? "0" : "1"); } catch (_) {}
@@ -214,9 +214,9 @@ export const SimulationController = {
   },
 
   _clearStateClasses() {
-    // Remove every sim-* class from the schematic DOM so the graph returns
-    // to its default appearance (no dimming, no cascade glyphs, no dead
-    // outlines). Called when the user closes the timeline toggle.
+    //  从 schematic DOM 中删除每个 sim-* 类，以便图表返回
+    //  其默认外观（无调光、无级联字形、无死亡
+    //  轮廓）。当用户关闭 timeline 开关时调用。
     document.querySelectorAll(
       ".sim-off, .sim-rising, .sim-stable, .sim-dead, .sim-signal-high, .sim-signal-low, .sim-cascade"
     ).forEach((n) => n.classList.remove(
@@ -227,13 +227,13 @@ export const SimulationController = {
   _applyStateClasses() {
     const state = this.timeline?.states?.[this.cursor];
     if (!state) return;
-    // Clear prior classes on anything currently marked.
+    //  清除当前标记的任何内容的先前课程。
     this._clearStateClasses();
 
-    // Nodes — we rely on the existing graph renderer having attached
-    // `data-refdes` / `data-rail` / `data-signal` on each selectable element.
-    // If the attributes aren't wired yet (Task 13), this is a no-op for those
-    // classes; the scrubber itself still renders.
+    //  节点 - 我们依赖于已附加的现有图形渲染器
+    //  每个可选元素上的“data-refdes”/“data-rail”/“data-signal”。
+    //  如果属性尚未连接（任务 13），则对于这些属性来说这是 no-op
+    //  课程；洗涤器本身仍然会渲染。
     for (const [refdes, st] of Object.entries(state.components || {})) {
       document.querySelectorAll(`[data-refdes="${CSS.escape(refdes)}"]`).forEach((el) => {
         el.classList.add(`sim-${st}`);
@@ -250,10 +250,10 @@ export const SimulationController = {
       });
     }
 
-    // Overlay: cascade-dead nodes — downstream of a killed upstream rail
-    // source but NOT directly killed by the user. Timeline-wide, not
-    // phase-specific — once a cascade is computed, those nodes carry the
-    // badge for the entire playback.
+    //  覆盖：级联死亡节点 - 被杀死的上游rail的下游
+    //  源但不是 direct 被用户杀死。时间线范围内，而不是
+    //  阶段特定的——一旦级联被计算出来，这些节点就携带
+    //  整个播放过程中的标记。
     const tl = this.timeline;
     if (tl) {
       const killedSet = new Set(tl.killed_refdes || []);
@@ -296,10 +296,10 @@ export const SimulationController = {
     this._syncPlayer();
   },
 
-  // ---- Observations ----
+  //  ---- 观察结果 ----
   setObservation(kind, key, mode, measurement = null) {
-    // kind: "comp" | "rail"
-    // mode: "dead" | "alive" | "anomalous" | "hot" | "shorted" | "unknown"
+    //  种类：“comp” | “rail”
+    //  模式：“死亡”| “活着”| “异常”| “热”| “短路” | “未知”
     const stateMap  = kind === "comp" ? this.observations.state_comps  : this.observations.state_rails;
     const metricMap = kind === "comp" ? this.observations.metrics_comps : this.observations.metrics_rails;
     if (mode === "unknown" || mode == null) {
@@ -322,10 +322,10 @@ export const SimulationController = {
     this._applyObservationClasses();
     document.querySelectorAll(".sim-hypotheses-panel").forEach(p => p.remove());
   },
-  // Fetch the repair's measurement journal and seed the local observation
-  // Maps with the latest event per target. Mirrors the Python side's
-  // synthesise_observations (latest-per-target wins, state lit only for
-  // valid mode literals). Silent no-op when no repair_id is in the URL.
+  //  获取修复的测量日志并播种本地观察结果
+  //  包含每个目标最新事件的地图。反映Python端的
+  //  synthesise_observations (latest-per-target wins, state lit only for
+  //  valid mode literals). Silent no-op when no repair_id is in the URL.
   async hydrateFromJournal(slug) {
     const repairId = ctxRepairId();
     if (!slug || !repairId) return;
@@ -336,10 +336,10 @@ export const SimulationController = {
       if (!res.ok) return;
       const payload = await res.json();
       const events = payload.measurements || [];
-      // Keep the latest event per target (events are stored in insertion order).
+      //  Keep the latest event per target (events are stored in insertion order).
       const latest = new Map();
       for (const ev of events) latest.set(ev.target, ev);
-      this.measurementHistory = events;  // full journal, used by T19 timeline
+      this.measurementHistory = events;  //  full journal, used by T19 timeline
       const COMP_MODES = new Set(["dead", "alive", "anomalous", "hot"]);
       const RAIL_MODES = new Set(["dead", "alive", "shorted", "stuck_on"]);
       for (const [target, ev] of latest) {
@@ -358,7 +358,7 @@ export const SimulationController = {
           }
           if (measurement) this.observations.metrics_comps.set(key, measurement);
         } else if (kind === "rail") {
-          // Allow "anomalous" locally for UI; it's stripped / coerced at POST.
+          //  Allow "anomalous" locally for UI; it's stripped / coerced at POST.
           if (RAIL_MODES.has(mode) || mode === "anomalous") {
             this.observations.state_rails.set(key, mode);
           }
@@ -404,24 +404,24 @@ export const SimulationController = {
     }
   },
 
-  // ---- Reverse-diagnostic: hypothesize + results panel ----
+  //  ---- Reverse-diagnostic: hypothesize + results panel ----
   async hypothesize(slug) {
     const obs = this.observations;
     const totalObs = obs.state_comps.size + obs.state_rails.size
                    + obs.metrics_comps.size + obs.metrics_rails.size;
     if (totalObs === 0) return;
-    // Backend RailMode accepts dead/alive/shorted/stuck_on (Phase 4.5).
-    // Phase 1 scoring doesn't model anomalous rails — we coerce sagging
-    // readings to "dead" so the buck upstream still scores as top
-    // candidate. The raw metric rides along in metrics_rails so the
-    // narrative cites the exact value.
+    //  Backend RailMode accepts dead/alive/shorted/stuck_on (Phase 4.5).
+    //  Phase 1 scoring doesn't model anomalous rails — we coerce sagging
+    //  readings to "dead" so the buck upstream still scores as top
+    //  candidate. The raw metric rides along in metrics_rails so the
+    //  narrative cites the exact value.
     const RAIL_MODES = new Set(["dead", "alive", "shorted", "stuck_on"]);
     const stateRailsOut = {};
     for (const [k, v] of obs.state_rails) {
       if (RAIL_MODES.has(v)) stateRailsOut[k] = v;
       else if (v === "anomalous") stateRailsOut[k] = "dead";
     }
-    // Backend ObservedMetric forbids extras (ts, note). Strip UI-only fields.
+    //  Backend ObservedMetric forbids extras (ts, note). Strip UI-only fields.
     const stripMetric = (m) => {
       const out = { measured: m.measured, unit: m.unit };
       if (m.nominal != null) out.nominal = m.nominal;
@@ -498,7 +498,7 @@ export const SimulationController = {
         ${missing ? `<div class="sim-hyp-diff"><span class="k">${escHtml(t("schematic.simulator.hyp_does_not_cover"))}</span> ${missing}</div>` : ""}
       `;
       card.addEventListener("click", () => {
-        // Preview the cascade by injecting this kill set into the simulator.
+        //  通过将此kill set注入模拟器来预览级联。
         SimulationController.killedRefdes = [...h.kill_refdes];
         SimulationController.refresh(STATE.slug);
       });
@@ -516,9 +516,9 @@ function getDeviceSlug() {
 
 function el(id) { return document.getElementById(id); }
 
-/* ---------------------------------------------------------------------- *
- * FETCH                                                                  *
- * ---------------------------------------------------------------------- */
+/*  ---------------------------------------------------------------------------------- *
+ * 获取 *
+ * ----------------------------------------------------------------------  */
 
 async function fetchSchematic(slug) {
   try {
@@ -531,23 +531,23 @@ async function fetchSchematic(slug) {
   }
 }
 
-/* ---------------------------------------------------------------------- *
- * MODEL — filter to diag-relevant components, compute causal depth       *
- * ---------------------------------------------------------------------- */
+/*  ---------------------------------------------------------------------------------- *
+ * 模型 — 过滤诊断相关组件，计算因果深度 *
+ * ----------------------------------------------------------------------  */
 
 const POWER_PIN_ROLES = new Set([
   "power_in", "power_out", "switch_node", "enable_in", "enable_out",
   "power_good_out", "reset_in", "reset_out", "feedback_in", "ground",
 ]);
 
-// R/L/Ferrites are always included in the default view when they touch a
-// power rail — they're the pull-up/sense/filter passives that matter for
-// power diagnostics. Module-level so buildModel can synthesize edges for
-// them later in the same function.
+//  当 R/L/铁氧体触摸时，它们始终包含在默认视图中。
+//  电源 rail — 它们是重要的上拉/感应/滤波器无源器件
+//  功率diagnostics。模块级别，因此 buildModel 可以合成边缘
+//  他们稍后在同一功能中。
 const ALWAYS_RL_TYPES_GLOBAL = new Set(["resistor", "inductor", "ferrite"]);
 
-// Phase 4 — kind-aware mode sets for the observation picker.
-// Keys match the backend ComponentKind values + "rail".
+//  第 4 阶段 — 观察选择器的感知模式设置。
+//  键与后端 ComponentKind 值 +“rail”匹配。
 const MODE_SETS = {
   ic:         ["unknown", "alive", "dead", "anomalous", "hot"],
   passive_r:  ["unknown", "alive", "open", "short"],
@@ -571,14 +571,14 @@ const MODE_GLYPH = {
   stuck_off: ICON_BAN,
 };
 
-// Human-readable labels per mode — resolved through i18n at call time so
-// the picker re-renders correctly on locale switch.
+//  每个模式的人类可读标签 - 在调用时通过 i18n 解析，因此
+//  选择器在区域设置切换上正确重新呈现。
 function modeLabel(m) { return t(`schematic.modes.${m}`) || m; }
 
-// A component "touches a power rail" if any of its pins has a known
-// power role (power_in/out, ground, switch_node, enable_in/out) or a
-// `net_label` that matches a compiled rail label. Used to decide whether
-// to auto-include an R/L/FB in the default power-tree view.
+//  如果某个组件的任何引脚具有已知的电压，则该组件“接触电源 rail”
+//  电源角色（电源输入/输出、接地、开关节点、启用输入/输出）或
+//  `net_label` 与已编译的 rail 标签匹配。用于决定是否
+//  在默认电源树视图中自动包含 R/L/FB。
 function touchesPowerRail(comp, rails) {
   for (const p of comp.pins || []) {
     const role = p.role || "";
@@ -608,9 +608,9 @@ function classifyPins(comp, showAll) {
   return { all: pins, visible, hidden };
 }
 
-// Assign a side to each visible pin for rendering. Sources align inputs
-// on the left, outputs on the right. Rules mirror layoutPins in V4 but
-// simpler — V5 only pins ICs (sources + consumers), never decoupling caps.
+//  为每个可见引脚分配一侧以进行渲染。来源对齐输入
+//  左边，输出在右边。规则镜像 V4 中的布局引脚，但是
+//  更简单——V5仅引脚IC（源+消费者），从不去耦电容。
 function layoutPins(comp, showAll) {
   const { visible, hidden } = classifyPins(comp, showAll);
   const sides = { left: [], right: [], top: [], bottom: [] };
@@ -636,15 +636,15 @@ function layoutPins(comp, showAll) {
 function buildModel(graph) {
   const rails = graph.power_rails || {};
   const components = graph.components || {};
-  // Prefer Opus-refined boot sequence when present — richer phases with
-  // kind, evidence, confidence, object-shaped triggers_next.
+  //  更喜欢 Opus - 细化的启动顺序（如果存在）——更丰富的阶段
+  //  种类、证据、信心、物体形状的触发器_下一个。
   const analyzed = graph.analyzed_boot_sequence;
   const source = graph.boot_sequence_source || "compiler";
   const boot = (source === "analyzer" && analyzed?.phases?.length)
     ? analyzed.phases
     : (graph.boot_sequence || []);
 
-  // --- 1. Select the diag-relevant subset of components ---------------
+  //  --- 1. 选择与诊断相关的组件子集 ---------------
   const sourceRefs = new Set();
   const consumerRefs = new Set();
   const decouplingRefs = new Set();
@@ -657,7 +657,7 @@ function buildModel(graph) {
   const nodes = [];
   const nodeById = new Map();
 
-  // Rails first.
+  //  先说铁轨。
   for (const [label, rail] of Object.entries(rails)) {
     const phaseIdx = boot.findIndex(p => (p.rails_stable || []).includes(label));
     const n = {
@@ -676,15 +676,15 @@ function buildModel(graph) {
     nodes.push(n); nodeById.set(n.id, n);
   }
 
-  // Components to include — this view is the power tree, not the full board:
-  //   - nodes referenced by a rail (as source, consumer, or decoupling cap)
-  //     — the backbone of the power tree
-  //   - resistors, inductors, ferrites whose pins touch a power rail
-  //     (pull-ups on EN lines, sense resistors, filter inductors — invisible
-  //     otherwise but useful for diagnosing a bias failure)
-  // Signal-only passives (no power-rail pin) are deliberately excluded; they
-  // carry no boot/power edge and would only add disconnected noise. The
-  // `hidePassives` toggle declutters the modelled passives at render time.
+  //  要包含的组件 - 此视图是电源树，而不是完整的电路板：
+  //      - rail引用的节点（作为源、消费者或解耦帽）
+  //          — 电力树的支柱
+  //      - 引脚接触电源rail的电阻器、电感器、铁氧体
+  //          （EN 线上的上拉电阻、检测电阻、滤波电感 — 不可见
+  //          否则但对于诊断偏差失败很有用）
+  //  仅信号无源（无电源rail引脚）被故意排除；他们
+  //  没有启动/电源边缘，只会增加断开噪声。的
+  //  “hidePassives”切换可在渲染时整理建模的被动元件。
   const railReferenced = new Set([...sourceRefs, ...consumerRefs, ...decouplingRefs]);
   const all = new Set(railReferenced);
   for (const [refdes, comp] of Object.entries(components)) {
@@ -695,8 +695,8 @@ function buildModel(graph) {
   for (const refdes of all) {
     const comp = components[refdes];
     if (!comp) {
-      // Referenced but missing from components — we still make a stub node
-      // so edges don't orphan, just flag it.
+      //  组件被引用但缺失——我们仍然创建一个存根节点
+      //  所以边缘不会孤立，只需标记它即可。
       const n = {
         id: `comp:${refdes}`,
         kind: "component",
@@ -711,7 +711,7 @@ function buildModel(graph) {
       nodes.push(n); nodeById.set(n.id, n);
       continue;
     }
-    // Role: a regulator may also be a consumer — source role takes priority.
+    //  角色：监管者也可能是消费者——来源角色优先。
     const role = sourceRefs.has(refdes)
       ? "source"
       : (decouplingRefs.has(refdes) && !consumerRefs.has(refdes))
@@ -727,7 +727,7 @@ function buildModel(graph) {
     const n = {
       id: `comp:${refdes}`,
       kind: "component",
-      compKind: comp.kind || "ic",   // Phase 4: backend ComponentKind (ic|passive_r|passive_c|passive_d|passive_fb)
+      compKind: comp.kind || "ic",   //  第 4 阶段：后端 ComponentKind (ic|passive_r|passive_c|passive_d|passive_fb)
       refdes,
       type: comp.type,
       value: comp.value,
@@ -742,7 +742,7 @@ function buildModel(graph) {
       height: size,
       shape,
     };
-    // Resize IC width based on pin count per side so they don't overlap.
+    //  根据每侧的引脚数调整 IC 宽度，使其不会重叠。
     if (role === "source" || role === "consumer") {
       const maxSide = Math.max(pins.sides.left.length, pins.sides.right.length);
       n.height = Math.max(n.height, 18 + maxSide * 12);
@@ -752,7 +752,7 @@ function buildModel(graph) {
     nodes.push(n); nodeById.set(n.id, n);
   }
 
-  // --- 2. Edges --------------------------------------------------------
+  //  --- 2. 边缘--------------------------------------------------------
   const edges = [];
   for (const [label, rail] of Object.entries(rails)) {
     const railId = `rail:${label}`;
@@ -788,13 +788,13 @@ function buildModel(graph) {
     }
   }
 
-  // --- 2b. Synthesize missing edges for R / L / ferrite ---------------
-  // An always-included R/L/FB that touches a rail (via its pins) but
-  // isn't listed in `rail.consumers` has no explicit edge from Opus —
-  // without a visible link, the viz looks like the component is floating
-  // on the rail line unrelated to it. Create a `powers` edge from the
-  // rail to the component for every rail-touching pin, so the user
-  // actually sees *why* it sits there.
+  //  --- 2b.合成 R/L/铁氧体的缺失边缘 --------------
+  //  始终包含接触 rail（通过其引脚）的 R/L/FB，但是
+  //  未在 `rail.consumers` 中列出，与 Opus 没有明确的边缘 —
+  //  如果没有可见的链接，可视化看起来就像组件是浮动的
+  //  在与它无关的rail线上。从中创建“权力”边缘
+  //  对于每个 rail 接触引脚，rail 到组件，因此用户
+  //  实际上看到*为什么*它坐在那里。
   const existingEdgeKeys = new Set(
     edges.map(e => `${e.kind}|${e.sourceId}|${e.targetId}`)
   );
@@ -823,11 +823,11 @@ function buildModel(graph) {
     }
   }
 
-  // --- 2c. Signal edges (opt-in via the "Signaux" toggle) -------------
-  // When STATE.showSignals is on, surface non-power typed_edges (enables,
-  // clocks, resets, produces_signal, consumes_signal) so the tech can
-  // follow PG / EN / CLOCK chains through the ICs. These edges clutter
-  // the viz when always visible — hence the toggle.
+  //  --- 2c.信号边沿（通过“Signaux”切换选择加入）-------------
+  //  当 STATE.showSignals 打开时，表面非功率 typed_edges （启用，
+  //  时钟、重置、产生信号、消耗信号），因此技术可以
+  //  遵循 IC 中的 PG/EN/CLOCK 链。这些边缘杂乱
+  //  可视化始终可见——因此需要切换。
   if (STATE.showSignals) {
     const SIGNAL_KINDS = new Set([
       "enables", "clocks", "resets", "produces_signal",
@@ -856,19 +856,19 @@ function buildModel(graph) {
     }
   }
 
-  // --- 3. Causal depth (BFS) ------------------------------------------
-  // Root rails: no source_refdes OR source_refdes not in our node set.
+  //  --- 3.因果深度（BFS） ------------------------------------------
+  //  根rails：没有source_refdes或source_refdes不在我们的节点集中。
   const depth = new Map();
   for (const n of nodes) {
     if (n.kind === "rail" && (!n.source_refdes || !nodeById.has(`comp:${n.source_refdes}`))) {
       depth.set(n.id, 0);
     }
   }
-  // Iterate until convergence.
+  //  迭代直至收敛。
   let changed = true; let safety = 0;
   while (changed && safety < 30) {
     changed = false; safety += 1;
-    // Components: depth = max(depth of rails it consumes) + 1
+    //  分量：深度 = max(它消耗的深度 rails) + 1
     for (const n of nodes) {
       if (n.kind !== "component") continue;
       const incomingPower = edges.filter(e => e.kind === "powers" && e.targetId === n.id);
@@ -881,14 +881,14 @@ function buildModel(graph) {
           if (d == null || d < nd) { depth.set(n.id, nd); changed = true; }
         }
       } else if (decoupleTargets.length > 0 && n.role === "decoupling") {
-        // Decoupling caps sit at the depth of the rail they decouple.
+        //  去耦帽位于它们去耦的 rail 深度。
         const maxD = Math.max(...decoupleTargets.map(e => depth.get(e.targetId) ?? -Infinity));
         if (maxD !== -Infinity) {
           if (d == null || d < maxD) { depth.set(n.id, maxD); changed = true; }
         }
       }
     }
-    // Rails with source: depth = depth(source) + 1
+    //  带源的 Rails：深度 = 深度（源）+ 1
     for (const n of nodes) {
       if (n.kind !== "rail") continue;
       if (!n.source_refdes) continue;
@@ -900,12 +900,12 @@ function buildModel(graph) {
       }
     }
   }
-  // Orphans → depth 0.
+  //  孤儿 → 深度 0。
   for (const n of nodes) if (!depth.has(n.id)) depth.set(n.id, 0);
 
-  // --- 4. Criticality score (blast radius) per node ------------------
-  // Walk "produces" + "powers" forward from every node, count the
-  // downstream cascade. Normalize so the max-impact SPOF is 1.0.
+  //  --- 4. 每个节点的临界分数（爆炸半径） ------------------
+  //  从每个节点向前走“产生”+“权力”，计算
+  //  下游级联。标准化，使最大影响 SPOF 为 1.0。
   const blastRadius = new Map();
   const forwardAdj = new Map();
   for (const e of edges) {
@@ -930,16 +930,16 @@ function buildModel(graph) {
     const br = blastRadius.get(n.id) || 0;
     n.blastRadius = br;
     n.impactPct = Math.round(1000 * br / totalNodes) / 10;
-    n.criticality = br / maxBlast;     // 0..1 relative
+    n.criticality = br / maxBlast;     //  0..1 相对
   }
-  // Flag top-5 SPOFs visually.
+  //  直观地标记前 5 个SPOF。
   const sortedByBlast = [...nodes].sort((a, b) => b.blastRadius - a.blastRadius);
   const spofCutoff = Math.min(5, sortedByBlast.length);
   for (let i = 0; i < spofCutoff; i++) {
     if (sortedByBlast[i].blastRadius >= 2) sortedByBlast[i].isSpof = true;
   }
 
-  // Boot-phase count for the stat bar.
+  //  统计栏的启动阶段计数。
   const totals = {
     phases: (graph.boot_sequence || []).length,
   };
@@ -949,17 +949,17 @@ function buildModel(graph) {
            maxBlast, totalNodes, totals };
 }
 
-/* ---------------------------------------------------------------------- *
- * LAYOUT — phase × voltage grid. Each node sits at (phaseCol, voltageRow)
- * with force-based refinement inside each cell for collision avoidance.
- * ---------------------------------------------------------------------- */
+/*  ---------------------------------------------------------------------------------- *
+ * 布局 — 相位 × 电压网格。每个节点位于（phaseCol，VoltageRow）
+ * 每个单元内基于力的细化以避免碰撞。
+ * ----------------------------------------------------------------------  */
 
-const COL_W = 320;      // per-phase column width
-const ROW_H = 170;      // per-voltage-row height
-const GRID_TOP = 110;   // y of the first row's center
-const GRID_LEFT = 180;  // x of the first column's center
+const COL_W = 320;      //  每相列宽
+const ROW_H = 170;      //  每个电压行的高度
+const GRID_TOP = 110;   //  第一行中心的 y
+const GRID_LEFT = 180;  //  第一列中心的 x
 
-// Voltage rows, top→bottom. Signal-only nodes fall into the last row.
+//  电压行，顶部→底部。仅信号节点属于最后一行。
 const V_ROWS = [
   { id: "vHi",   label: "≥ 12 V",  min: 12,        max: Infinity },
   { id: "v5_11", label: "5-11 V",  min: 5,         max: 11.999   },
@@ -979,7 +979,7 @@ function voltageRowFor(v) {
 }
 
 function primaryPowerRailLabel(pinsList, rails) {
-  // Prefer role=power_in, then any pin touching a non-GND rail.
+  //  优先选择 role=power_in，然后任何接触非 GND rail 的引脚。
   for (const p of pinsList || []) {
     if (p.role === "power_in" && p.net_label && rails[p.net_label]) return p.net_label;
   }
@@ -990,17 +990,17 @@ function primaryPowerRailLabel(pinsList, rails) {
 }
 
 function assignGridCoords(model) {
-  // For rails: voltageRow is its voltage_nominal bucket.
-  // For sources (producing a rail X): voltage of X.
-  // For consumers: voltage of their primary input rail.
-  // For decoupling caps: voltage of the rail they decouple.
+  //  对于rails：电压行是其电压_标称桶。
+  //  对于源（产生 rail X）：X 的电压。
+  //  对于消费者：其主输入电压rail。
+  //  对于去耦电容：rail 电压去耦。
   //
-  // Phase assignment: Opus only classifies *active* components (ICs,
-  // regulators, connectors). Passives (decoupling caps, series resistors)
-  // never "boot" so they have phase==null and would otherwise land in the
-  // Pré-boot column with a long flyout arrow across the graph. Fix: we
-  // inherit a passive's phase from the rail/IC it's attached to so it
-  // sits next to its logical anchor.
+  //  阶段分配：Opus 仅对*有源*组件（IC、
+  //  调节器、连接器）。无源器件（去耦电容、串联电阻）
+  //  永远不会“启动”，所以它们有phase==null，否则会落在
+  //  预启动列在图表上有一个长的弹出箭头。修复：我们
+  //  从它所附加的 rail/IC 继承被动的相位，因此它
+  //  位于其逻辑锚点旁边。
   const rails = model.rails || {};
   const railPhase = new Map();
   for (const n of model.nodes) {
@@ -1020,8 +1020,8 @@ function assignGridCoords(model) {
       const prodEdge = (model.edges || []).find(e => e.kind === "produces" && e.sourceId === n.id);
       const prodRail = prodEdge ? rails[prodEdge.netLabel] : null;
       n.voltageRow = voltageRowFor(prodRail?.voltage_nominal);
-      // A source IC should sit in the same phase as the rail it produces
-      // (so the producer → rail arrow is short and in-cell).
+      //  源 IC 应与其产生的 rail 位于同一相位
+      //  （所以生产者 → rail 箭头很短并且在单元格内）。
       if (n.phase == null && prodEdge) {
         const inherited = railPhase.get(prodEdge.netLabel);
         if (inherited != null) n.phase = inherited;
@@ -1032,29 +1032,29 @@ function assignGridCoords(model) {
       const decEdge = (model.edges || []).find(e => e.kind === "decouples" && e.sourceId === n.id);
       const decRail = decEdge ? rails[decEdge.netLabel] : null;
       n.voltageRow = voltageRowFor(decRail?.voltage_nominal);
-      // Decoupling caps live wherever their rail lives — stabilises the
-      // rail's local supply, it has no "boot phase" of its own.
+      //  无论 rail 存在于何处，解耦帽都会存在 — 稳定
+      //  rail是本地供应，它没有自己的“启动阶段”。
       if (decEdge) {
         const inherited = railPhase.get(decEdge.netLabel);
         if (inherited != null) n.phase = inherited;
       }
       continue;
     }
-    // consumer — look at its primary power rail
+    //  消费者——看看它的主要力量rail
     const pinsList = Array.isArray(n.pinsAll) ? n.pinsAll : [];
     let railLabel = primaryPowerRailLabel(pinsList, rails);
-    // Fallback: if the component has no identified power pin but is
-    // listed as a consumer of one or more rails (Opus-derived), pick the
-    // first rail it belongs to from the rails map. Keeps the node out of
-    // the orphan strip even when its pin roles are underspecified.
+    //  回退：如果组件没有识别的电源引脚，但
+    //  列为一个或多个 rail（Opus 派生）的消费者，选择
+    //  第一个rail属于rails地图。使节点不参与
+    //  孤儿带，即使其引脚角色未指定。
     if (!railLabel) {
       for (const [label, r] of Object.entries(rails)) {
         if ((r.consumers || []).includes(n.refdes)) { railLabel = label; break; }
       }
     }
     n.voltageRow = voltageRowFor(railLabel ? rails[railLabel]?.voltage_nominal : null);
-    n.rail_primary = railLabel;  // used by the power-tree layout anchor
-    // Consumers without an explicit phase inherit from their primary rail.
+    n.rail_primary = railLabel;  //  由 power-tree 布局锚点使用
+    //  没有显式阶段的消费者从其主rail继承。
     if (n.phase == null && railLabel) {
       const inherited = railPhase.get(railLabel);
       if (inherited != null) n.phase = inherited;
@@ -1062,10 +1062,10 @@ function assignGridCoords(model) {
   }
 }
 
-const GRID_CPC = 4;        // chips per row inside a phase×voltage cell
+const GRID_CPC = 4;        //  相×电压单元内每行chips
 const GRID_SLOT_W = 70;
 const GRID_SLOT_H = 32;
-const GRID_CELL_PAD = 24;  // headroom inside a cell
+const GRID_CELL_PAD = 24;  //  单元内的净空
 const GRID_ROW_GAP = 28;
 
 function computeGridLayout(model) {
@@ -1080,7 +1080,7 @@ function computeGridLayout(model) {
   phasesPresent.forEach((p, i) => phaseColIndex.set(p, i));
   const colX = (phase) => GRID_LEFT + (phaseColIndex.get(phase) ?? 0) * COL_W;
 
-  // Only the rendered nodes participate (passives hidden by default).
+  //  只有渲染的节点参与（默认情况下隐藏被动节点）。
   const considered = model.nodes.filter(n => !(STATE.hidePassives && isHideablePassive(n)));
   const cellKey = (p, vr) => `${p ?? "null"}|${vr || "vSig"}`;
   const byCell = new Map();
@@ -1095,7 +1095,7 @@ function computeGridLayout(model) {
       : (a.kind === "rail" ? -1 : 1));
   }
 
-  // Each voltage row is as tall as its fullest cell — no force sim, no sprawl.
+  //  每个电压行与其最满的单元一样高——没有力模拟，没有蔓延。
   const gridRows = [];
   let yCursor = GRID_TOP;
   for (const vr of V_ROWS) {
@@ -1129,7 +1129,7 @@ function computeGridLayout(model) {
       });
     }
   }
-  // Park hidden passives off-canvas.
+  //  将隐藏的被动元素放置在画布之外。
   for (const n of model.nodes) {
     if (STATE.hidePassives && isHideablePassive(n)) { n.x = -1e5; n.y = -1e5; }
   }
@@ -1146,25 +1146,25 @@ function computeGridLayout(model) {
   model._gridRows = gridRows;
 }
 
-/* ---------------------------------------------------------------------- *
- * POWER-TREE LAYOUT — a compact rail map. Rails are packed into a wrapping
- * multi-column grid, grouped by voltage band (≥12V → ≤1V2 → signals). The
- * old "one full-width row + consumers per rail" sprawled to ~20k px tall
- * with 350+ rails; this keeps the whole rail set on a pannable canvas.
- * Components are hidden here — click a rail to drill into rail-focus.
- * ---------------------------------------------------------------------- */
+/*  ---------------------------------------------------------------------------------- *
+ * 能量树布局 — 紧凑的 rail 地图。导轨被包装成包装材料
+ * 多列网格，按电压带分组（≥12V → ≤1V2 → 信号）。的
+ * 旧的“全宽行 + 每个 rail 的消费者”蔓延至约 20k 像素高
+ * 350+ rail；这会将整个 rail 设置在可平移的画布上。
+ * 组件隐藏在此处 — 单击 rail 可深入查看 rail 焦点。
+ * ----------------------------------------------------------------------  */
 
 const PT_RAIL_W = 108;
 const PT_RAIL_H = 28;
 const PT_GAP_X = 12;
 const PT_GAP_Y = 9;
-const PT_COLS = 12;          // wide grid — the canvas is wide and short
+const PT_COLS = 12;          //  宽网格——画布又宽又短
 const PT_GRID_X0 = 150;
 const PT_TOP = 74;
 const PT_BAND_GAP = 36;
 
 function computePowertreeLayout(model) {
-  assignGridCoords(model); // keeps voltageRow for consistency + fallback
+  assignGridCoords(model); //  保持电压行的一致性+回退
   model.layoutMode = "powertree";
 
   const railNodes = model.nodes.filter(n => n.kind === "rail");
@@ -1201,7 +1201,7 @@ function computePowertreeLayout(model) {
     y += bandH + PT_BAND_GAP;
   }
 
-  // Rails on the grid; everything else parked off-canvas (and not rendered).
+  //  网格上的铁轨；其他一切都停在画布外（并且未渲染）。
   for (const n of model.nodes) {
     if (n.kind === "rail" && n._tx != null) { n.x = n._tx; n.y = n._ty; }
     else { n.x = -1e5; n.y = -1e5; }
@@ -1233,12 +1233,12 @@ function renderPowertreeHeads(model) {
   });
 }
 
-/* ---------------------------------------------------------------------- *
- * RAIL-FOCUS LAYOUT — show exactly ONE rail + its source + upstream feed +
- * decoupling caps + direct consumers. Everything else is hidden. Zero long
- * edges, zero overlap, scales to any rail count because we never render
- * more than one rail's neighborhood at a time.
- * ---------------------------------------------------------------------- */
+/*  ---------------------------------------------------------------------------------- *
+ * RAIL-FOCUS LAYOUT — 准确显示 ONE rail + 其来源 + 上游馈送 +
+ * 去耦电容 + direct 消费者。其他一切都被隐藏了。零长
+ * 边缘、零重叠、缩放到任意 rail 计数，因为我们从不渲染
+ * 一次超过一个 rail 的邻居。
+ * ----------------------------------------------------------------------  */
 
 const RF_UPSTREAM_X = 160;
 const RF_SOURCE_X = 400;
@@ -1251,7 +1251,7 @@ const RF_CONSUMERS_PER_COL = 9;
 const RF_DECOUP_STEP_X = 22;
 
 function computeRailFocusLayout(model, railId) {
-  // Start hidden, then progressively reveal the rail's neighborhood.
+  //  开始隐藏，然后逐渐显示 rail 的邻居。
   for (const n of model.nodes) n._visible = false;
   model.layoutMode = "railfocus";
   model._rfRailId = null;
@@ -1270,7 +1270,7 @@ function computeRailFocusLayout(model, railId) {
   rail.width = 140; rail.height = 54;
   model._rfRailId = rail.id;
 
-  // Source IC — the regulator that produces this rail.
+  //  源 IC — 产生此 rail 的调节器。
   let source = null;
   if (rail.source_refdes) {
     source = model.nodeById.get(`comp:${rail.source_refdes}`);
@@ -1283,7 +1283,7 @@ function computeRailFocusLayout(model, railId) {
     }
   }
 
-  // Upstream rail — the rail that feeds the source's input pin.
+  //  上游 rail — 为源输入引脚供电的 rail。
   let upstream = null;
   if (source) {
     const upE = model.edges.find(e => e.kind === "powers" && e.targetId === source.id);
@@ -1301,7 +1301,7 @@ function computeRailFocusLayout(model, railId) {
     }
   }
 
-  // Consumers — grid to the right of the rail, vertically centered on it.
+  //  消费者 - rail右侧的网格，垂直居中。
   const consumers = model.edges
     .filter(e => e.kind === "powers" && e.sourceId === rail.id)
     .map(e => model.nodeById.get(e.targetId))
@@ -1320,13 +1320,13 @@ function computeRailFocusLayout(model, railId) {
     c._ty = RF_CENTER_Y - colHeight / 2 + row * RF_CONSUMER_ROW_H;
     c.width = 64;
     c.height = 34;
-    // In this mode the detailed pins aren't useful on consumers — keep the
-    // inspector for that. Clean rect + refdes is enough here.
+    //  在这种模式下，详细的引脚对消费者来说没有用处——保留
+    //  inspector为此。干净的矩形+refdes在这里就足够了。
     c.showPins = false;
   });
   model._rfConsumerCount = nC;
 
-  // Decoupling caps — small, centered under the rail on a short strip.
+  //  去耦帽 — 小，位于短条上 rail 下方的中心。
   const decouplings = model.edges
     .filter(e => e.kind === "decouples" && e.targetId === rail.id)
     .map(e => model.nodeById.get(e.sourceId))
@@ -1344,8 +1344,8 @@ function computeRailFocusLayout(model, railId) {
   });
   model._rfDecouplingCount = decouplings.length;
 
-  // Commit positions for visible nodes; push the rest way off-canvas so the
-  // zoom/fit math doesn't see them.
+  //  提交可见节点的位置；将其余部分推离画布，这样
+  //  缩放/适合数学看不到它们。
   for (const n of model.nodes) {
     if (n._visible) { n.x = n._tx; n.y = n._ty; }
     else { n.x = -1e5; n.y = -1e5; }
@@ -1357,10 +1357,10 @@ function computeRailFocusLayout(model, railId) {
   } else {
     const xs = visible.map(n => n.x);
     const ys = visible.map(n => n.y);
-    // Heads (zone bands + labels rendered by renderRailFocusHeads) span from
-    // railY-220 (zone label) to railY+210 (zone band bottom). Bounds must
-    // include them or the fit centres on nodes alone and the heads bleed up
-    // behind the surface toggle / statsbar / filter overlays.
+    //  头部（区域带 + 由 renderRailFocusHeads 渲染的标签）跨度为
+    //  railY-220（区域标签）到 railY+210（区域带底部）。界限必须
+    //  将它们包括在内，或者仅将拟合中心放在节点上并且头部会出血
+    //  在表面切换/统计栏/过滤器overlays后面。
     const headTop = RF_CENTER_Y - 220;
     const headBot = RF_CENTER_Y + 220;
     model.bounds = {
@@ -1421,7 +1421,7 @@ function renderRailFocusHeads(model) {
       .text(z.label);
   }
 
-  // Horizontal bus from the rail towards the consumer zone.
+  //  从rail到消费区的水平总线。
   if (nC > 0) {
     g.append("line")
       .attr("class", "sch-rf-busline")
@@ -1429,7 +1429,7 @@ function renderRailFocusHeads(model) {
       .attr("x2", RF_CONSUMERS_X - 10).attr("y2", railY);
   }
 
-  // "External supply" note when the rail has no producer on this board.
+  //  当rail此板上没有生产者时，请注意“外部供应”。
   if (!hasSource) {
     g.append("text")
       .attr("class", "sch-rf-upstream-note")
@@ -1453,7 +1453,7 @@ function renderRailBar(model) {
     return;
   }
 
-  // Group by voltage class, in V_ROWS order (high → low tension).
+  //  按电压等级分组，按 V_ROWS 顺序（高电压 → 低电压）。
   const byGroup = new Map();
   for (const r of rails) {
     const gid = voltageRowFor(r.voltage_nominal);
@@ -1530,10 +1530,10 @@ function setSelectedRail(railId) {
   }
 }
 
-// External-focus bridge — the boardview minimap dispatches this event when
-// the user clicks a rail in the mini-graph. If this module is already
-// initialized (model built), we switch to rail-focus in place; otherwise
-// the paired localStorage write gets picked up on next loadSchematic().
+//  外部焦点桥 — boardview minimap 在以下情况下调度此事件
+//  用户单击迷你图中的rail。如果该模块已经
+//  初始化（模型构建），我们切换到rail-焦点就位；否则
+//  配对的 localStorage 写入将在下一个 loadSchematic() 中被拾取。
 window.addEventListener("schematic:focus-rail", (ev) => {
   const railId = ev.detail?.railId;
   if (!railId) return;
@@ -1545,9 +1545,9 @@ window.addEventListener("schematic:focus-rail", (ev) => {
   setSelectedRail(railId);
 });
 
-/* ---------------------------------------------------------------------- *
- * KILL-SWITCH — BFS forward through produces + powers edges              *
- * ---------------------------------------------------------------------- */
+/*  ---------------------------------------------------------------------------------- *
+ * KILL-SWITCH — BFS 向前通过产生 + 为边缘供电 *
+ * ----------------------------------------------------------------------  */
 
 function computeCascade(model, startId) {
   const dead = new Set([startId]);
@@ -1556,7 +1556,7 @@ function computeCascade(model, startId) {
     const id = queue.shift();
     for (const e of model.edges) {
       if (dead.has(e.targetId)) continue;
-      // When a rail dies, its consumers die. When a source dies, its produced rail dies.
+      //  当rail死亡时，它的消费者也随之死亡。当一个源死亡时，它产生的 rail 也随之死亡。
       if ((e.kind === "powers" || e.kind === "produces") && e.sourceId === id) {
         dead.add(e.targetId); queue.push(e.targetId);
       }
@@ -1566,7 +1566,7 @@ function computeCascade(model, startId) {
 }
 
 function computeUpstream(model, startId) {
-  // Nodes that this one depends on (the chain feeding it).
+  //  该节点所依赖的节点（为其提供数据的链）。
   const feeds = new Set([startId]);
   const queue = [startId];
   while (queue.length) {
@@ -1581,16 +1581,16 @@ function computeUpstream(model, startId) {
   return feeds;
 }
 
-/* ---------------------------------------------------------------------- *
- * RENDER                                                                 *
- * ---------------------------------------------------------------------- */
+/*  ---------------------------------------------------------------------------------- *
+ * 渲染 *
+ * ----------------------------------------------------------------------  */
 
-/* ---------------------------------------------------------------------- *
- * SCHEMATIC SYMBOLS — draw the standard electronic symbol per component   *
- * type instead of a generic rect. Every renderer attaches elements to the *
- * provided `sel` group; elements are centered on (0,0) with pins extending*
- * to ±w/2 so edges can anchor on the box edge cleanly.                    *
- * ---------------------------------------------------------------------- */
+/*  ---------------------------------------------------------------------------------- *
+ * 原理图符号 — 绘制每个组件的标准电子符号 *
+ * 类型而不是通用的矩形。每个渲染器都将元素附加到 *
+ * 提供`sel`组；元素以 (0,0) 为中心，引脚延伸*
+ * 为 ±w/2，以便边缘可以干净地锚定在盒子边缘上。                    *
+ * ----------------------------------------------------------------------  */
 
 function drawResistor(sel, w, h) {
   const bw = w * 0.72, bh = h * 0.55;
@@ -1603,7 +1603,7 @@ function drawResistor(sel, w, h) {
 }
 
 function drawCapacitor(sel, w, h) {
-  // Two parallel vertical plates with pins extending left/right.
+  //  两个平行的垂直板，带有向左/向右延伸的销钉。
   const gap = Math.max(2, Math.min(4, w * 0.1));
   const plateH = h * 0.85;
   sel.append("line").attr("class", "sch-sym-body sch-sym-cap")
@@ -1617,7 +1617,7 @@ function drawCapacitor(sel, w, h) {
 }
 
 function drawInductor(sel, w, h) {
-  // Three arches — the classic coil symbol.
+  //  三个拱门——经典的线圈符号。
   const arches = 3;
   const aw = (w * 0.8) / arches;
   const startX = -w * 0.4;
@@ -1634,7 +1634,7 @@ function drawInductor(sel, w, h) {
 }
 
 function drawFerrite(sel, w, h) {
-  // Rounded rectangle (bead) — distinct from resistor by radius.
+  //  圆角矩形（珠子）——与电阻器的半径不同。
   const bw = w * 0.72, bh = h * 0.65;
   sel.append("rect").attr("class", "sch-sym-body sch-sym-ferrite")
     .attr("x", -bw / 2).attr("y", -bh / 2).attr("width", bw).attr("height", bh).attr("rx", bh / 2);
@@ -1645,7 +1645,7 @@ function drawFerrite(sel, w, h) {
 }
 
 function drawDiode(sel, w, h) {
-  // Triangle pointing right + vertical bar (cathode).
+  //  向右的三角形+竖线（阴极）。
   const s = Math.min(w * 0.35, h * 0.45);
   sel.append("path").attr("class", "sch-sym-body sch-sym-diode")
     .attr("d", `M${-s} ${-s} L${s} 0 L${-s} ${s} Z`);
@@ -1658,7 +1658,7 @@ function drawDiode(sel, w, h) {
 }
 
 function drawLED(sel, w, h) {
-  // Diode + two small outward arrows for "light emitted".
+  //  二极管+两个向外的小箭头表示“发出光”。
   drawDiode(sel, w, h);
   const s = Math.min(w * 0.35, h * 0.45);
   sel.append("path").attr("class", "sch-sym-body sch-sym-led-ray")
@@ -1668,7 +1668,7 @@ function drawLED(sel, w, h) {
 }
 
 function drawFuse(sel, w, h) {
-  // Elongated pill with an "F" glyph and pins.
+  //  带有“F”字形和别针的细长药丸。
   const bw = w * 0.78, bh = h * 0.55;
   sel.append("rect").attr("class", "sch-sym-body sch-sym-fuse")
     .attr("x", -bw / 2).attr("y", -bh / 2).attr("width", bw).attr("height", bh).attr("rx", bh / 2);
@@ -1679,22 +1679,22 @@ function drawFuse(sel, w, h) {
 }
 
 function drawTransistor(sel, w, h) {
-  // Circle with base line + emitter/collector, NPN convention.
+  //  带基线的圆圈 + 发射极/集电极，NPN 约定。
   const r = Math.min(w, h) * 0.38;
   sel.append("circle").attr("class", "sch-sym-body sch-sym-transistor")
     .attr("cx", 0).attr("cy", 0).attr("r", r);
-  // base (horizontal line from left to circle)
+  //  底线（从左到圆的水平线）
   sel.append("line").attr("class", "sch-sym-pin")
     .attr("x1", -w / 2).attr("y1", 0).attr("x2", -r * 0.4).attr("y2", 0);
   sel.append("line").attr("class", "sch-sym-body")
     .attr("x1", -r * 0.4).attr("y1", -r * 0.6).attr("x2", -r * 0.4).attr("y2", r * 0.6);
-  // emitter (bottom right diagonal) with arrow
+  //  带箭头的发射器（右下对角线）
   sel.append("line").attr("class", "sch-sym-body")
     .attr("x1", -r * 0.4).attr("y1", r * 0.3).attr("x2", r * 0.55).attr("y2", r * 0.85);
-  // collector (top right diagonal)
+  //  收集器（右上角对角线）
   sel.append("line").attr("class", "sch-sym-body")
     .attr("x1", -r * 0.4).attr("y1", -r * 0.3).attr("x2", r * 0.55).attr("y2", -r * 0.85);
-  // pin stubs out of the circle
+  //  圆外的针脚
   sel.append("line").attr("class", "sch-sym-pin")
     .attr("x1", r * 0.55).attr("y1", -r * 0.85).attr("x2", w / 2).attr("y2", -h / 2);
   sel.append("line").attr("class", "sch-sym-pin")
@@ -1702,7 +1702,7 @@ function drawTransistor(sel, w, h) {
 }
 
 function drawCrystal(sel, w, h) {
-  // Rectangle with two small plate lines — the XTAL symbol.
+  //  具有两条小板线的矩形 — XTAL 符号。
   const bw = w * 0.4, bh = h * 0.65;
   sel.append("rect").attr("class", "sch-sym-body sch-sym-crystal")
     .attr("x", -bw / 2).attr("y", -bh / 2).attr("width", bw).attr("height", bh).attr("rx", 1);
@@ -1717,21 +1717,21 @@ function drawCrystal(sel, w, h) {
 }
 
 function drawConnector(sel, w, h) {
-  // Trapezoid with teeth on one side suggesting a connector.
+  //  一侧有齿的梯形表明有一个连接器。
   const s = w * 0.45;
   sel.append("path").attr("class", "sch-sym-body sch-sym-connector")
     .attr("d", `M${-s} ${-h * 0.45} L${s} ${-h * 0.3} L${s} ${h * 0.3} L${-s} ${h * 0.45} Z`);
-  // 3 pin stubs
+  //  3 个针脚
   for (let i = -1; i <= 1; i++) {
     sel.append("line").attr("class", "sch-sym-pin")
       .attr("x1", s).attr("y1", i * h * 0.18).attr("x2", w / 2).attr("y2", i * h * 0.18);
   }
 }
 
-// Dispatch — returns true if a schematic symbol was drawn (so the caller
-// knows to skip the fallback generic shape). Small components below
-// MIN_SYMBOL_SIZE fall back to a colored dot so the viz stays readable
-// at low zoom.
+//  Dispatch — 如果绘制了 schematic 符号，则返回 true（因此调用者
+//  知道跳过后备通用形状）。下面的小组件
+//  MIN_SYMBOL_SIZE 回退到彩色点，以便可视化保持可读
+//  在低变焦时。
 const MIN_SYMBOL_SIZE = 14;
 function drawSchematicSymbol(sel, node) {
   if (node.kind !== "component") return false;
@@ -1749,8 +1749,8 @@ function drawSchematicSymbol(sel, node) {
     case "crystal":
     case "oscillator": drawCrystal(sel, w, h); return true;
     case "connector":  drawConnector(sel, w, h); return true;
-    // ic / module / other → keep the generic pinned rectangle (handled
-    // by the caller's existing shape switch).
+    //  ic / module / other → 保留通用固定矩形（已处理
+    //  通过调用者现有的形状开关）。
     default: return false;
   }
 }
@@ -1787,9 +1787,9 @@ function edgeAnchors(e, model) {
   let sx = s.x, sy = s.y, tx = tn.x, ty = tn.y;
 
   const isCleanLayout = model.layoutMode === "powertree" || model.layoutMode === "railfocus" || model.layoutMode === "boot";
-  // In power-tree / rail-focus modes, skip fine pin-level anchoring (nodes
-  // are small, layout is already clean) — anchor on the box edge facing the
-  // other endpoint so the line is short and unambiguous.
+  //  在 power-tree / rail-focus 模式下，跳过精细的引脚级锚定（节点
+  //  很小，布局已经很干净） - 锚定在面向的盒子边缘
+  //  另一个端点，因此线短且明确。
   if (isCleanLayout) {
     if (s.kind === "component") {
       const w = s.width || 40;
@@ -1806,7 +1806,7 @@ function edgeAnchors(e, model) {
     return { x1: sx, y1: sy, x2: tx, y2: ty };
   }
 
-  // Grid mode — pin-level anchors on ICs that expose them.
+  //  网格模式——暴露 IC 上的引脚级锚点。
   if (e.netLabel && s.kind === "component" && s.showPins) {
     const p = (s.pins.sides.left.concat(s.pins.sides.right, s.pins.sides.top, s.pins.sides.bottom)).find(x => x.net_label === e.netLabel);
     if (p) { const [dx, dy] = pinAnchor(s, p); sx = s.x + dx; sy = s.y + dy; }
@@ -1841,7 +1841,7 @@ function renderGridHeads(model) {
   const gridT = rows[0].top - 34;
   const gridB = rows[rows.length - 1].top + rows[rows.length - 1].h + 10;
 
-  // 1) Voltage-row horizontal bands (variable height = fullest cell).
+  //  1) 电压行水平带（可变高度=最满的单元）。
   rows.forEach((r, i) => {
     g.append("rect")
       .attr("class", `sch-vrow-band vrow-${i % 4}`)
@@ -1849,7 +1849,7 @@ function renderGridHeads(model) {
       .attr("width", gridR - gridL - 60).attr("height", r.h + 4).attr("rx", 10);
   });
 
-  // 2) Phase-column vertical bands.
+  //  2) 相柱垂直带。
   phases.forEach((p) => {
     const cx = model.colX(p);
     g.append("rect")
@@ -1858,7 +1858,7 @@ function renderGridHeads(model) {
       .attr("width", COL_W - 16).attr("height", gridB - gridT - 30).attr("rx", 8);
   });
 
-  // 3) Voltage-row labels on the left edge.
+  //  3) 电压行标签位于左边缘。
   rows.forEach((r) => {
     const cy = r.top + r.h / 2;
     const lbl = g.append("g").attr("transform", `translate(${gridL + 30}, ${cy})`);
@@ -1868,7 +1868,7 @@ function renderGridHeads(model) {
     lbl.append("text").attr("class", "sch-vrow-label").attr("y", 4).text(r.label);
   });
 
-  // 4) Phase-column headers on top.
+  //  4) 相列标题位于顶部。
   phases.forEach((p) => {
     const cx = model.colX(p);
     const head = g.append("g").attr("transform", `translate(${cx}, ${gridT})`);
@@ -1885,28 +1885,28 @@ function renderGridHeads(model) {
   });
 }
 
-// A passive (decoupling cap / sense resistor / ferrite / diode) that can be
-// hidden to declutter the full-board layouts. SPOF passives stay — they matter.
+//  无源（去耦电容/检测电阻/铁氧体/二极管）
+//  隐藏以整理全板布局。 SPOF 被动因素留下来——它们很重要。
 function isHideablePassive(n) {
   return n.kind === "component" && !n.isSpof
     && typeof n.compKind === "string" && n.compKind.startsWith("passive");
 }
 
-// Single source of truth for "does this node render in the current mode?".
-// Used by renderNodes, renderEdges, and updateStats so the canvas and the
-// stat-bar counts never disagree — in particular both react to hidePassives.
+//  “此节点是否在当前模式下渲染？”的单一事实来源。
+//  由 renderNodes、renderEdges 和 updateStats 使用，因此画布和
+//  统计栏计数永远不会不一致——特别是两者对 hidePassives 都有反应。
 function isNodeRendered(n, model) {
   if (model.layoutMode === "railfocus" || model.layoutMode === "boot") {
-    // `_visible` is set from boot/rail membership and ignores hidePassives;
-    // layer the toggle on top so it isn't inert in the two default views.
+    //  `_visible` 从 boot/rail 成员资格设置并忽略 hidePassives；
+    //  将切换按钮放在顶部，这样它在两个默认视图中就不会处于惰性状态。
     return n._visible && !(STATE.hidePassives && isHideablePassive(n));
   }
   if (model.layoutMode === "powertree") {
-    // Compact rail map — rails only; components live in rail-focus.
+    //  紧凑的 rail 地图 — 仅 rail；组件位于 rail 焦点中。
     return n.kind === "rail" && n.x > -1e4;
   }
-  // Full-board layouts (grid): drop passive R/C/L/D/FB when decluttering so
-  // the board reads as rails + functional ICs. SPOF/source passives stay.
+  //  全板布局（网格）：在整理时放弃无源 R/C/L/D/FB，以便
+  //  该电路板读作 rails + 功能 IC。 SPOF/源被动语态保留。
   if (STATE.hidePassives) return !isHideablePassive(n);
   return true;
 }
@@ -1925,7 +1925,7 @@ function renderNodes(model) {
       STATE.selectedId = d.id;
       updateInspector(d);
       applyFocus(d.id, model);
-      // Boot phase chip clicks happen via timeline, not here.
+      //  启动阶段 chip 点击是通过 timeline 发生的，而不是在这里。
     });
 
   sel.each(function (d) {
@@ -1946,7 +1946,7 @@ function renderNodes(model) {
         s.append("text").attr("class", "sch-spof-badge")
           .attr("y", h / 2 + 24).text(`⚠ SPOF · ${d.impactPct}%`);
       }
-      // Cascade-dead warning glyph — hidden by default, shown via .sim-cascade.
+      //  Cascade-dead 警告字形 — 默认隐藏，通过 .sim-cascade 显示。
       s.append("text")
         .attr("class", "sch-cascade-warn")
         .attr("x", 0)
@@ -1955,10 +1955,10 @@ function renderNodes(model) {
         .text("⚠");
       return;
     }
-    // Component — try the type-specific schematic symbol first; fall back
-    // to the generic shape silhouette for ICs and tiny passives.
+    //  组件 — 首先尝试特定于类型的 schematic 符号；后退
+    //  到 IC 和微型无源器件的通用形状轮廓。
     if (drawSchematicSymbol(s, d)) {
-      // schematic symbol drawn; skip the generic shape branch.
+      //  绘制schematic符号；跳过通用形状分支。
     } else if (d.shape === "rect-big" || d.shape === "rect") {
       s.append("rect").attr("class", "sch-shape sch-shape-comp")
         .attr("x", -w / 2).attr("y", -h / 2).attr("width", w).attr("height", h).attr("rx", 5);
@@ -1977,7 +1977,7 @@ function renderNodes(model) {
         s.append("text").attr("class", "sch-sub sch-sub-comp").attr("y", h / 2 + 11).text(d.type);
       }
     } else {
-      // Small cap value label (e.g. 100nF) inline.
+      //  内嵌小容量标签（例如 100nF）。
       const val = d.value && (d.value.primary || d.value.raw);
       if (val) {
         s.append("text").attr("class", "sch-sub sch-sub-passive").attr("y", h / 2 + 9).text(String(val).slice(0, 8));
@@ -1987,14 +1987,14 @@ function renderNodes(model) {
       s.append("text").attr("class", "sch-spof-badge")
         .attr("y", -h / 2 - 7).text(`⚠ SPOF · ${d.impactPct}%`);
     }
-    // Cascade-dead warning glyph — hidden by default, shown via .sim-cascade.
+    //  Cascade-dead 警告字形 — 默认隐藏，通过 .sim-cascade 显示。
     s.append("text")
       .attr("class", "sch-cascade-warn")
       .attr("x", 0)
       .attr("y", -h / 2 - 22)
       .attr("text-anchor", "middle")
       .text("⚠");
-    // Pin dots + leader lines for sources & consumers with showPins.
+    //  使用 showPins 为来源和消费者提供图钉点 + 引导线。
     if (d.showPins) {
       for (const side of ["left", "right", "top", "bottom"]) {
         d.pins.sides[side].forEach(p => {
@@ -2024,22 +2024,22 @@ function renderNodes(model) {
 function renderEdges(model) {
   const g = d3.select("#schLayerLinks");
   g.selectAll("*").remove();
-  // All edge kinds are drawn in both layouts — the layout already makes
-  // relations spatial, edges make them explicit. In power-tree mode they
-  // are short stubs from the horizontal bus line to the attached node so
-  // they don't clutter the canvas the way long bezier edges do in a 2D
-  // grid.
-  // data-signal deferred: edges carry e.netLabel but the simulator's signals
-  // state maps user-visible signal names; hook when signal-level sim is added.
-  // In rail-focus mode we only draw edges between currently visible nodes.
+  //  所有边缘类型都在两种布局中绘制 - 布局已经使
+  //  空间关系，边缘使它们变得明确。在电源树模式下，它们
+  //  是从水平总线到附加节点的短截线，因此
+  //  它们不会像 2D 中的长贝塞尔边缘那样使画布变得混乱
+  //  网格。
+  //  数据信号延迟：边缘携带 e.netLabel，但模拟器的信号
+  //  状态映射用户可见的信号名称；添加信号级 sim 时挂钩。
+  //  在 rail 焦点模式下，我们仅在当前可见节点之间绘制边缘。
   let edgesData;
   if (model.layoutMode === "powertree" || model.layoutMode === "grid") {
-    // The compact rail map / phase×voltage matrix read by placement, not
-    // edges — cross-cell beziers would just be spaghetti, so draw none.
+    //  通过放置读取紧凑的rail图/相×电压矩阵，而不是
+    //  边缘——跨单元贝塞尔曲线就像意大利面条一样，所以什么也不画。
     edgesData = [];
   } else {
-    // Only draw an edge when both endpoints actually render — otherwise it
-    // dangles to a hidden/parked node.
+    //  仅当两个端点实际渲染时才绘制边缘 - 否则它
+    //  悬挂在隐藏/停放的节点上。
     edgesData = model.edges.filter(e => {
       const s = model.nodeById.get(e.sourceId);
       const tn = model.nodeById.get(e.targetId);
@@ -2059,26 +2059,26 @@ function renderEdges(model) {
       : null);
 }
 
-/* ---------------------------------------------------------------------- *
- * BOOT TIMELINE                                                          *
- * ---------------------------------------------------------------------- */
+/*  ---------------------------------------------------------------------------------- *
+ * 启动时间线 *
+ * ----------------------------------------------------------------------  */
 
-/* ---------------------------------------------------------------------- *
- * BOOT LAYOUT — the protocol, laid out across components                 *
- *                                                                        *
- * Drops the full board graph and places ONLY the boot-relevant nodes in  *
- * left-to-right phase columns (Φ0 → Φn). Each column stacks that phase's  *
- * stabilising rails + entering components; real powers/produces edges     *
- * between visible nodes draw the propagation. Sparse and readable — the   *
- * protocol IS the picture. Driven by the boot player.                    *
- * ---------------------------------------------------------------------- */
+/*  ---------------------------------------------------------------------------------- *
+ * BOOT LAYOUT — 跨组件布局的协议 *
+ **
+ * 删除完整的板图并仅将与启动相关的节点放入 *
+ * 从左到右的相位列 (Φ0 → Φn)。每列堆叠该阶段的*
+ * 稳定rails + 输入组件；真正的力量/产生优势*
+ * 在可见节点之间绘制传播。稀疏且可读 — *
+ * 协议就是图片。由引导播放器驱动。                    *
+ * ----------------------------------------------------------------------  */
 
 const BOOT_X0 = 160;
-const BOOT_Y0 = 130;          // first row, below the column header band
+const BOOT_Y0 = 130;          //  第一行，列标题带下方
 const BOOT_ROW_H = 46;
-const BOOT_ROWS_MAX = 8;      // wrap into a sub-column past this many rows
+const BOOT_ROWS_MAX = 8;      //  包裹到超过这么多行的子列中
 const BOOT_SUBCOL_W = 92;
-const BOOT_COL_GAP = 84;      // gap between phase blocks
+const BOOT_COL_GAP = 84;      //  相块之间的间隙
 const BOOT_HEAD_Y = 64;
 
 function computeBootLayout(model) {
@@ -2086,7 +2086,7 @@ function computeBootLayout(model) {
   model.layoutMode = "boot";
   const phases = model.boot || [];
   model._bootCols = [];
-  const assigned = new Set();   // a rail stable across phases belongs to its first
+  const assigned = new Set();   //  跨阶段的rail稳定属于它的第一个
   let curX = BOOT_X0;
   let maxRows = 0;
 
@@ -2113,8 +2113,8 @@ function computeBootLayout(model) {
       n.height = n.kind === "rail" ? 26 : 30;
       n.showPins = false;
     });
-    // Each phase block is as wide as its sub-column count — lay phases out
-    // cumulatively so a fat phase never overlaps the next one.
+    //  每个阶段块的宽度与其子列数一样宽——布局逐步淘汰
+    //  累积起来，因此脂肪阶段永远不会与下一个脂肪阶段重叠。
     const nSub = Math.max(1, Math.ceil(colNodes.length / BOOT_ROWS_MAX));
     const colW = nSub * BOOT_SUBCOL_W;
     model._bootCols.push({ index: p.index, name: p.name, x: curX, w: colW, count: colNodes.length });
@@ -2142,7 +2142,7 @@ function renderBootHeads(model) {
   const bandTop = BOOT_HEAD_Y - 34;
   const bandBot = model.bounds ? model.bounds.maxY - 10 : BOOT_Y0 + 300;
   cols.forEach((c, i) => {
-    // Faint lane band on alternating phases so the eye reads phases as columns.
+    //  交替相位上有微弱的泳道带，因此眼睛将相位视为列。
     if (i % 2 === 1) {
       g.append("rect")
         .attr("class", "sch-boot-lane")
@@ -2154,8 +2154,8 @@ function renderBootHeads(model) {
       .attr("class", "sch-boot-colhead-n")
       .attr("x", c.x - 30).attr("y", BOOT_HEAD_Y)
       .text(`Φ${c.index}`);
-    // Truncate the phase name to the space before the next column's header so
-    // long names don't run across it. Measure-based (font width varies).
+    //  将阶段名称截断为下一列标题之前的空格
+    //  长名字不会出现在上面。基于度量（字体宽度不同）。
     const full = c.name || t("schematic.boot.phase_default_name", { n: c.index });
     const avail = (i < cols.length - 1) ? (cols[i + 1].x - c.x - 16) : (c.w + 60);
     const nameEl = g.append("text")
@@ -2171,16 +2171,16 @@ function renderBootHeads(model) {
   });
 }
 
-/* ---------------------------------------------------------------------- *
- * BOOT PLAYER — unified sequence reader                                  *
- *                                                                        *
- * One bottom bar replaces the old floating scrubber + standalone boot    *
- * grid. Three bands: A) transport, B) phase track (pips), C) active-     *
- * phase card. Scrubbing a phase auto-frames the graph on its nets        *
- * (focusPhaseGraph) and, when a SimulationTimeline exists, plays the     *
- * per-phase sim-* state. The full phase grid moves behind the [grid]     *
- * button as an overview overlay.                                         *
- * ---------------------------------------------------------------------- */
+/*  ---------------------------------------------------------------------------------- *
+ * BOOT PLAYER — 统一序列读取器 *
+ **
+ * 一个底部杆取代了旧的浮动洗涤器 + 独立引导 *
+ * 网格。三个频段：A) 传输，B) 相位跟踪（点），C) 活动 - *
+ *相卡。清理一个阶段会自动在其网络上构建图形 *
+ * (focusPhaseGraph) 并且，当模拟时间线存在时，播放 *
+ * 每相 sim-* 状态。全相网格移到[网格]后面*
+ * 按钮作为概览overlay。                                         *
+ * ----------------------------------------------------------------------  */
 
 function renderBootTimeline(model) {
   const wrap = el("schBootTimeline");
@@ -2194,8 +2194,8 @@ function renderBootTimeline(model) {
   }
   wrap.classList.add("sch-player");
 
-  // The full-board layouts don't use the phase track/card — collapse the
-  // player to its transport bar and give the canvas back ~140px of height.
+  //  全板布局不使用相位轨道/卡 - 折叠
+  //  将播放器移动到其传输栏并将画布恢复约 140 像素的高度。
   const collapsed = STATE.layoutMode === "powertree" || STATE.layoutMode === "grid";
   wrap.classList.toggle("collapsed", collapsed);
   document.body.classList.toggle("sch-collapsed-player", collapsed);
@@ -2207,7 +2207,7 @@ function renderBootTimeline(model) {
     </span>
     ${!isAnalyzed ? `<button class="sch-reanalyze" id="schReanalyzeBtn" title="${escHtml(t("schematic.boot.reanalyze_title"))}">↻ ${escHtml(t("schematic.boot.reanalyze"))}</button>` : ''}`;
 
-  // ---- Band A : transport ----
+  //  ---- 频段 A：运输 ----
   const transport = document.createElement("div");
   transport.className = "sch-player-transport";
   transport.innerHTML = `
@@ -2238,7 +2238,7 @@ function renderBootTimeline(model) {
     </div>`;
   wrap.appendChild(transport);
 
-  // ---- Band B : phase track (pips) ----
+  //  ---- 带 B ：相位轨迹（点） ----
   const track = document.createElement("div");
   track.className = "sch-player-track";
   phases.forEach((p) => {
@@ -2251,13 +2251,13 @@ function renderBootTimeline(model) {
   });
   wrap.appendChild(track);
 
-  // ---- Band C : active-phase card (filled by renderBootActive) ----
+  //  ---- Band C：活动阶段卡（由renderBootActive填充）----
   const active = document.createElement("div");
   active.className = "sch-player-active";
   active.id = "schPlayerActive";
   wrap.appendChild(active);
 
-  // ---- Overview overlay scaffold (filled on demand by openBootGrid) ----
+  //  ---- 概述overlay脚手架（由openBootGrid按需填充）----
   let overlay = el("schBootGridOverlay");
   if (!overlay) {
     overlay = document.createElement("div");
@@ -2267,8 +2267,8 @@ function renderBootTimeline(model) {
     (document.querySelector("#schematicSection") || document.body).appendChild(overlay);
   }
 
-  // Transport interactions (event-delegated so the source badge / reanalyze
-  // button inside .sch-player-tools don't need their own wiring here).
+  //  传输交互（事件委托，因此源徽章/重新分析
+  //  .sch-player-tools 内的按钮不需要自己的接线）。
   transport.addEventListener("click", (ev) => {
     const act = ev.target?.closest("[data-act]")?.dataset?.act;
     if (!act) return;
@@ -2284,7 +2284,7 @@ function renderBootTimeline(model) {
     }
     else if (act === "grid") openBootGrid(model);
   });
-  // Reflect the passives toggle state (lit = passives shown).
+  //  反映被动切换状态（亮起=显示被动）。
   transport.querySelector("[data-act=toggle-passives]")?.classList.toggle("on", !STATE.hidePassives);
   transport.querySelector("[data-act=netsel]")?.addEventListener("change", (ev) => {
     const railId = ev.target.value;
@@ -2302,7 +2302,7 @@ function renderBootTimeline(model) {
     });
   }
 
-  // Re-analyze button fires POST /analyze-boot and reloads when done.
+  //  重新分析按钮会触发 POST /analyze-boot 并在完成后重新加载。
   el("schReanalyzeBtn")?.addEventListener("click", async (ev) => {
     ev.stopPropagation();
     const btn = ev.currentTarget;
@@ -2311,7 +2311,7 @@ function renderBootTimeline(model) {
     try {
       const res = await fetch(`/pipeline/packs/${encodeURIComponent(STATE.slug)}/schematic/analyze-boot`, { method: "POST" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      // Poll every 3s until the file appears (max 60s).
+      //  每 3 秒轮询一次，直到文件出现（最多 60 秒）。
       for (let i = 0; i < 20; i++) {
         await new Promise(r => setTimeout(r, 3000));
         const check = await fetch(`/pipeline/packs/${encodeURIComponent(STATE.slug)}/schematic`);
@@ -2330,10 +2330,10 @@ function renderBootTimeline(model) {
     }
   });
 
-  // Seed the player. With a SimulationTimeline, render() repaints the cursor
-  // phase + its sim-* state on the freshly rebuilt graph; without one, just
-  // seed the card on phase 0 (no graph focus — keep the full graph visible
-  // until the user plays or picks a phase).
+  //  为玩家播种。使用SimulationTimeline，render() 重新绘制光标
+  //  新重建图上的阶段 + 其 sim-* 状态；没有一个，只是
+  //  在阶段 0 播种卡片（无图形焦点 — 保持完整图形可见
+  //  直到用户播放或选择一个阶段）。
   if (SimulationController.timeline) {
     SimulationController.render();
   } else {
@@ -2342,17 +2342,17 @@ function renderBootTimeline(model) {
   }
 }
 
-// Graph-only phase focus: dim everything except the phase's rails + comps and
-// light the internal links. No inspector side-effect, so playback can scrub
-// the focus cheaply. Mirrors the .has-focus dimming pattern.
+//  仅图形阶段焦点：调暗除阶段的 rails + comps 和之外的所有内容
+//  点亮内部链接。无inspector副作用，因此播放可以擦洗
+//  便宜的焦点。镜像 .has-focus 调光模式。
 function focusPhaseGraph(model, phaseIdx) {
   const phase = (model.boot || []).find(p => p.index === phaseIdx);
   if (!phase) return;
 
-  // Railfocus mode shows one rail at a time, so a multi-rail "soft focus"
-  // can't render here. Land the user on the phase's most critical rail
-  // instead — that turns "you must hunt for the right net" into "the player
-  // already put you on it". The net selector then flips rails within the phase.
+  //  Railfocus 模式一次显示一个 rail，因此是多个rail“软焦点”
+  //  此处无法渲染。让用户到达该阶段最关键的rail
+  //  相反，这将“你必须寻找正确的网”变成了“玩家
+  //  已经给你穿上了”。然后网络选择器在该阶段内翻转 rails。
   if (STATE.layoutMode === "railfocus") {
     const rails = (phase.rails_stable || [])
       .map(r => model.nodeById.get(`rail:${r}`))
@@ -2375,23 +2375,23 @@ function focusPhaseGraph(model, phaseIdx) {
   d3.selectAll("#schLayerLinks path")
     .classed("active-link", d => ids.has(d.sourceId) && ids.has(d.targetId));
 
-  // Frame the phase's nodes so the protocol is readable, not a tiny cluster.
+  //  构建阶段的节点，使协议可读，而不是一个微小的集群。
   fitToPhaseNodes(model, ids);
 
-  // Keep the overview grid (if open) in sync.
+  //  保持概览网格（如果打开）同步。
   el("schBootGridOverlay")?.querySelectorAll(".sch-boot-col").forEach(c => {
     c.classList.toggle("active", Number(c.dataset.phase) === phaseIdx);
   });
 }
 
-// Fill band A's label + band C's card for the active phase. simState (when a
-// SimulationTimeline exists) carries the per-phase blocking cause.
+//  填写乐队A的标签+乐队C的卡片作为活动阶段。 simState（当
+//  模拟时间线存在）携带每相阻塞原因。
 function renderBootActive(model, phaseIdx, simState) {
   const phase = (model.boot || []).find(p => p.index === phaseIdx);
   const host = el("schPlayerActive");
   if (!phase || !host) return;
 
-  // Band A label.
+  //  带A标签。
   const ph = document.querySelector(".sch-player-phase");
   const nm = document.querySelector(".sch-player-name");
   const cf = document.querySelector(".sch-player-conf");
@@ -2399,7 +2399,7 @@ function renderBootActive(model, phaseIdx, simState) {
   if (nm) nm.textContent = phase.name || t("schematic.boot.phase_default_name", { n: phase.index });
   if (cf) cf.textContent = phase.confidence != null ? phase.confidence.toFixed(2) : "";
 
-  // Band A trigger summary (▸ triggers NET ← driver → Φn) or blocked cause.
+  //  带 A 触发摘要（▸ 触发 NET ← 驱动程序 → Φn）或阻塞原因。
   const trg = document.querySelector(".sch-player-trigger");
   if (trg) {
     if (simState?.blocked) {
@@ -2419,20 +2419,20 @@ function renderBootActive(model, phaseIdx, simState) {
     }
   }
 
-  // Band A net selector — rails stabilising in this phase.
+  //  频段 A 网络选择器 — rail 在此阶段稳定。
   const sel = document.querySelector(".sch-player [data-act=netsel]");
   if (sel) {
     const rails = phase.rails_stable || [];
     sel.innerHTML = `<option value="">${escHtml(t("schematic.player.net_all"))}</option>`
       + rails.map(r => `<option value="rail:${escHtml(r)}">${escHtml(r)}</option>`).join("");
-    // In railfocus mode, reflect the rail currently on the canvas.
+    //  在rail焦点模式下，反映当前画布上的rail。
     if (STATE.layoutMode === "railfocus" && STATE.selectedRailId
         && rails.includes(STATE.selectedRailId.replace(/^rail:/, ""))) {
       sel.value = STATE.selectedRailId;
     }
   }
 
-  // Band C card body.
+  //  带C卡体。
   const rails = phase.rails_stable || [];
   const comps = phase.components_entering || [];
   const cand = [
@@ -2442,8 +2442,8 @@ function renderBootActive(model, phaseIdx, simState) {
   const top = cand[0];
   const narration = (phase.evidence && phase.evidence[0]) ? phase.evidence[0] : "";
 
-  // Cap chips to one line per row (the rest live in the details inspector and
-  // the grid overview) so the card never overflows its band and gets clipped.
+  //  将 chip 限制为每行一行（其余部分位于细节 inspector 和
+  //  网格概述），因此卡片永远不会溢出其带并被剪裁。
   const RMAX = 12, CMAX = 10;
   const railChips = rails.slice(0, RMAX).map(r => `<span class="mono chip emerald clickable" data-rail="${escHtml(r)}">${escHtml(r)}</span>`).join("")
     + (rails.length > RMAX ? `<span class="sch-boot-more">${escHtml(t("schematic.boot.more", { n: rails.length - RMAX }))}</span>` : "");
@@ -2474,17 +2474,17 @@ function renderBootActive(model, phaseIdx, simState) {
   }));
 }
 
-// Isolate one rail of the active phase. In railfocus mode this drives the
-// real one-rail layout (setSelectedRail); in the full-graph modes it falls
-// back to the cascade-focus highlight.
+//  分离出一个 rail 活性相。在 rail 对焦模式下，这会驱动
+//  真正的一-rail布局(setSelectedRail);在全图模式下它会下降
+//  回到级联焦点突出显示。
 function selectRailFromPlayer(railId) {
   if (STATE.layoutMode === "railfocus") { setSelectedRail(railId); return; }
   const n = STATE.model?.nodeById?.get(railId);
   if (n) { STATE.selectedId = railId; updateInspector(n); applyFocus(railId, STATE.model); }
 }
 
-// Overview overlay: the full phase grid (every phase side by side), opened
-// from the transport [grid] button. Clicking a column seeks the player there.
+//  概述overlay：全相网格（每相并排），打开
+//  从传输[网格]按钮。单击一列即可在那里寻找玩家。
 function openBootGrid(model) {
   const overlay = el("schBootGridOverlay");
   if (!overlay) return;
@@ -2558,8 +2558,8 @@ function renderBootGrid(model, grid) {
   });
 }
 
-// Full phase write-up in the side inspector (rails, comps, all triggers with
-// rationale, evidence list) — opened from the card's "details" button.
+//  侧面的全相位写入inspector（rails、comps、所有触发器
+//  理由、证据列表）——从卡片的“详细信息”按钮打开。
 function showPhaseDetails(model, phaseIdx) {
   const phase = (model.boot || []).find(p => p.index === phaseIdx);
   if (!phase) return;
@@ -2569,7 +2569,7 @@ function showPhaseDetails(model, phaseIdx) {
   el("schInspType").className = "sch-type-badge phase";
   el("schInspTitle").textContent = `Φ${phase.index}`;
   el("schInspSub").textContent = phase.name || "";
-  // Local alias to avoid shadowing the global `t` in the trigger map below.
+  //  本地别名以避免在下面的触发器映射中隐藏全局“t”。
   const tx = window.t;
   el("schInspBody").innerHTML = `
     <section class="sch-insp-section">
@@ -2591,7 +2591,7 @@ function showPhaseDetails(model, phaseIdx) {
         if (typeof trig === "string") {
           return `<div><span class="mono chip amber">${escHtml(trig)}</span></div>`;
         }
-        // Analyzer shape: {net_label, from_refdes, rationale}
+        //  分析器形状：{net_label，from_refdes，基本原理}
         const driver = trig.from_refdes ? ` ← <span class="mono">${escHtml(trig.from_refdes)}</span>` : "";
         const rationale = trig.rationale ? `<div class="muted" style="margin-top:4px;font-size:11px">${escHtml(trig.rationale)}</div>` : "";
         return `<div style="margin-bottom:8px"><span class="mono chip amber">${escHtml(trig.net_label)}</span>${driver}${rationale}</div>`;
@@ -2607,15 +2607,15 @@ function showPhaseDetails(model, phaseIdx) {
   `;
 }
 
-/* ---------------------------------------------------------------------- *
- * FOCUS + INSPECTOR                                                      *
- * ---------------------------------------------------------------------- */
+/*  ---------------------------------------------------------------------------------- *
+ * 焦点 + 检查员 *
+ * ----------------------------------------------------------------------  */
 
 function applyFocus(nodeId, model) {
   d3.select("#schGraph").classed("has-focus", Boolean(nodeId));
   if (!nodeId) return;
   const node = model.nodeById.get(nodeId);
-  // Kill-switch mode: highlight the full downstream cascade + upstream chain.
+  //  Kill-switch 模式：突出全下游级联+上游链。
   const dead = computeCascade(model, nodeId);
   const feeds = computeUpstream(model, nodeId);
 
@@ -2630,7 +2630,7 @@ function applyFocus(nodeId, model) {
       (feeds.has(d.sourceId) && feeds.has(d.targetId))
     );
 
-  // Dim phase highlights.
+  //  暗淡阶段亮点。
   el("schBootTimeline")?.querySelectorAll(".sch-boot-col.active").forEach(c => c.classList.remove("active"));
 }
 
@@ -2643,9 +2643,9 @@ function clearFocus() {
   el("schBootTimeline")?.querySelectorAll(".sch-boot-col.active").forEach(c => c.classList.remove("active"));
 }
 
-// Fill the inspector header chrome: a stat strip (the headline facts) and a
-// quick-action bar (center the graph, jump to the board, copy the id) so the
-// tech doesn't have to scroll the body to act.
+//  填充 inspector 标题镶边：统计条（标题事实）和
+//  快速操作栏（将图表居中、跳转到图板、复制 ID）
+//  科技无需滚动身体即可行动。
 function populateInspectorChrome(node) {
   const statsEl = el("schInspStats");
   const actsEl = el("schInspActions");
@@ -2684,7 +2684,7 @@ function populateInspectorChrome(node) {
   });
   if (node.kind === "component" && node.refdes && window.Boardview && typeof window.Boardview.focus === "function") {
     addAction(tx("schematic.inspector.action_board"), tx("schematic.inspector.action_board_title"), () => {
-      try { window.Boardview.focus(node.refdes); } catch (_) { /* board may not be loaded */ }
+      try { window.Boardview.focus(node.refdes); } catch (_) { /*  板可能未加载  */ }
     });
   }
   const copyKey = node.kind === "rail" ? node.label : node.refdes;
@@ -2723,8 +2723,8 @@ function updateInspector(node) {
         </div>
       </section>` : "";
 
-  // Look up the functional domain + one-liner description from the
-  // classified-nets overlay (populated by the net classifier, regex or Opus).
+  //  查找功能域 + 一行描述
+  //  分类网络overlay（由网络分类器、正则表达式或Opus填充）。
   const classified = ((STATE.graph && STATE.graph.net_classification) || {}).nets || {};
   const netMeta = node.kind === "rail" ? classified[node.label] : null;
   const domainBlock = netMeta ? `
@@ -2849,12 +2849,12 @@ function updateInspector(node) {
 
   populateInspectorChrome(node);
 
-  // --- Observation row (reverse-diagnostic input, contextual per node kind) ---
+  //  --- 观察行（反向-diagnostic 输入，每个节点类型的上下文）---
   const obsKind = node.kind === "component" ? "comp" : node.kind === "rail" ? "rail" : null;
   const obsKey = node.kind === "component" ? node.refdes : node.kind === "rail" ? node.label : null;
   if (obsKind && obsKey) {
-    // Phase 4: derive fine-grained picker kind from compKind (backend ComponentKind)
-    // for components, or "rail" for rails. Falls back to "ic" for pre-Phase-4 graphs.
+    //  第 4 阶段：从 compKind（后端 ComponentKind）派生细粒度的选择器类型
+    //  对于组件，或“rail”对于rails。对于第 4 阶段之前的图表，回落到“ic”。
     const pickerKind = obsKind === "rail" ? "rail" : (node.compKind || "ic");
     const modeList = MODE_SETS[pickerKind] || MODE_SETS.ic;
     const modesForKind = modeList.map(m => [m, `${MODE_GLYPH[m] || ""} ${modeLabel(m)}`]);
@@ -2864,8 +2864,8 @@ function updateInspector(node) {
       : SimulationController.observations.state_comps;
     const current = stateMap.get(obsKey) || "unknown";
 
-    // Group the reverse-diagnostic tools (state picker + metric + history) in
-    // one clearly-headed section instead of bare rows floating at the bottom.
+    //  将反向diagnostic工具（状态选择器+指标+历史）分组为
+    //  一个清晰的部分，而不是漂浮在底部的裸露的行。
     const diagSec = document.createElement("section");
     diagSec.className = "sch-insp-section sch-insp-diag";
     diagSec.innerHTML = `<h3>${escHtml(t("schematic.inspector.diag_title"))}</h3>`
@@ -2876,7 +2876,7 @@ function updateInspector(node) {
     row.className = "sim-obs-row";
     const picker = document.createElement("div");
     picker.className = "sim-mode-picker";
-    // Use pickerKind on data-kind so CSS can target passive variants.
+    //  在数据类型上使用 pickerKind，以便 CSS 可以定位被动变体。
     picker.setAttribute("data-kind", pickerKind);
     for (const [mode, label] of modesForKind) {
       const btn = document.createElement("button");
@@ -2894,7 +2894,7 @@ function updateInspector(node) {
     row.appendChild(picker);
     diagSec.appendChild(row);
 
-    // --- Metric input row ---
+    //  --- 公制输入行 ---
     const unitForKind = obsKind === "rail" ? "V" : "°C";
     const metricMap = obsKind === "rail"
       ? SimulationController.observations.metrics_rails
@@ -2903,7 +2903,7 @@ function updateInspector(node) {
 
     const metricRow = document.createElement("div");
     metricRow.className = "sim-metric-row";
-    // Infer nominal from the rail label if the tech hasn't recorded one yet.
+    //  如果技术尚未记录，则从 rail 标签推断名义值。
     const inferredNominal = obsKind === "rail" ? inferRailNominalV(obsKey) : null;
     const nominalForDisplay = existingMetric?.nominal ?? inferredNominal;
     metricRow.innerHTML = `
@@ -2927,13 +2927,13 @@ function updateInspector(node) {
       if (!Number.isFinite(value)) return;
       const unit = unitEl.value;
       const nominal = existingMetric?.nominal ?? inferredNominal;
-      // Client-side auto-classify mirror (same thresholds as Python side).
+      //  客户端自动分类镜像（与Python端相同的阈值）。
       const mode = clientAutoClassify(obsKind, value, unit, nominal);
-      // Update local state immediately.
+      //  立即更新本地状态。
       SimulationController.setObservation(obsKind, obsKey, mode || "unknown", {
         measured: value, unit, nominal,
       });
-      // POST to the journal if we have a repair_id.
+      //  如果我们有 repair_id，请发布到期刊。
       const slug = STATE.slug;
       const repairId = ctxRepairId();
       if (slug && repairId) {
@@ -2960,7 +2960,7 @@ function updateInspector(node) {
     recordBtn.addEventListener("click", doRecord);
     diagSec.appendChild(metricRow);
 
-    // --- Measurement history (async fetch, replaces on reopen) ---
+    //  --- 测量历史记录（async 获取，重新打开时替换）---
     const historyBox = document.createElement("div");
     historyBox.className = "sim-measurement-history";
     historyBox.innerHTML = `<div class="sim-mh-title">${escHtml(t("schematic.inspector.history_title", { target: obsKey }))}</div><div class="sim-mh-list"></div>`;
@@ -2973,7 +2973,7 @@ function updateInspector(node) {
         listEl.innerHTML = `<div class="sim-mh-empty">${escHtml(t("schematic.inspector.history_empty"))}</div>`;
         return;
       }
-      // Keep the 6 most recent (reverse order).
+      //  保留最近的 6 个（倒序）。
       const recent = events.slice(-6);
       let prev = null;
       const rows = recent.map(ev => {
@@ -3000,9 +3000,9 @@ function updateInspector(node) {
     })();
   }
 
-  // --- Diagnostiquer / Réinitialiser buttons (reverse-diagnostic) ---
-  // Shown whenever at least one observation is recorded, regardless of
-  // which node is currently selected in the inspector.
+  //  --- 诊断器/重新初始化按钮（反向-diagnostic）---
+  //  每当记录至少一个观察结果时显示，无论
+  //  当前在inspector中选择了哪个节点。
   const obsCount = Object.values(SimulationController.observations).reduce((sum, m) => sum + m.size, 0);
   if (obsCount > 0) {
     const diagBtn = document.createElement("button");
@@ -3023,11 +3023,11 @@ function updateInspector(node) {
     body.appendChild(clearBtn);
   }
 
-  // --- Fault-injection action (behavioral simulator integration) ---
-  // Appears only on component nodes. Toggles the refdes into
-  // SimulationController.killedRefdes, re-fetches the timeline, and seeks
-  // the scrubber to the phase where the board stalls so the tech sees the
-  // cascade immediately.
+  //  --- 故障注入动作（行为模拟器集成）---
+  //  仅出现在组件节点上。将 refdes 切换为
+  //  SimulationController.killedRefdes，重新获取timeline，并查找
+  //  洗涤器到电路板停止的阶段，以便技术人员看到
+  //  立即级联。
   if (node.kind !== "rail" && node.refdes) {
     const already = SimulationController.killedRefdes.includes(node.refdes);
     const faultSec = document.createElement("section");
@@ -3053,11 +3053,11 @@ function updateInspector(node) {
         if (idx >= 0) SimulationController.seek(idx);
         SimulationController.pause();
       }
-      updateInspector(node);   // reflect armed/disarmed state + reset button
+      updateInspector(node);   //  反映布防/撤防状态+复位按钮
     });
     faultSec.appendChild(faultBtn);
 
-    // Reset button — only when at least one fault is active.
+    //  重置按钮 — 仅当至少有一个故障处于活动状态时。
     if (SimulationController.killedRefdes.length > 0) {
       const resetBtn = document.createElement("button");
       resetBtn.className = "sim-inspector-action";
@@ -3074,7 +3074,7 @@ function updateInspector(node) {
     }
   }
 
-  // Wire clickable chips inside the inspector to navigate between nodes.
+  //  在 inspector 内连接可点击的 chip 以在节点之间导航。
   body.querySelectorAll(".clickable[data-id]").forEach(el => {
     el.addEventListener("click", () => {
       const id = el.dataset.id;
@@ -3084,9 +3084,9 @@ function updateInspector(node) {
   });
 }
 
-/* ---------------------------------------------------------------------- *
- * ZOOM / PAN / FIT                                                       *
- * ---------------------------------------------------------------------- */
+/*  ---------------------------------------------------------------------------------- *
+ * 缩放/平移/适合 *
+ * ----------------------------------------------------------------------  */
 
 function initZoom(model) {
   const svg = d3.select("#schGraph");
@@ -3100,10 +3100,10 @@ function initZoom(model) {
   STATE.zoom = zoom;
   svg.call(zoom);
   fitToBounds(model);
-  // Refit on canvas resize — fires when the chat panel opens/closes (which
-  // shrinks .sch-root via right:420px), on window resize, and when the rail
-  // sidebar toggles. Without this, the zoom transform stays anchored to the
-  // pre-resize geometry and content drifts off-screen behind the chat panel.
+  //  Refit on canvas resize — 当聊天面板打开/关闭时触发（其中
+  //  通过 right:420px 缩小 .sch-root)，在窗口调整大小时，以及当 rail 时
+  //  sidebar 切换。如果没有这个，缩放变换将保持锚定到
+  //  预先调整几何图形的大小，内容会从聊天面板后面移出屏幕。
   if (STATE._resizeObserver) STATE._resizeObserver.disconnect();
   let refitTimer = null;
   STATE._resizeObserver = new ResizeObserver(() => {
@@ -3115,19 +3115,19 @@ function initZoom(model) {
   STATE._resizeObserver.observe(el("schCanvas"));
 }
 
-// FIT_TOP_INSET reserves clearance for the top floating overlays that sit
-// above the canvas content. The canvas's CSS bottom already excludes the
-// boot timeline (148px), so the visual centre of what the user perceives
-// as the workspace is NOT the canvas centre — it sits below it. We centre
-// content in the available zone [FIT_TOP_INSET, H-PAD] so the rail/heads
-// land at the visual midpoint instead of the raw centre.
+//  FIT_TOP_INSET 为顶部浮动 overlay 保留间隙
+//  位于画布内容上方。画布的 CSS 底部已经排除了
+//  boot timeline (148px)，因此用户感知的视觉中心
+//  因为 workspace 不是画布中心 - 它位于画布中心下方。我们中心
+//  可用区域 [FIT_TOP_INSET, H-PAD] 中的内容，因此 rail/heads
+//  着陆在视觉中点而不是原始中心。
 const FIT_TOP_INSET = 140;
 const FIT_PAD = 30;
 
 function fitToBounds(model) {
   if (!model.bounds) return;
   const canvas = el("schCanvas");
-  // canvas.clientHeight already excludes the boot timeline (CSS bottom:148px).
+  //  canvas.clientHeight 已经排除了引导 timeline (CSS 底部:148px)。
   const W = canvas.clientWidth, H = canvas.clientHeight;
   const { minX, minY, maxX, maxY } = model.bounds;
   const bw = maxX - minX, bh = maxY - minY;
@@ -3139,13 +3139,13 @@ function fitToBounds(model) {
   d3.select("#schGraph").transition().duration(400).call(STATE.zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
 }
 
-// Zoom/pan to frame just a set of node ids — used by the boot player so that
-// picking a phase frames that phase's nodes instead of leaving them as a tiny
-// cluster inside the full board graph.
+//  缩放/平移以仅构建一组节点 ID — 由启动播放器使用，以便
+//  选择一个相位框架该相位的节点而不是将它们保留为一个微小的
+//  集群在全板图内。
 function fitToPhaseNodes(model, ids) {
   if (!STATE.zoom) return;
-  // Read positions from the rendered D3 selection — the laid-out coordinates
-  // live on the bound data, not necessarily on the model.nodeById objects.
+  //  从渲染的 D3 选择中读取位置 - 布局坐标
+  //  存在于绑定数据上，不一定存在于 model.nodeById 对象上。
   const pts = [];
   d3.selectAll("#schLayerNodes g.sch-node").each(function (d) {
     if (d && ids.has(d.id) && isFinite(d.x) && isFinite(d.y)) pts.push(d);
@@ -3170,18 +3170,18 @@ function fitToPhaseNodes(model, ids) {
   d3.select("#schGraph").transition().duration(400).call(STATE.zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
 }
 
-// Canonical net domains recognized by the filter. Typing one of these
-// highlights every node whose primary net belongs to the domain.
+//  过滤器识别的规范网域。键入其中之一
+//  突出显示其主网络属于该域的每个节点。
 const KNOWN_DOMAINS = new Set([
   "hdmi", "usb", "pcie", "ethernet", "audio", "display",
   "storage", "debug", "power_seq", "power_rail", "clock",
   "reset", "control", "ground", "misc",
 ]);
 
-// Secondary label-prefix patterns per domain. When Sonnet tags a rail as
-// power_rail (e.g. USB_PWR is functionally USB but structurally a rail),
-// the substring pattern recovers it so the tech sees the full HDMI / USB /
-// etc. family when they query by domain.
+//  每个域的辅助标签前缀模式。当Sonnet将rail标记为
+//  power_rail（例如 USB_PWR 功能上是 USB，但结构上是 rail），
+//  子串模式恢复它，以便技术人员看到完整的 HDMI / USB /
+//  等家庭按域查询时。
 const DOMAIN_SUBSTRING = {
   hdmi:     /\b(HDMI|TMDS|DDC|CEC)\b|^(HDMI|TMDS|DDC)_/i,
   usb:      /\bUSB\b|^USB|USB_/i,
@@ -3191,8 +3191,8 @@ const DOMAIN_SUBSTRING = {
   display:  /\b(EDP|DSI|LCD|BACKLIGHT|LVDS|DP_AUX)\b|^(EDP|DSI|LCD|BL_)/i,
   storage:  /\b(SD|EMMC|MMC|SDHC|SDIO)\b|^(SD|EMMC|MMC)_/i,
   debug:    /\b(JTAG|SWD|UART|TDI|TDO|TCK|TMS|SWDIO|SWCLK)\b|^(JTAG|SWD|UART)_/i,
-  // power_seq / power_rail / clock / reset / control / ground : pas de
-  // prefix-family — on s'en tient au domain classé pour ceux-là.
+  //  power_seq / power_rail / 时钟 / 复位 / 控制 / 接地 : pas de
+  //  前缀族 — 位于 ceux-là 的域类中。
 };
 
 function highlightDomain(model, domain) {
@@ -3201,20 +3201,20 @@ function highlightDomain(model, domain) {
   const allNets = graph.nets || {};
   const matchingNets = new Set();
 
-  // 1) Primary — nets whose classified domain matches.
+  //  1) 主要 — 分类域匹配的网络。
   for (const [label, cn] of Object.entries(classified)) {
     if ((cn.domain || "").toLowerCase() === domain) matchingNets.add(label);
   }
 
-  // 2) Secondary — functional-family substring/prefix match so a net like
-  // USB_PWR (classified as power_rail) still lights up when the tech
-  // filters by 'usb'. Covers the most common cross-classifications.
+  //  2）次要——功能族子串/前缀匹配，所以像一个网络
+  //  USB_PWR（分类为 power_rail）在技术正常时仍然亮起
+  //  按“usb”过滤。涵盖最常见的交叉分类。
   const pattern = DOMAIN_SUBSTRING[domain];
   if (pattern) {
     for (const label of Object.keys(allNets)) {
       if (pattern.test(label)) matchingNets.add(label);
     }
-    // Also pick up classified-only nets we haven't enumerated yet.
+    //  还可以选择我们尚未列举的仅限分类的网络。
     for (const label of Object.keys(classified)) {
       if (pattern.test(label)) matchingNets.add(label);
     }
@@ -3225,13 +3225,13 @@ function highlightDomain(model, domain) {
     return false;
   }
 
-  // Find every component whose pins touch at least one net in the domain.
+  //  找到引脚至少接触域中一个网络的每个组件。
   const matchingComponents = new Set();
   for (const n of model.nodes) {
     if (n.kind !== "component") continue;
     const pins = n.pinsAll || [];
     if (pins.some(p => matchingNets.has(p.net_label))) matchingComponents.add(n.id);
-    // Also include rails whose label matches.
+    //  还包括标签匹配的 rail。
   }
   for (const n of model.nodes) {
     if (n.kind === "rail" && matchingNets.has(n.label)) matchingComponents.add(n.id);
@@ -3260,23 +3260,23 @@ function runFilter(q, model) {
   const qu = q.toUpperCase().trim();
   const ql = q.toLowerCase().trim();
 
-  // 1) Recognized functional domain → highlight the whole cluster.
+  //  1）识别功能域→突出整个集群。
   if (KNOWN_DOMAINS.has(ql)) {
     if (highlightDomain(model, ql)) return;
   }
 
-  // 2) Fall back to refdes / rail label match.
-  // IMPORTANT: filter only highlights + zooms. It does NOT open the
-  // inspector — otherwise typing "u" while aiming for "usb" would
-  // auto-focus USB_PWR and pop its inspector before the user finishes
-  // typing the domain keyword. User has to click the node explicitly to
-  // open the inspector.
+  //  2) 回退到 refdes / rail 标签匹配。
+  //  重要提示：仅过滤高光+缩放。它不会打开
+  //  inspector — 否则在瞄准“usb”时输入“u”将会
+  //  自动聚焦 USB_PWR 并在用户完成之前弹出其 inspector
+  //  输入域关键字。用户必须明确单击该节点才能
+  //  打开inspector。
   const hit = model.nodes.find(n => (n.refdes || n.label).toUpperCase() === qu)
     || model.nodes.find(n => (n.refdes || n.label).toUpperCase().startsWith(qu));
   if (!hit) { el("schFilterStatus").textContent = t("schematic.filter.none"); return; }
   el("schFilterStatus").textContent = t("schematic.filter.hit_arrow", { label: hit.refdes || hit.label });
-  // Visual highlight only — surface the node's neighbours like a hover
-  // would, but keep the inspector closed.
+  //  仅视觉突出显示 - 像悬停一样显示节点的邻居
+  //  会，但保持inspector关闭。
   d3.select("#schGraph").classed("has-focus", true);
   const neighborIds = new Set([hit.id]);
   for (const e of model.edges) {
@@ -3291,9 +3291,9 @@ function runFilter(q, model) {
   d3.selectAll("#schLayerLinks path")
     .classed("active-link", d => d.sourceId === hit.id || d.targetId === hit.id);
   const canvas = el("schCanvas");
-  // canvas.clientHeight already excludes the boot timeline (CSS bottom:148px).
-  // Centre the focused node on the workspace midpoint (top overlays excluded)
-  // so it sits where the user expects to look, not behind the surface toggle.
+  //  canvas.clientHeight 已经排除了引导 timeline (CSS 底部:148px)。
+  //  将焦点节点置于 workspace 中点中心（顶部 overlay 除外）
+  //  因此它位于用户期望看到的位置，而不是表面切换的后面。
   const W = canvas.clientWidth, H = canvas.clientHeight;
   const workspaceCY = FIT_TOP_INSET + (H - FIT_TOP_INSET - FIT_PAD) / 2;
   const scale = 1.7;
@@ -3302,14 +3302,14 @@ function runFilter(q, model) {
   d3.select("#schGraph").transition().duration(400).call(STATE.zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
 }
 
-/* ---------------------------------------------------------------------- *
- * STATS + EMPTY                                                          *
- * ---------------------------------------------------------------------- */
+/*  ---------------------------------------------------------------------------------- *
+ * 统计 + 空 *
+ * ----------------------------------------------------------------------  */
 
 function updateStats(model, graph) {
-  // Count only what's actually on the canvas in the current mode, via the
-  // same predicate the renderer uses — so the counts track the layout mode
-  // and the passives toggle instead of reporting a fixed model total.
+  //  仅计算当前模式下画布上的实际内容，通过
+  //  渲染器使用相同的谓词 - 因此计数跟踪布局模式
+  //  被动切换而不是报告固定模型总数。
   const rendered = model.nodes.filter(n => isNodeRendered(n, model));
   const compCount = rendered.filter(n => n.kind === "component").length;
   const railCount = rendered.filter(n => n.kind === "rail").length;
@@ -3318,9 +3318,9 @@ function updateStats(model, graph) {
   ).length;
   const tot = model.totals || {};
 
-  // Plain counts of what the view renders. No "shown/total" ratio: the
-  // denominator (full board incl. signal-only passives) is not reachable in
-  // this view and only read as missing data.
+  //  视图渲染内容的简单计数。无“显示/总计”比率：
+  //  分母（全板，包括仅信号无源器件）在
+  //  此视图仅读取为缺失数据。
   el("schStatComps").textContent  = compCount;
   el("schStatRails").textContent  = railCount;
   el("schStatRegs").textContent   = sourceShown;
@@ -3329,8 +3329,8 @@ function updateStats(model, graph) {
   el("schStatConf").textContent   = q.confidence_global != null ? q.confidence_global.toFixed(2) : "n/a";
   el("schStatPages").textContent  = q.pages_parsed != null ? `${q.pages_parsed}/${q.total_pages}` : "n/a";
 
-  // Dégradé badge — click to open a detail popover (compiler trigger:
-  // confidence_global < 0.7 OR orphan_cross_page > 5).
+  //  Dégradé 徽章 — 单击可打开详细信息 popover（编译器触发器：
+  //  confidence_global < 0.7 或 orphan_cross_page > 5)。
   const deg = el("schStatDegraded");
   deg.classList.toggle("on", Boolean(q.degraded_mode));
   if (q.degraded_mode) {
@@ -3345,9 +3345,9 @@ function updateStats(model, graph) {
   }
 }
 
-// Build + wire the degraded-mode detail popover anchored under the stats bar.
-// Lists each quality metric; the ones that actually tripped degraded_mode
-// (confidence < 0.7, orphan cross-page > 5) are flagged in amber.
+//  构建 + 连接锚定在统计栏下方的降级模式详细信息 popover。
+//  列出每个质量指标；那些真正触发 degraded_mode 的
+//  （置信度 < 0.7，孤儿跨页 > 5）标记为琥珀色。
 function wireDegradedPopover(q) {
   const host = document.querySelector("#schematicSection") || document.body;
   let pop = el("schDegradedPop");
@@ -3415,27 +3415,27 @@ function hideEmptyState() {
   el("schBootTimeline")?.classList.remove("hidden");
 }
 
-/* ---------------------------------------------------------------------- *
- * PUBLIC                                                                 *
- * ---------------------------------------------------------------------- */
+/*  ---------------------------------------------------------------------------------- *
+ * 公开 *
+ * ----------------------------------------------------------------------  */
 
 function fullRender(graph) {
   hideEmptyState();
   const model = buildModel(graph);
   STATE.model = model;
 
-  // CSS reacts on the body class — it shows the rail sidebar and shifts the
-  // canvas 240px right in railfocus mode.
+  //  CSS 对 body 类做出反应 - 它显示 rail sidebar 并移动
+  //  画布 240 像素，处于 rail 焦点模式。
   document.body.classList.toggle("sch-mode-railfocus", STATE.layoutMode === "railfocus");
 
-  // Boot mode falls back to grid when the pack has no analyzed boot sequence.
+  //  当包没有分析启动顺序时，启动模式会回退到网格。
   const bootReady = STATE.layoutMode === "boot" && (model.boot || []).length > 0;
   if (bootReady) {
     computeBootLayout(model);
     renderBootHeads(model);
   } else if (STATE.layoutMode === "railfocus") {
     renderRailBar(model);
-    // Drop a stale selection if the rail no longer exists in this pack.
+    //  如果 rail 不再存在于该包中，则删除陈旧的选择。
     let rid = STATE.selectedRailId;
     if (rid && !model.nodeById.has(rid)) {
       rid = null;
@@ -3461,10 +3461,10 @@ function fullRender(graph) {
   });
 }
 
-// Re-render localised content (boot timeline, inspector, simulator, rail bar)
-// when the user flips the language switcher. Static markup with `data-i18n`
-// is handled by `window.i18n.applyDom`; this hook covers the imperative
-// renderers driven by `t()` calls in this module.
+//  重新渲染本地化内容（启动timeline、inspector、模拟器、rail栏）
+//  当用户翻转语言切换器时。带有 `data-i18n` 的静态标记
+//  由 `window.i18n.applyDom` 处理；这个钩子涵盖了命令式
+//  由该模块中的“t()”调用驱动的渲染器。
 let _i18nWired = false;
 function wireSchematicI18n() {
   if (_i18nWired) return;
@@ -3486,20 +3486,20 @@ function wireSchematicI18n() {
 
 export async function loadSchematic() {
   wireSchematicI18n();
-  // Re-read persisted prefs on every section entry — another module (e.g.
-  // the boardview minimap) may have flipped layoutMode / selectedRailId
-  // between visits, and the module-level STATE init only runs once.
+  //  重新读取每个部分条目上的持久首选项 - 另一个模块（例如
+  //  boardview minimap) 可能翻转了layoutMode / selectedRailId
+  //  在两次访问之间，模块级 STATE init 仅运行一次。
   try {
     const storedMode = localStorage.getItem("schLayoutMode");
     if (storedMode) STATE.layoutMode = storedMode;
     STATE.selectedRailId = localStorage.getItem("schSelectedRail") || null;
-  } catch (_) { /* ignore */ }
+  } catch (_) { /*  忽略  */ }
 
   const slug = getDeviceSlug();
   STATE.slug = slug;
-  // Wire the surface toggle first — the user must always be able to flip
-  // Graphe / PDF regardless of whether the electrical graph was compiled
-  // (the PDF may exist in board_assets/ even when no pipeline has run).
+  //  首先连接表面开关 - 用户必须始终能够翻转
+  //  Graphe / PDF 无论是否编译电气图
+  //  （即使没有运行任何管道，PDF 也可能存在于 board_assets/ 中）。
   wireSurfaceToggle();
   if (!slug) {
     showEmptyState(t("schematic.empty.no_repair_title"), t("schematic.empty.no_repair_detail"));
@@ -3514,18 +3514,18 @@ export async function loadSchematic() {
   if (res.error) { showEmptyState(t("schematic.empty.load_error_title"), res.error); return; }
   STATE.graph = res.graph;
   fullRender(res.graph);
-  // Wire zoom/filter/rail-search controls IMMEDIATELY after the first render
-  // — before any awaitable work — so the buttons in the bottom-right zoom bar
-  // become live the moment the canvas is on screen, even if the simulator
-  // hydrate below stalls or throws.
+  //  第一次渲染后立即连接缩放/滤镜/rail-搜索控件
+  //  — 在任何 await 可用的工作之前 — 因此右下角缩放栏中的按钮
+  //  画布出现在屏幕上的那一刻就变得活跃起来，即使模拟器
+  //  在马厩或投掷物下面补充水分。
   wireControls();
-  // Trigger the simulator fetch — the endpoint is fast (< 10ms server-side);
-  // we do it unconditionally when a graph has boot_sequence + power_rails.
+  //  触发模拟器获取 - 端点为fast（< 10ms 服务器端）；
+  //  当图具有 boot_sequence + power_rails 时，我们无条件地执行此操作。
   if (STATE.graph && STATE.graph.boot_sequence?.length && Object.keys(STATE.graph.power_rails || {}).length) {
     SimulationController.refresh(STATE.slug);
   }
-  // Hydrate the observation state from the per-repair measurement journal so
-  // the tech's past readings persist across reloads.
+  //  从每次修复测量日志中获取观察状态，以便
+  //  该技术过去的读数在重新加载后仍然存在。
   try {
     await SimulationController.hydrateFromJournal(slug);
   } catch (err) {
@@ -3534,9 +3534,9 @@ export async function loadSchematic() {
 }
 
 function wireControls() {
-  // Guard against double-wiring on section re-entry — `addEventListener`
-  // would otherwise stack a new handler on every loadSchematic() call and
-  // each click would fire N transitions in parallel.
+  //  防止部分重新进入时出现双重接线 — `addEventListener`
+  //  否则会在每次 loadSchematic() 调用时堆栈一个新的处理程序，并且
+  //  每次点击都会并行触发 N 个转换。
   const wireOnce = (id, handler) => {
     const node = el(id);
     if (!node || node.dataset.schWired === "1") return;
@@ -3551,8 +3551,8 @@ function wireControls() {
     if (STATE.zoom) d3.select("#schGraph").transition().duration(180).call(STATE.zoom.scaleBy, 1 / 1.3);
   });
   const filterIn = el("schFilterInput");
-  // Debounce 180ms so a rapid-typed "usb" doesn't re-run the filter 3 times
-  // (which would each run a full re-highlight before the user finishes).
+  //  去抖 180ms，因此快速输入的“usb”不会重新运行过滤器 3 次
+  //  （这将在用户完成之前运行完整的重新突出显示）。
   let filterDebounceTimer = null;
   filterIn?.addEventListener("input", (ev) => {
     clearTimeout(filterDebounceTimer);
@@ -3569,9 +3569,9 @@ function wireControls() {
       el("schFilterStatus").textContent = "";
     }
   });
-  // Rail sidebar local search — filtre client-side sur le nom du rail.
-  // Marque la substring qui match en cyan, cache les rails qui ne matchent
-  // pas, puis masque les headers de groupe devenus vides. Idempotent.
+  //  Rail sidebar 本地搜索 — 过滤客户端上的 rail 名称。
+  //  将子字符串标记为青色，缓存 rails 匹配项
+  //  pas，puis masque les headers de groupe devenus vides。幂等。
   const railSearchInput = el("schRailSearchInput");
   if (railSearchInput && railSearchInput.dataset.schWired !== "1") {
     railSearchInput.dataset.schWired = "1";
@@ -3591,10 +3591,10 @@ function wireControls() {
   }
 }
 
-/* Rail sidebar search — filters the rail list in-place and hides any
- * voltage group that ends up with zero matching children. Operates on the
- * already-rendered DOM (renderRailBar writes the items, this toggles
- * visibility), so no re-render is needed. */
+/*  Rail sidebar 搜索 — 就地过滤 rail 列表并隐藏任何内容
+ * 最终具有零匹配子项的电压组。运行于
+ * 已经渲染的 DOM（renderRailBar 写入项目，这会切换
+ * 可见性），因此不需要重新渲染。  */
 function runRailSearch(query) {
   const list = el("schRailBarList");
   if (!list) return;
@@ -3623,7 +3623,7 @@ function runRailSearch(query) {
     nameEl.appendChild(mark);
     nameEl.appendChild(document.createTextNode(raw.slice(idx + query.length)));
   });
-  // Hide voltage group headers whose following items are all hidden.
+  //  隐藏电压组标题，其以下项目均被隐藏。
   const groups = list.querySelectorAll(".sch-rail-group");
   groups.forEach(g => {
     let any = false;
@@ -3639,12 +3639,12 @@ function runRailSearch(query) {
   });
 }
 
-/* ---------------------------------------------------------------------- *
- * Surface toggle wiring — idempotent, called on every loadSchematic()    *
- * so the Graphe/PDF buttons work even when the electrical graph is       *
- * missing. Click listeners are attached once; a dataset flag guards      *
- * against re-wiring on repeated section entries.                         *
- * ---------------------------------------------------------------------- */
+/*  ---------------------------------------------------------------------------------- *
+ * 表面切换接线 — idempotent，在每个 loadSchematic() 上调用 *
+ * 因此，即使电气图表为 *，Graphe/PDF 按钮也能工作
+ * 失踪。点击监听器被附加一次； dataset 旗帜卫士 *
+ * 反对对重复的部分条目重新接线。                         *
+ * ----------------------------------------------------------------------  */
 
 function wireSurfaceToggle() {
   applySurface(STATE.surface);
@@ -3655,24 +3655,24 @@ function wireSurfaceToggle() {
       const surface = ev.currentTarget.dataset.schSurface;
       if (!surface || surface === STATE.surface) return;
       STATE.surface = surface;
-      try { localStorage.setItem("schSurface", surface); } catch (_) { /* ignore */ }
+      try { localStorage.setItem("schSurface", surface); } catch (_) { /*  忽略  */ }
       applySurface(surface);
     });
   });
 }
 
-/* ---------------------------------------------------------------------- *
- * Surface switching — flip between the derived graph view and the        *
- * original schematic PDF. The PDF iframe src is primed lazily on first   *
- * use and again only when the slug changes, so flipping back and forth   *
- * preserves the native viewer's scroll position.                         *
- * ---------------------------------------------------------------------- */
+/*  ---------------------------------------------------------------------------------- *
+ * 表面切换 — 在派生图形视图和 *
+ * 原始schematic PDF。 PDF iframe src 首先延迟启动*
+ * 仅当 slug 变化时才使用 and ，因此来回翻转 *
+ * 保留本机查看器的滚动位置。                         *
+ * ----------------------------------------------------------------------  */
 
 async function applySurface(surface) {
   const root = document.getElementById("schematicSection");
   if (!root) return;
-  // Sync button on/off state so the two buttons stay in lockstep even when
-  // the surface is set programmatically (e.g. from persisted localStorage).
+  //  同步按钮开/关状态，因此即使在
+  //  表面以编程方式设置（例如，从持久的localStorage）。
   document.querySelectorAll("[data-sch-surface]").forEach(btn => {
     btn.classList.toggle("on", btn.dataset.schSurface === surface);
   });
@@ -3681,12 +3681,12 @@ async function applySurface(surface) {
   await primePdfViewer(STATE.slug);
 }
 
-/* ---------------------------------------------------------------------- *
- * PDF VIEWER — anchor-aware, dark-themed, renders rasterised page PNGs   *
- * with a sémantique search overlay. Replaces the native browser PDF UI   *
- * so the design tokens (dark, mono, cyan accents for components) stay    *
- * coherent with the rest of the workbench.                               *
- * ---------------------------------------------------------------------- */
+/*  ---------------------------------------------------------------------------------- *
+ * PDF 查看器 — 锚点感知、深色主题、渲染光栅化页面 PNG *
+ * 通过语义搜索overlay。替换本机浏览器 PDF UI *
+ *因此设计标记（组件的深色、单色、青色强调）保留*
+ * 与工作台的其余部分保持一致。                               *
+ * ----------------------------------------------------------------------  */
 
 async function primePdfViewer(slug) {
   const scroll = document.getElementById("schPdfScroll");
@@ -3697,7 +3697,7 @@ async function primePdfViewer(slug) {
     empty.classList.remove("hidden");
     return;
   }
-  // Already primed for this slug — leave the user's scroll position alone.
+  //  已经为此 slug 做好了准备 — 不理会用户的滚动位置。
   if (STATE.pdfPrimedSlug === slug && STATE.pdfPages) {
     empty.classList.add("hidden");
     return;
@@ -3728,8 +3728,8 @@ function renderPdfPages(data) {
   const scroll = document.getElementById("schPdfScroll");
   if (!scroll) return;
   scroll.innerHTML = "";
-  // Set the zoom on the scroll container so all descendant pages pick it
-  // up via `calc(var(--sch-pdf-base) * var(--sch-pdf-zoom))`.
+  //  设置滚动容器的缩放比例，以便所有后代页面都选择它
+  //  通过 `calc(var(--sch-pdf-base) * var(--sch-pdf-zoom))` 向上。
   scroll.style.setProperty("--sch-pdf-zoom", String(STATE.pdfZoom));
   const pagePill = document.getElementById("schPdfPagePill");
   if (pagePill) pagePill.textContent = t("schematic.pdf.page_pill", { n: 1, count: data.count });
@@ -3748,8 +3748,8 @@ function renderPdfPages(data) {
     img.loading = "lazy";
     img.alt = t("schematic.pdf.img_alt", { n: page.n });
     img.src = page.url;
-    // Set the base width once the image has loaded: borne à 1400px pour
-    // rester digeste à DPI=150 sur un écran standard, sinon naturalWidth.
+    //  图像加载后设置基本宽度：borne à 1400px pour
+    //  休息摘要 à DPI=150 sur un écran standard, sinon naturalWidth。
     img.addEventListener("load", () => {
       const base = Math.min(1400, img.naturalWidth || 1400);
       img.style.setProperty("--sch-pdf-base", `${base}px`);
@@ -3760,15 +3760,15 @@ function renderPdfPages(data) {
     overlay.className = "sch-pdf-anchors";
     fig.appendChild(overlay);
 
-    // Anchor rects are positioned as % of the PDF page size (from pdfplumber
-    // points). Converting to % rather than pixels decouples the overlay from
-    // the PNG's intrinsic resolution — zoom works by scaling the img/figure
-    // together, and the anchor rectangles stay aligned.
+    //  锚点矩形定位为 PDF 页面大小的 %（来自 pdfplumber
+    //  点）。转换为 % 而不是像素可以将 overlay 与
+    //  PNG 的固有分辨率 - 缩放通过缩放图像/图形来实现
+    //  在一起，并且锚矩形保持对齐。
     //
-    // pdfplumber returns the *ink bbox* of the refdes glyphs — typically 1%
-    // of the page. That's invisible as a highlight. We expand it by 3pt on
-    // each side so the rectangle reads as a halo around the text rather
-    // than a tight outline on the glyph itself.
+    //  pdfplumber 返回 refdes 字形的 *ink bbox* — 通常为 1%
+    //  页面的。这是看不见的亮点。我们将其扩展 3pt
+    //  每条边，因此矩形读起来就像文本周围的光环，而不是
+    //  而不是字形本身的紧凑轮廓。
     const pw = page.width_pt || 1;
     const ph = page.height_pt || 1;
     const PAD_PT = 3;
@@ -3791,8 +3791,8 @@ function renderPdfPages(data) {
   }
   scroll.appendChild(frag);
 
-  // Observe which page is dominant in the viewport to keep the bottom pill
-  // and the .current chip styling in sync.
+  //  观察哪个页面在视口中占主导地位以保留底部药丸
+  //  和 .current chip 样式同步。
   observePdfPages();
 }
 
@@ -3803,7 +3803,7 @@ function observePdfPages() {
   const pages = scroll.querySelectorAll(".sch-pdf-page");
   if (!pages.length) return;
   const io = new IntersectionObserver((entries) => {
-    // Pick the intersecting entry with the largest visible ratio.
+    //  选择具有最大可见比率的相交条目。
     const best = entries
       .filter(e => e.isIntersecting)
       .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
@@ -3820,18 +3820,18 @@ function wirePdfZoom() {
   const applyZoom = () => {
     const label = document.getElementById("schPdfZoomLabel");
     if (label) label.textContent = `${Math.round(STATE.pdfZoom * 100)}%`;
-    // One CSS var on the scroll root — every img picks it up via calc().
-    // The figure wraps around the img's new size (width:fit-content), so
-    // the flex-gap stays honest and pages don't overlap.
+    //  滚动根上有一个 CSS var — 每个 img 都会通过 calc() 获取它。
+    //  该图环绕了 img 的新尺寸（宽度：适合内容），因此
+    //  弹性间隙保持诚实并且页面不重叠。
     const scroll = document.getElementById("schPdfScroll");
     if (scroll) scroll.style.setProperty("--sch-pdf-zoom", String(STATE.pdfZoom));
   };
-  // Zoom-around-anchor: before changing the zoom level, capture the
-  // viewport-relative position of a reference element (the .hit search
-  // result if there is one, else the page currently in view). After the
-  // reflow we shift the scroll so the same element lands back at the same
-  // spot in the viewport — without this, zooming loses whatever the tech
-  // was looking at and they have to re-hunt for their refdes.
+  //  Zoom-around-anchor：在更改缩放级别之前，捕获
+  //  参考元素的视口相对位置（.hit 搜索
+  //  如果有，则为结果，否则为当前查看的页面）。之后
+  //  回流我们移动滚动，使相同的元素回到相同的位置
+  //  视口中的点 - 没有这个，缩放就会失去任何技术
+  //  正在寻找，他们必须重新寻找他们的refdes。
   const bump = (delta) => {
     const newZoom = Math.max(0.4, Math.min(3.0, STATE.pdfZoom + delta));
     if (newZoom === STATE.pdfZoom) return;
@@ -3856,9 +3856,9 @@ function wirePdfZoom() {
     STATE.pdfZoom = newZoom;
     applyZoom();
 
-    // The img width changes synchronously via CSS vars, but the browser
-    // still needs a frame to reflow the figure + anchors. Restore scroll
-    // on the next rAF so getBoundingClientRect reports the new layout.
+    //  img宽度通过CSS变量同步改变，但是浏览器
+    //  仍然需要一个框架来回流图形+锚点。恢复滚动
+    //  在下一个 rAF 上， getBoundingClientRect 报告新布局。
     requestAnimationFrame(() => {
       const newScrollRect = scroll.getBoundingClientRect();
       const newRefRect = ref.getBoundingClientRect();
@@ -3903,18 +3903,18 @@ function runPdfSearch(query) {
   const status = document.getElementById("schPdfSearchStatus");
   const scroll = document.getElementById("schPdfScroll");
   if (!scroll) return;
-  // Strip all previous hits first so a fresh search doesn't accumulate.
+  //  首先删除所有以前的点击，这样就不会累积新的搜索。
   scroll.querySelectorAll(".sch-pdf-anchor.hit").forEach(el => el.classList.remove("hit"));
   if (!query) {
     if (status) { status.textContent = ""; status.className = "sch-pdf-search-status"; }
     return;
   }
-  // Match rule: exact refdes OR refdes starts with the query. Keeps "U13"
-  // from matching "U130", which would be noisy on dense boards.
+  //  匹配规则：精确refdes OR refdes 以查询开头。保留“U13”
+  //  避免匹配“U130”，这在密集的板上会产生噪音。
   const hits = [...scroll.querySelectorAll(".sch-pdf-anchor")]
     .filter(a => a.dataset.refdes === query);
   if (!hits.length) {
-    // Fall back to prefix match so the tech can probe "U1" to see every U1x.
+    //  回退到前缀匹配，以便技术人员可以探测“U1”以查看每个 U1x。
     const prefix = [...scroll.querySelectorAll(".sch-pdf-anchor")]
       .filter(a => a.dataset.refdes.startsWith(query));
     if (!prefix.length) {
@@ -3940,9 +3940,9 @@ function scrollToAnchor(anchor) {
   const scroll = document.getElementById("schPdfScroll");
   const page = anchor.closest(".sch-pdf-page");
   if (!scroll || !page) return;
-  // Prefer centering the page (match the closest anchor's page), not the
-  // anchor itself — on A3-landscape schematics the anchor scroll would
-  // land mid-air and lose context.
+  //  更喜欢将页面居中（匹配最接近的锚点页面），而不是
+  //  锚本身 — 在 A3 横向 schematics 上，锚滚动将
+  //  降落在半空中并失去背景。
   page.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 

@@ -1,27 +1,27 @@
-// Relations-schematic minimap.
+//  关系-schematicminimap。
 //
-// Glass overlay on the boardview that surfaces the 1-hop schematic
-// neighborhood of the clicked selection — the bridge between physical PCB
-// (boardview) and logical power tree (schematic).
+//  1 跳 schematic 表面的 boardview 上的玻璃 overlay
+//  单击的选择的邻域 — 物理 PCB 之间的桥梁
+//  (boardview) 和逻辑幂树 (schematic)。
 //
-// Two modes based on what the user clicked in brd_viewer:
-//   - COMPONENT mode  — center shows the IC, pins grouped by role, rails
-//     consumed/produced/decoupled on each side. The question answered:
-//     "what does this part do electrically?"
-//   - NET mode (pin click) — center shows the net, every other pin on the
-//     same net arranged around it: source IC (if a power rail), consumer
-//     ICs, decoupling caps. The question answered: "what else is on this
-//     signal?"
+//  基于用户在 brd_viewer 中单击的内容的两种模式：
+//      - 组件模式 — 中心显示 IC，按角色分组的引脚，rails
+//          每边都消耗/生产/解耦。问题的答案是：
+//          “这部分的电气作用是什么？”
+//      - NET 模式（针点击）— 中心显示网络，每隔一个针显示网络
+//          围绕其排列的同一网络：源 IC（如果电源rail）、消费者
+//          IC、去耦电容。问题回答：“这上面还有什么？
+//          信号？”
 //
-// Data source: `/pipeline/packs/{slug}/schematic` — the compiled
-// ElectricalGraph, cached in-module after the first fetch.
+//  数据源：`/pipeline/packs/{slug}/schematic` — 编译后的
+//  ElectricalGraph，第一次获取后在模块内缓存。
 
 import { ICON_WARNING } from './icons.js';
 import { getDeviceSlug, getRepairId } from './shared/context.js';
 import { repairHash } from './router.js';
 
-let schematicCache = null;       // { slug, data }
-let fetchInFlight = null;        // { slug, promise }
+let schematicCache = null;       //  { slug，数据 }
+let fetchInFlight = null;        //  {slug，承诺}
 let wiredUI = false;
 let enabled = (() => {
   try { return localStorage.getItem("bvMinimapEnabled") !== "false"; }
@@ -31,10 +31,10 @@ let lastSelection = null;
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
-// Per-role display metadata — short uppercase abbreviations (kept stable
-// across locales since they map to standard schematic conventions: VIN,
-// VOUT, EN, RST, FB, CLK, SIG, GND), icons are simple ASCII glyphs so the
-// text stays aligned in the mono column.
+//  每个角色显示元数据 - 短大写缩写（保持稳定
+//  跨语言环境，因为它们映射到标准 schematic 约定：VIN、
+//  VOUT、EN、RST、FB、CLK、SIG、GND），图标是简单的 ASCII 字形，因此
+//  文本在单列中保持对齐。
 const ROLE_META = {
   power_in:        { label: "VIN",  glyph: "◄" },
   power_out:       { label: "VOUT", glyph: "►" },
@@ -59,7 +59,7 @@ const POWER_ROLES = new Set([
   "clock_in", "clock_out",
 ]);
 
-// A few DOM shortcuts.
+//  一些 DOM 快捷方式。
 function el(id) { return document.getElementById(id); }
 function mkSvg(tag, attrs, text) {
   const node = document.createElementNS(SVG_NS, tag);
@@ -99,14 +99,14 @@ async function loadSchematic(slug) {
   return promise;
 }
 
-/* ---------------------------------------------------------------------- *
- * RELATION EXTRACTION                                                    *
- * ---------------------------------------------------------------------- */
+/*  ---------------------------------------------------------------------------------- *
+ * 关系提取 *
+ * ----------------------------------------------------------------------  */
 
-// Classify a net by its relationship to the power domain. `rail` when it's
-// listed in power_rails, `gnd` when label matches ground pattern, else
-// `signal`. Also resolves voltage_nominal when available so the UI can
-// badge chips with "3.3V" etc.
+//  根据网络与电源域的关系对网络进行分类。 `rail` 当它
+//  当标签与接地图案匹配时，列在 power_rails 中，`gnd`，否则
+//  `信号`。还可以解析电压标称值（如果可用），以便 UI 可以
+//  徽章chips 带有“3.3V”等。
 function classifyNet(data, netLabel) {
   if (!netLabel) return { kind: "signal" };
   if (netLabel === "GND" || /^(AGND|DGND|PGND|GROUND)$/i.test(netLabel)) {
@@ -133,9 +133,9 @@ function relationsForComponent(data, refdes) {
   const nets = data.nets || {};
   const pins = Array.isArray(comp.pins) ? comp.pins : [];
 
-  // Group pins by role (collapsed) — we want to display rows like
-  // "VIN (3) → +5V · 12 other pins" rather than listing every individual
-  // ground pin.
+  //  按角色对图钉进行分组（折叠）——我们想要显示像这样的行
+  //  “VIN (3) → +5V · 12 个其他引脚”而不是列出每个引脚
+  //  接地引脚。
   const byRole = new Map();
   for (const pin of pins) {
     const r = pin.role || "signal_in";
@@ -143,9 +143,9 @@ function relationsForComponent(data, refdes) {
     byRole.get(r).push(pin);
   }
 
-  // Rails this component participates in — driven by the rails index, more
-  // reliable than scanning typed_edges since Opus sometimes fails to
-  // edge-classify but still populates source_refdes / consumers correctly.
+  //  该组件参与的 Rails — 由 rails 索引驱动，更多
+  //  比扫描 typed_edges 更可靠，因为 Opus 有时无法
+  //  边缘分类但仍然正确填充 source_refdes / 消费者。
   const consumed = [];
   const produced = [];
   const decoupled = [];
@@ -170,7 +170,7 @@ function relationsForComponent(data, refdes) {
     populated: comp.populated !== false,
     pinsByRole: byRole,
     netIndex: nets,
-    data, // handy for downstream lookups
+    data, //  方便下游查找
     consumed, produced, decoupled,
   };
 }
@@ -179,9 +179,9 @@ function relationsForNet(data, netLabel, clickedPinRef) {
   if (!netLabel) return null;
   const net = (data.nets || {})[netLabel];
   const classification = classifyNet(data, netLabel);
-  // nets[].connects is a flat list of "refdes.pin" strings. We expand it
-  // into structured objects with role so the render can group consumers
-  // versus decoupling versus the producer.
+  //  nets[].connects 是“refdes.pin”字符串的平面列表。我们扩展它
+  //  分成具有角色的结构化对象，以便渲染可以对消费者进行分组
+  //  与生产者的解耦。
   const members = [];
   const raw = net?.connects || [];
   for (const token of raw) {
@@ -212,9 +212,9 @@ function relationsForNet(data, netLabel, clickedPinRef) {
   };
 }
 
-/* ---------------------------------------------------------------------- *
- * UI WIRING                                                              *
- * ---------------------------------------------------------------------- */
+/*  ---------------------------------------------------------------------------------- *
+ * 用户界面接线 *
+ * ----------------------------------------------------------------------  */
 
 function ensureUI() {
   if (wiredUI) return;
@@ -243,7 +243,7 @@ function clearBody() {
 }
 
 function setHeader(kind, ref, sub) {
-  // kind is one of "COMP" / "NET" — translate to the display label.
+  //  kind 是“COMP”/“NET”之一——翻译为显示标签。
   const kindLabel = kind === "NET" ? t('brd.minimap.kind.net') : t('brd.minimap.kind.comp');
   el("bvMinimapKind").textContent = kindLabel;
   el("bvMinimapRef").textContent = ref || "…";
@@ -268,11 +268,11 @@ function prepareRender() {
   const empty = el("bvMinimapEmpty"); if (empty) empty.style.display = "none";
 }
 
-/* ---------------------------------------------------------------------- *
- * RENDER — COMPONENT MODE                                                *
- * ---------------------------------------------------------------------- */
+/*  ---------------------------------------------------------------------------------- *
+ * 渲染 — 组件模式 *
+ * ----------------------------------------------------------------------  */
 
-// Small hexagon for rails inside the svg graph. Returns a <g>.
+//  svg 图中 rails 的小六边形。返回一个<g>。
 function hexRail(cx, cy, entry, opts = {}) {
   const { scale = 1, isDecouple = false, onClick = null, tooltip = null } = opts;
   const w = 62 * scale, h = 22 * scale;
@@ -302,7 +302,7 @@ function bezier(x1, y1, x2, y2) {
   return `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`;
 }
 
-// Shared function to navigate to schematic rail-focus on a given rail.
+//  用于导航到 schematic rail 的共享函数 - 聚焦于给定的 rail。
 function openRailInSchematic(railLabel) {
   const railId = `rail:${railLabel}`;
   try {
@@ -312,7 +312,7 @@ function openRailInSchematic(railLabel) {
   window.dispatchEvent(new CustomEvent("schematic:focus-rail", {
     detail: { railId, railLabel },
   }));
-  // Jump to the active repair's schematic vue (canonical hash route).
+  //  跳转到主动修复的schematicvue（规范哈希路由）。
   const id = getRepairId();
   if (id) {
     const target = repairHash(id, "schematic");
@@ -325,12 +325,12 @@ function renderComponent(relations) {
   setHeader("COMP", refdes, [mpn, type].filter(Boolean).join(" · ") + (populated ? "" : " · NOSTUFF"));
   prepareRender();
 
-  // --- SVG graph: compact IC + rail flanking ---
+  //  --- SVG 图：紧凑 IC + rail 侧翼 ---
   const nodesG = el("bvMinimapNodes");
   const linksG = el("bvMinimapLinks");
   const cx = 180, cy = 90;
 
-  // Center IC
+  //  中心集成电路
   const center = mkSvg("g", { class: "bv-mm-node kind-center" });
   center.appendChild(mkSvg("rect", {
     class: "bv-mm-center-shape",
@@ -340,7 +340,7 @@ function renderComponent(relations) {
   center.appendChild(mkSvg("text", { class: "bv-mm-center-sub", x: cx, y: cy + 10 }, type || "comp"));
   nodesG.appendChild(center);
 
-  // Rails consumed — LEFT
+  //  消耗的铁轨 — 左
   const placeCol = (entries, colX, kind) => {
     const N = entries.length;
     const step = N <= 1 ? 0 : Math.min(36, 130 / (N - 1));
@@ -372,7 +372,7 @@ function renderComponent(relations) {
   placeCol(consumed, 55, "powers");
   placeCol(produced, 305, "produces");
 
-  // Decoupling — row below
+  //  解耦——下面的行
   if (decoupled.length) {
     const yDec = cy + 62;
     const spanW = Math.min(240, decoupled.length * 44);
@@ -392,20 +392,20 @@ function renderComponent(relations) {
     });
   }
 
-  // Center-fallback text when the part has no power relations at all —
-  // avoids a dangling IC box with nothing around it.
+  //  当该部分根本没有权力关系时，居中后备文本 —
+  //  避免周围没有任何东西的悬挂 IC 盒。
   if (consumed.length + produced.length + decoupled.length === 0) {
     nodesG.appendChild(mkSvg("text", {
       class: "bv-mm-nodata", x: 180, y: cy + 52,
     }, t('brd.minimap.rail.no_power_role')));
   }
 
-  // --- Body text: pins by role + rail consumer counts ---
+  //  --- 正文：按角色分类 + rail 消费者数量 ---
   const body = el("bvMinimapBody");
 
-  // SPOF badge if this component or any of its produced rails is a SPOF.
-  // Pull from power_rails — no blast-radius on the raw graph, but the
-  // presence of produced rails with many consumers is a proxy.
+  //  如果此组件或其生成的任何 rail 是 SPOF，则SPOF 徽章。
+  //  从 power_rails 拉取 — 原始图表上没有爆炸半径，但
+  //  生产的 rail 与许多消费者的存在是一个代理。
   const producedRailWithMost = produced
     .map(e => (e.rail.consumers || []).length)
     .reduce((a, b) => Math.max(a, b), 0);
@@ -422,11 +422,11 @@ function renderComponent(relations) {
     body.appendChild(spofRow);
   }
 
-  // Pins section — one row per role, listing pin#s and their nets.
+  //  引脚部分 — 每个角色一行，列出引脚编号及其网络。
   const pinSection = mkEl("div", { class: "bv-mm-section" });
   pinSection.appendChild(mkEl("div", { class: "bv-mm-section-head" }, t('brd.minimap.section.pins', { n: pinCount(pinsByRole) })));
   const renderedRoles = [];
-  // Order roles by importance for power-focused diagnosis.
+  //  按重要性对角色进行排序，以实现以权力为中心的诊断。
   const roleOrder = [
     "power_in", "power_out", "switch_node", "enable_in", "enable_out",
     "power_good_out", "reset_in", "reset_out", "feedback_in",
@@ -438,17 +438,17 @@ function renderComponent(relations) {
     renderedRoles.push(role);
     pinSection.appendChild(renderPinRoleRow(role, pins, data, refdes));
   }
-  // Any role not in the canonical order (future extensions) — render at end.
+  //  任何不符合规范顺序的角色（未来的扩展）——在最后渲染。
   for (const [role, pins] of pinsByRole) {
     if (renderedRoles.includes(role)) continue;
     pinSection.appendChild(renderPinRoleRow(role, pins, data, refdes));
   }
   body.appendChild(pinSection);
 
-  // Rail details — for each consumed/produced rail, list the IC peers
-  // ("other big consumers on this rail") so the tech knows what else
-  // shares the signal. Excludes caps from the peer list (they live in
-  // the dedicated decouples section above).
+  //  铁路详细信息 - 对于每个消耗/生产的 rail，列出 IC 对等方
+  //  （“其他大消费者对此rail”）所以技术知道还有什么
+  //  共享信号。从同行列表中排除上限（他们住在
+  //  上面的专用解耦部分）。
   if (consumed.length) body.appendChild(renderRailContextSection(t('brd.minimap.section.powered_by'), consumed, refdes, data));
   if (produced.length) body.appendChild(renderRailContextSection(t('brd.minimap.section.powers'), produced, refdes, data));
   if (decoupled.length) {
@@ -470,12 +470,12 @@ function pinCount(byRole) {
   let n = 0; for (const v of byRole.values()) n += v.length; return n;
 }
 
-// Render a single pin-role row like:  ◄ VIN  3 → +5V  (16 autres sur ce net)
+//  渲染单个引脚角色行，例如：◄ VIN 3 → +5V（网络上的 16 个 autres）
 function renderPinRoleRow(role, pins, data, selfRefdes) {
   const meta = ROLE_META[role] || { label: role.toUpperCase(), glyph: "·" };
   const row = mkEl("div", { class: "bv-mm-row" });
   row.appendChild(mkEl("span", { class: "bv-mm-pinlabel" }, `${meta.glyph} ${meta.label}`));
-  // For ground, collapse into "GND · 4 pins" to avoid bloat.
+  //  对于地面，折叠成“GND·4 针”以避免膨胀。
   if (role === "ground") {
     const pinNums = pins.map(p => p.number).join(", ");
     const countLbl = pins.length > 1
@@ -485,7 +485,7 @@ function renderPinRoleRow(role, pins, data, selfRefdes) {
     row.appendChild(mkEl("span", { class: "bv-mm-muted" }, t('brd.minimap.pin.ground_list', { pins: pinNums })));
     return row;
   }
-  // Group pins by net_label so identical nets appear once: "2, 4 → +1V8"
+  //  按网络标签对引脚进行分组，以便相同的网络出现一次：“2, 4 → +1V8”
   const byNet = new Map();
   for (const p of pins) {
     const nl = p.net_label || t('brd.minimap.pin.no_net');
@@ -507,8 +507,8 @@ function renderPinRoleRow(role, pins, data, selfRefdes) {
       chip.addEventListener("click", () => showNetFromLabel(netLabel));
     }
     row.appendChild(chip);
-    // Peer count on this net — total pins minus pins belonging to the
-    // component we're currently viewing.
+    //  该网络上的对等计数 - 总引脚数减去属于该网络的引脚数
+    //  我们当前正在查看的组件。
     const netConnects = data.nets?.[netLabel]?.connects || [];
     const selfCount = netConnects.filter(tok => tok.startsWith(selfRefdes + ".")).length;
     const peerCount = Math.max(0, netConnects.length - selfCount);
@@ -521,15 +521,15 @@ function renderPinRoleRow(role, pins, data, selfRefdes) {
 
 function renderRailContextSection(title, railEntries, selfRef, data) {
   const section = mkEl("div", { class: "bv-mm-section" });
-  // Suffix " (N)" stays language-agnostic — composes with the localized title.
+  //  后缀“(N)”与语言无关——与本地化标题组成。
   section.appendChild(mkEl("div", { class: "bv-mm-section-head" }, `${title} (${railEntries.length})`));
   railEntries.forEach(entry => {
     const row = mkEl("div", { class: "bv-mm-row" });
     const chip = mkEl("span", { class: "bv-mm-chip rail" }, entry.label);
     chip.addEventListener("click", () => openRailInSchematic(entry.label));
     row.appendChild(chip);
-    // Count of IC peers on the rail (excludes caps) — what else runs off
-    // this rail?
+    //  rail 上的 IC 对等点数量（不包括上限）——还有什么会流失
+    //  这个rail？
     const peers = (entry.rail.consumers || []).filter(r => r !== selfRef);
     const source = entry.rail.source_refdes;
     if (source && source !== selfRef) {
@@ -556,9 +556,9 @@ function renderRailContextSection(title, railEntries, selfRef, data) {
   return section;
 }
 
-/* ---------------------------------------------------------------------- *
- * RENDER — NET MODE (pin click)                                          *
- * ---------------------------------------------------------------------- */
+/*  ---------------------------------------------------------------------------------- *
+ * 渲染 — 网络模式（针点击）*
+ * ----------------------------------------------------------------------  */
 
 function renderNet(relations) {
   const { netLabel, classification, members, clickedPinRef, data } = relations;
@@ -573,7 +573,7 @@ function renderNet(relations) {
   setHeader("NET", netLabel, subBits.join(" · "));
   prepareRender();
 
-  // --- SVG: net hexagon centered, member chips arranged radially ---
+  //  --- SVG：净六边形居中，成员 chips 径向排列 ---
   const nodesG = el("bvMinimapNodes");
   const linksG = el("bvMinimapLinks");
   const cx = 180, cy = 95;
@@ -587,9 +587,9 @@ function renderNet(relations) {
   });
   nodesG.appendChild(netNode);
 
-  // Members around the hex — sort by role importance.
+  //  六角形周围的成员——按角色重要性排序。
   const rolePriority = {
-    power_out: 0, switch_node: 0,        // producers first
+    power_out: 0, switch_node: 0,        //  生产者第一
     power_in: 1,
     enable_in: 2, enable_out: 2, power_good_out: 2, reset_in: 2, reset_out: 2,
     feedback_in: 3,
@@ -603,7 +603,7 @@ function renderNet(relations) {
     return a.refdes.localeCompare(b.refdes, undefined, { numeric: true });
   });
 
-  // Place up to 8 chips in a semicircle below the hex.
+  //  在六角形下方的半圆中最多放置 8 个chip。
   const visible = sorted.slice(0, 8);
   const R = 62;
   const arcStart = Math.PI * 0.15, arcEnd = Math.PI * 0.85;
@@ -613,10 +613,10 @@ function renderNet(relations) {
     const mx = cx - Math.cos(theta) * R * 1.8;
     const my = cy + Math.sin(theta) * R;
     const clamped = Math.max(28, Math.min(332, mx));
-    // A small rect chip
+    //  一个小矩形chip
     const isProd = (m.role === "power_out" || m.role === "switch_node");
     const chipClass = m.self
-      ? "bv-mm-rail-shape"  // re-use rail-shape for colored-ring look
+      ? "bv-mm-rail-shape"  //  重复使用 rail 形状打造彩环外观
       : "bv-mm-rail-shape";
     const g = mkSvg("g", {
       class: `bv-mm-node ${m.self ? "kind-self" : isProd ? "kind-producer" : "kind-comp"} clickable`,
@@ -643,7 +643,7 @@ function renderNet(relations) {
       class: "bv-mm-rail-sub", x: clamped, y: my + 8,
       fill: "var(--text-3)",
     }, m.pinName || (ROLE_META[m.role]?.label ?? "")));
-    // Flyline from net hex to this chip
+    //  从净六角到此chip的飞线
     linksG.appendChild(mkSvg("path", {
       class: `bv-mm-link bv-mm-link-${isProd ? "produces" : "powers"}`,
       d: `M${cx},${cy} L${clamped},${my}`,
@@ -656,10 +656,10 @@ function renderNet(relations) {
     }, t('brd.minimap.rail.more_pins_on_net', { n: members.length - visible.length, net: netLabel })));
   }
 
-  // --- Body: grouped list by role ---
+  //  --- 正文：按角色分组列表 ---
   const body = el("bvMinimapBody");
 
-  // SPOF / rail context banner
+  //  SPOF / rail 上下文横幅
   if (classification.kind === "rail") {
     const ctx = mkEl("div", { class: "bv-mm-row" });
     ctx.appendChild(mkEl("span", { class: "bv-mm-pinlabel" }, t('brd.minimap.rail.label')));
@@ -673,7 +673,7 @@ function renderNet(relations) {
     body.appendChild(ctx);
   }
 
-  // Pins grouped by role
+  //  按角色分组的引脚
   const byRole = new Map();
   for (const m of members) {
     if (!byRole.has(m.role)) byRole.set(m.role, []);
@@ -701,8 +701,8 @@ function renderNetRoleRow(role, members, data) {
   section.appendChild(mkEl("div", { class: "bv-mm-section-head" },
     `${meta.glyph} ${meta.label} (${members.length})`));
   const row = mkEl("div", { class: "bv-mm-row" });
-  // Consolidate by refdes so an IC with multiple pins on the same net shows
-  // once: "U14 · pins 3,5"
+  //  按 refdes 合并，以便显示同一网络上具有多个引脚的 IC
+  //  一次：“U14·引脚3,5”
   const byRef = new Map();
   for (const m of members) {
     if (!byRef.has(m.refdes)) byRef.set(m.refdes, { refdes: m.refdes, type: m.type, pins: [], self: false });
@@ -738,8 +738,8 @@ function renderNetRoleRow(role, members, data) {
   return section;
 }
 
-// Switch minimap to a net-centric view given only a net label (no clicked
-// pin context). Used when clicking a chip inside the component-mode body.
+//  将 minimap 切换到仅给出网络标签的以网络为中心的视图（未单击
+//  引脚上下文）。单击组件模式主体内的 chip 时使用。
 function showNetFromLabel(netLabel) {
   const data = schematicCache?.data;
   if (!data) return;
@@ -748,9 +748,9 @@ function showNetFromLabel(netLabel) {
   renderNet(relations);
 }
 
-/* ---------------------------------------------------------------------- *
- * DISPATCH                                                               *
- * ---------------------------------------------------------------------- */
+/*  ---------------------------------------------------------------------------------- *
+ * 派遣 *
+ * ----------------------------------------------------------------------  */
 
 async function handleSelection(detail) {
   ensureUI();
@@ -762,7 +762,7 @@ async function handleSelection(detail) {
 
   const slug = getSlug();
   if (!slug) { renderEmpty("COMP", refdes, t('brd.minimap.no_device')); return; }
-  // Skeleton while loading.
+  //  加载时的骨架。
   setHeader("COMP", refdes, t('brd.minimap.loading_short'));
   clearSvg(); clearBody();
   const svg = el("bvMinimapSvg"); if (svg) svg.style.display = "none";
@@ -771,8 +771,8 @@ async function handleSelection(detail) {
   const data = await loadSchematic(slug);
   if (!data) { renderEmpty("COMP", refdes, t('brd.minimap.no_schematic')); return; }
 
-  // Pin-click path — the user clicked on a specific pin of the component.
-  // Show the NET of that pin with all its other members.
+  //  引脚单击路径 — 用户单击组件的特定引脚。
+  //  显示该引脚及其所有其他成员的 NET。
   if (detail.pinNet) {
     const relations = relationsForNet(data, detail.pinNet, {
       refdes, pinNumber: detail.pinNumber,
@@ -781,7 +781,7 @@ async function handleSelection(detail) {
       renderNet(relations);
       return;
     }
-    // Fall through to component mode if the net isn't known.
+    //  如果网络未知，则进入组件模式。
   }
 
   const relations = relationsForComponent(data, refdes);
@@ -799,8 +799,8 @@ window.addEventListener("bv:minimap-toggle", (ev) => {
   if (lastSelection?.refdes) handleSelection(lastSelection);
 });
 
-// Re-render the minimap content on locale switch so the dynamic labels
-// (section heads, tooltips, role rows) pick up the new dictionary.
+//  重新渲染语言环境切换上的 minimap 内容，以便动态标签
+//  （章节标题、工具提示、角色行）选择新词典。
 if (window.i18n && typeof window.i18n.onChange === "function") {
   window.i18n.onChange(() => {
     if (enabled && lastSelection?.refdes) handleSelection(lastSelection);

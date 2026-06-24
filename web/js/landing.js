@@ -1,14 +1,14 @@
-// Landing hero — captures {device_label, symptom}, kicks the existing
-// /pipeline/repairs endpoint, and renders a live narrated timeline of the
-// pipeline phases as the agent learns the device. When the pipeline finishes
-// (or the pack was already on disk) the page redirects into the workspace
-// at ?repair={id}&device={slug}.
+//  着陆hero — 捕获{设备标签，症状}，踢掉现有的
+//  /pipeline/repairs 端点，并渲染实时叙述的 timeline
+//  代理学习设备时的管道阶段。当管道完成时
+//  （或者包已经在磁盘上）页面重新directs到workspace
+//  在？repair={id}&device={slug}。
 //
-// No classifier here — the existing pipeline (Scout → Registry → Mapper? →
-// Writers ×3 → Auditor) does device identification + knowledge construction
-// in one shot. The narrator agent (api/pipeline/phase_narrator.py) emits a
-// `phase_narration` event after each phase_finished; we render those into
-// the timeline rows so the technician watches the agent learn.
+//  这里没有分类器 - 现有管道（Scout → Registry → Mapper？→
+//  Writers ×3 → Auditor) 进行设备识别+知识构建
+//  一击。讲述人代理 (api/pipeline/phase_narrator.py) 发出一个
+//  每个phase_finished之后发生`phase_narration`事件；我们将它们渲染成
+//  timeline 行，以便技术人员观察代理学习。
 
 import { mountMascot, setMascotState } from './mascot.js';
 import { prettifySlug } from './router.js';
@@ -30,12 +30,12 @@ function setLandingMascot(state) {
   setMascotState(_landingMascot, state);
 }
 
-// Date formatter follows the active i18n locale (driven by profile.reply_language
-// since commit 548ed20 dropped the topbar switch). Re-derived lazily so we
-// pick up locale changes mid-session without a page reload.
+//  日期格式化程序遵循活动的 i18n 语言环境（由 profile.reply_language 驱动）
+//  因为提交 548ed20 删除了 topbar 开关）。懒惰地重新导出，所以我们
+//  在会话中获取区域设置更改，无需重新加载页面。
 function _landingDateFmt() {
   const locale = (i18n && i18n.locale) || 'en';
-  // Map our short locale codes to BCP-47 region tags Intl expects.
+  //  将我们的短区域设置代码映射到 BCP-47 区域标签 Intl 期望的。
   const bcp47 = (i18n && i18n.toBcp47) ? i18n.toBcp47(locale) : 'en-US';
   return new Intl.DateTimeFormat(bcp47, {
     day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
@@ -60,7 +60,7 @@ async function loadAndRenderSidebar() {
     return;
   }
 
-  // Most recent first.
+  //  最近的第一个。
   repairs.sort((a, b) => {
     const ta = new Date(a.created_at).getTime() || 0;
     const tb = new Date(b.created_at).getTime() || 0;
@@ -164,8 +164,8 @@ export function showLanding() {
   document.body.classList.add("show-landing");
   const ov = document.getElementById("landing-overlay");
   if (ov) ov.hidden = false;
-  // Mount the hero mascot once; reopens reset to idle. Sidebar refetches
-  // every reopen so a fresh leaveSession() shows the latest repair list.
+  //  安装heromascot一次；重新打开重置为空闲状态。侧边栏重新获取
+  //  每次重新打开时，新的leaveSession()都会显示最新的修复列表。
   if (!_landingMascot) {
     _landingMascot = mountMascot(document.getElementById("landingMascot"), {
       size: "md", state: "idle",
@@ -234,10 +234,10 @@ function stopEtaTicker() {
 }
 
 function setPhaseState(phase, state) {
-  // state ∈ "running" | "done" | "failed"
+  //  状态 ∈ “运行” | “完成”| “失败”
   const li = document.querySelector(`.landing-phase[data-phase="${phase}"]`);
   if (!li) return;
-  li.hidden = false;  // mapper starts hidden until a phase_started arrives
+  li.hidden = false;  //  映射器开始隐藏，直到 phase_started 到达
   li.classList.remove("is-running", "is-done", "is-failed");
   if (state === "running") li.classList.add("is-running");
   if (state === "done") li.classList.add("is-done");
@@ -295,9 +295,9 @@ async function onSubmit(ev) {
   resetTimeline();
 
   try {
-    // If the tech picked a known device from the autocomplete, send the
-    // canonical slug so the backend skips re-slugification and lands on
-    // the right pack — sidesteps near-but-not-identical spellings.
+    //  如果技术人员从自动完成中选择了已知设备，请发送
+    //  规范 slug 因此后端会跳过重新slug化并登陆
+    //  正确的包——避开接近但不相同的拼写。
     const payload = { device_label: device, symptom };
     if (_selectedDeviceSlug) payload.device_slug = _selectedDeviceSlug;
     const res = await fetch("/pipeline/repairs", {
@@ -314,9 +314,9 @@ async function onSubmit(ev) {
     const slug = repair.device_slug;
     if (!rid || !slug) throw new Error(t("landing.status.error_invalid_response"));
 
-    // Three response shapes, three UX flows.
-    // Branch 2 — symptom already covered by a known rule: no LLM work,
-    // fast redirect to workspace.
+    //  三种响应形状，三种用户体验流程。
+    //  分支 2 — 已知规则已涵盖症状：没有 LLM 工作，
+    //  fast重新direct到workspace。
     if (!repair.pipeline_started) {
       if (repair.matched_rule_id) {
         setStatus(
@@ -329,10 +329,10 @@ async function onSubmit(ev) {
           STATUS_NEUTRAL,
         );
       }
-      // Pack on disk → play an accelerated fake-timeline (~15–17s) so the
-      // tech sees the cache hit as a fast pipeline run, then navigate.
-      // setStatus message above stays as the lead-in; setTimelineTitle
-      // takes over once showTimeline() inside the helper fires.
+      //  打包到磁盘 → 播放加速的 fake-timeline（~15–17 秒），因此
+      //  tech 将 cache hit 视为 fast 管道运行，然后进行导航。
+      //  上面的 setStatus 消息保留为导入；设置时间线标题
+      //  一旦辅助程序内的 showTimeline() 触发，就会接管。
       playCachedPipelineTimeline(slug, rid, repair.device_label || slug)
         .catch((err) => {
           console.warn("[landing] cached timeline failed, falling back to direct nav", err);
@@ -341,10 +341,10 @@ async function onSubmit(ev) {
       return;
     }
 
-    // Branch 3 — pack exists but the symptom is new: the backend kicked
-    // a real targeted expand in background. We play the same fake-timeline
-    // as branch 2 (pack is on disk, agent works from existing rules even
-    // if the expand hasn't finished). The expand runs silently — harmless.
+    //  分支 3 — 包存在，但症状是新的：后端被踢
+    //  真正有针对性的后台扩展。我们玩同样的假-timeline
+    //  作为分支 2（包位于磁盘上，代理甚至可以根据现有规则工作
+    //  如果扩展尚未完成）。扩展运行无声无息——无害。
     if (repair.pipeline_kind === "expand") {
       setStatus(
         t("landing.status.device_known", { device: repair.device_label }),
@@ -358,7 +358,7 @@ async function onSubmit(ev) {
       return;
     }
 
-    // Branch 1 — full pipeline on a fresh device (~5-10 min).
+    //  分支 1 — 新设备上的完整管道（约 5-10 分钟）。
     setStatus(t("landing.status.build_new"), STATUS_NEUTRAL);
     showTimeline();
     setTimelineTitle(t("landing.timeline.title_build", { device: repair.device_label }));
@@ -431,8 +431,8 @@ function handleProgressEvent(ev, slug, repairId) {
       setStatus(t("landing.status.ready"), STATUS_NEUTRAL);
       stopEtaTicker();
       setLandingMascot("success");
-      // 2500 ms grace gives the audit phase narration (Haiku ~800-1600 ms)
-      // time to land on the WS bus and render before we navigate away.
+      //  2500 毫秒 Grace 给出审核阶段旁白（Haiku ~800-1600 毫秒）
+      //  在我们离开之前，是时候降落在 WS 总线上并进行渲染了。
       setTimeout(() => goToWorkspace(repairId, slug), 2500);
       break;
     }
@@ -455,11 +455,11 @@ function handleProgressEvent(ev, slug, repairId) {
 }
 
 function setExpandMode() {
-  // Collapse the 5-phase pipeline timeline into a single "enrichment"
-  // row — the expand path runs a targeted Scout + Registry rebuild +
-  // Clinicien and doesn't traverse Mapper / Writers / Auditor. Showing
-  // 5 pending dots that never advance (because phase events carry
-  // phase: "expand" which isn't in PHASE_ORDER) looks broken.
+  //  将 5 阶段管道 timeline 折叠为单个“浓缩”
+  //  row — 扩展路径运行目标 Scout + Registry 重建 +
+  //  Clinicien 并且不遍历Mapper / Writers / Auditor。显示中
+  //  5 个永远不会前进的待定点（因为相位事件携带
+  //  阶段：“展开”不在 PHASE_ORDER 中）看起来已损坏。
   const t = window.t || ((k) => k);
   const tl = document.getElementById("landingTimeline");
   if (!tl) return;
@@ -467,8 +467,8 @@ function setExpandMode() {
   const phases = tl.querySelectorAll(".landing-phase");
   phases.forEach((el, i) => {
     if (i === 0) {
-      // Repurpose the first row as the single "expand" marker. Drop the
-      // [data-i18n] hook so applyDom() doesn't restore the old "scout" label.
+      //  将第一行重新用作单个“扩展”标记。放下
+      //  [data-i18n] 挂钩，因此 applyDom() 不会恢复旧的“scout”标签。
       el.dataset.phase = "expand";
       el.classList.remove("is-done", "is-failed");
       el.classList.add("is-running");
@@ -480,7 +480,7 @@ function setExpandMode() {
       const narr = el.querySelector(".landing-phase-narration");
       if (narr) narr.textContent = "";
     } else {
-      // Hide the other phase rows in expand mode.
+      //  在展开模式下隐藏其他相行。
       el.hidden = true;
     }
   });
@@ -491,20 +491,20 @@ function _sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-// Plays a fake 5-phase pipeline timeline at ~3s per phase, then the
-// mascot success state, then navigates to the workspace. Used when the
-// backend signals `pipeline_started: false` (pack already on disk) so
-// the technician sees the cache hit as a fast pipeline run instead of
-// an instant flash. ~15s total + 1.5s success grace = ~16–17s.
+//  以每相约 3 秒的速度播放假 5 相管道 timeline，然后
+//  mascot成功状态，然后导航到workspace。使用时
+//  后端信号 `pipeline_started: false` （包已经在磁盘上）所以
+//  技术人员将 cache hit 视为 fast 管道运行，而不是
+//  瞬间闪现。总计约 15 秒 + 1.5 秒成功宽限期 = 约 16–17 秒。
 async function playCachedPipelineTimeline(slug, repairId, deviceLabel) {
   const t = window.t || ((k) => k);
   showTimeline();
   setTimelineTitle(t("landing.timeline.title_loading", { device: deviceLabel }));
   setLandingMascot("working");
 
-  // PHASE_ORDER includes "mapper" which the live pipeline marks hidden
-  // until a phase event arrives. For a cache hit we want to show all
-  // phases marching past, so unhide it first.
+  //  PHASE_ORDER 包括实时管道将其标记为隐藏的“映射器”
+  //  直到阶段事件到来。对于 cache hit 我们想要显示所有
+  //  阶段已经过去，所以先取消隐藏它。
   const mapperRow = document.querySelector('.landing-phase[data-phase="mapper"]');
   if (mapperRow) mapperRow.hidden = false;
 
@@ -519,25 +519,25 @@ async function playCachedPipelineTimeline(slug, repairId, deviceLabel) {
   setLandingMascot("success");
   setTimelineTitle(t("landing.timeline.title_ready", { status: deviceLabel }));
   await _sleep(1500);
-  // Cache hit: land on the repair dashboard (#home) so the tech sees the
-  // findings + timeline straight away, not the graph view that the live
-  // pipeline path defaults to.
+  //  缓存命中：登陆修复仪表板（#home），以便技术人员看到
+  //  直接发现+timeline，而不是实时的图表视图
+  //  管道路径默认为。
   goToWorkspace(repairId, slug, "#home");
 }
 
 function goToWorkspace(repairId, slug, hash = "#graphe") {
-  // Land the tech on the graph view (loads graph + memory bank + opens
-  // the LLM chat panel via openLLMPanelIfRepairParam) rather than the
-  // home / repair_dashboard which only surfaces findings + timeline.
-  // The dashboard remains reachable via the left rail #home button.
+  //  将技术放在图形视图上（加载图形+内存库+打开
+  //  LLM 聊天面板（通过 openLLMPanelIfRepairParam）而不是
+  //  home / Repair_dashboard 仅显示结果 + timeline。
+  //  仪表板仍然可以通过左侧 rail #home 按钮访问。
   //
-  // Strip the landing overlay first so a hash-only navigation (when
-  // the query params are already on the URL from a prior session)
-  // doesn't leave the overlay sitting on top of the freshly-loaded
-  // graph view.
+  //  首先剥离 landing overlay，以便仅使用哈希导航（当
+  //  查询参数已经位于先前会话的 URL 上）
+  //  不会让 overlay 坐在新装载的顶部
+  //  图表视图。
   hideLanding();
-  // Close any active progress WS so it can't fire late events (e.g. a
-  // duplicate pipeline_finished) onto the page after navigation.
+  //  关闭任何活动的进度 WS，以便它无法触发延迟事件（例如
+  //  导航后将 pipeline_finished) 复制到页面上。
   if (progressWs && progressWs.readyState <= 1) {
     try { progressWs.close(); } catch (_) {}
   }
@@ -548,11 +548,11 @@ function goToWorkspace(repairId, slug, hash = "#graphe") {
   target.searchParams.set("device", slug);
   target.hash = hash;
 
-  // Force a real navigation. location.href to the same URL is a no-op
-  // and location.href to a hash-only delta does not reload the page —
-  // either case would leave the landing module's state inconsistent
-  // with the post-pipeline view. location.assign + reload on duplicate
-  // guarantees a clean bootstrap of main.js with the new query params.
+  //  强制进行真正的导航。同一 URL 的 location.href 是 no-op
+  //  并且 location.href 到仅哈希增量不会重新加载页面 -
+  //  任何一种情况都会导致 landing 模块的状态不一致
+  //  与后管道视图。 location.assign + 重复时重新加载
+  //  使用新的查询参数保证 main.js 的干净引导。
   if (target.toString() === location.href) {
     location.reload();
   } else {
@@ -565,13 +565,13 @@ function onChipClick(ev) {
   if (!btn) return;
   const dev = document.getElementById("landingDevice");
   const sym = document.getElementById("landingSymptom");
-  // Chips don't carry a canonical slug; clearing here prevents a stale
-  // _selectedDeviceSlug from the autocomplete leaking onto a chip submit.
+  //  芯片不带有规范的 slug；清除此处可防止陈旧
+  //  _selectedDeviceSlug 从自动完成泄漏到 chip 提交。
   _selectedDeviceSlug = null;
   if (dev && btn.dataset.device) dev.value = btn.dataset.device;
   if (sym) {
-    // Prefer the i18n key if present so the chip's symptom matches the active
-    // locale; fall back to the literal data-symptom attribute.
+    //  首选 i18n 键（如果存在），以便 chip 的症状与活动状态相匹配
+    //  语言环境；回到文字数据症状属性。
     const key = btn.dataset.symptomKey;
     const fallback = btn.dataset.symptom || "";
     if (key && window.t) sym.value = window.t(key);
@@ -581,16 +581,16 @@ function onChipClick(ev) {
 }
 
 // ============================================================
-// Device autocomplete — surfaces devices already known under the device
-// input as the technician types. Sourced from /pipeline/taxonomy so the
-// list is deduplicated to ONE entry per (brand, model) — no
-// "iPhone X" / "iPhone X logic board" / "iPhone X bench" noise.
-// Cached for the session in `_devicesCache`. Keyboard nav: ↑/↓/Enter/Esc.
+//  设备自动完成 - 显示设备下已知的设备
+//  输入为技术人员类型。源自 /pipeline/taxonomy 所以
+//  列表被重复删除为每个（品牌、型号）一个条目 - 否
+//  “iPhone X”/“iPhone X 逻辑板”/“iPhone X 工作台”噪音。
+//  在“_devicesCache”中缓存会话。键盘导航：↑/↓/Enter/Esc。
 //
-// At selection, we store the canonical slug of the chosen pack on the
-// form so onSubmit can pass `device_slug` to the backend explicitly,
-// guaranteeing a cache hit on the right pack rather than re-slugifying
-// the label and risking a miss on a near-but-not-identical spelling.
+//  在选择时，我们将所选包的规范 slug 存储在
+//  这样 onSubmit 可以显式地将 `device_slug` 传递给后端，
+//  保证 cache hit 在正确的包装上，而不是重新slug化
+//  标签并冒着错过近似但不相同的拼写的风险。
 // ============================================================
 
 let _devicesCache = null;

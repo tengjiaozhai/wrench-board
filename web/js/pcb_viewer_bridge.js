@@ -1,12 +1,12 @@
-// Bridge between the SVG/D3 brd_viewer.js call surface
-// (window.initBoardview, window.Boardview) and the WebGL viewer in
-// pcb_viewer.js. Loaded after brd_viewer.js so its overrides take effect.
+//  SVG/D3 brd_viewer.js 调用面之间的桥梁
+//  (window.initBoardview, window.Boardview) 和 WebGL 查看器
+//  pcb_viewer.js。在 brd_viewer.js 之后加载，因此其覆盖生效。
 //
-// Native integration: the canvas + info panel + stats are statically
-// laid out in web/index.html under the section data-section-stub="pcb".
-// We just instantiate PCBViewerOptimized on first navigation to PCB,
-// then call viewer.loadBoard() on every subsequent navigation / pin
-// switch.
+//  本机集成：画布+信息面板+统计数据是静态的
+//  放置在 web/index.html 的 data-section-stub="pcb" 部分下。
+//  我们只是在第一次导航到 PCB 时实例化 PCBViewerOptimized，
+//  然后在每个后续导航/引脚上调用viewer.loadBoard()
+//  开关。
 
 import { getDeviceSlug } from "./shared/context.js";
 
@@ -14,9 +14,9 @@ let viewer = null;
 let boardPayload = null;
 let _refdesMap = null;
 let _netSet = null;
-// Track which slug is currently loaded so navigating away and back
-// (#pcb → #home → #pcb) doesn't refetch the payload + retrigger XZZ
-// decryption + rebuild every InstancedMesh.
+//  跟踪当前加载的 slug 以便导航离开和返回
+//  (#pcb → #home → #pcb) 不会重新获取有效负载 + 重新触发 XZZ
+//  每InstancedMesh解密+重建。
 let _loadedSlug = null;
 
 function resolveSlug() {
@@ -65,7 +65,7 @@ async function ensureViewerAndLoad(slug) {
     return false;
   }
 
-  // The empty-state wrapper hides itself once a board is loaded.
+  //  一旦板被加载，空状态包装器就会隐藏自己。
   const empty = document.getElementById("no-file-message");
   if (empty) empty.classList.add("hidden");
 
@@ -90,19 +90,19 @@ async function ensureViewerAndLoad(slug) {
     return false;
   }
 
-  // After loadBoard the orthographic frustum was sized once — force a
-  // resize so the canvas pixel size matches its CSS size now that the
-  // section is visible (clientWidth was 0 if we'd init'd while hidden).
+  //  在加载板之后，正交视锥体的大小被调整一次 - 强制 a
+  //  调整大小，使画布像素大小与其 CSS 大小相匹配，现在
+  //  部分是可见的（如果我们在隐藏时初始化，则 clientWidth 为 0）。
   if (viewer.onResize) viewer.onResize();
 
   boardPayload = payload;
   _loadedSlug = slug;
   rebuildIndexes(payload);
 
-  // Auto-fit on load: invoke reset() so the orthographic frustum sizes
-  // itself to the board's actual dimensions instead of leaving the
-  // camera at the constructor defaults (visible as a tiny board parked
-  // in the bottom-left corner).
+  //  加载时自动调整：调用reset()，使正交视锥体大小
+  //  本身到电路板的实际尺寸，而不是离开
+  //  构造函数默认设置的摄像头（可以看到停在一块小板上）
+  //  在左下角）。
   try { window.Boardview.reset(); } catch (_) {}
 
   return true;
@@ -116,30 +116,30 @@ console.log(
 );
 
 window.initBoardview = async function bridgedInit(_containerEl) {
-  // _containerEl is the legacy SVG mount target — we ignore it because the
-  // native PCB section ships its own canvas / info panel layout.
+  //  _containerEl 是旧版 SVG 挂载目标 — 我们忽略它，因为
+  //  本机 PCB 部分提供自己的画布/信息面板布局。
   const slug = resolveSlug();
   console.log("[pcb_viewer_bridge] bridgedInit slug=", slug);
   if (!slug) return;
-  // Already loaded — just resize the canvas to the now-visible
-  // section and bail. The user toggling between #home and #pcb
-  // shouldn't pay for a fresh decrypt + rebuild every time.
+  //  已加载 - 只需将画布大小调整为现在可见
+  //  部分和保释。用户在 #home 和 #pcb 之间切换
+  //  不应该每次都为新的解密+重建付费。
   if (viewer && boardPayload && _loadedSlug === slug) {
     console.log("[pcb_viewer_bridge] reusing cached viewer for", slug);
     if (viewer.onResize) viewer.onResize();
     if (viewer.requestRender) viewer.requestRender();
     return;
   }
-  // WebGL is the only renderer now (the SVG brd_viewer.js fallback was
-  // retired). A failure here surfaces in ensureViewerAndLoad's own error UI.
+  //  WebGL 现在是唯一的渲染器（SVG brd_viewer.js 后备是
+  //  退休）。此处的失败出现在 EnsureViewerAndLoad 自己的错误 UI 中。
   await ensureViewerAndLoad(slug);
 };
 
-// ---------- window.Boardview override ----------
+//  ---------- 窗口。Boardview 覆盖 ----------
 //
-// Keeps the API surface stable for protocol.js / llm.js / WS dispatch.
-// Render-driving methods talk to the WebGL viewer; the rest stays as
-// no-op stubs that we'll fill in P6.
+//  保持 API 表面稳定以进行 protocol.js / llm.js / WS 调度。
+//  渲染驱动方法与 WebGL 观看者对话；其余的保持不变
+//  我们将在 P6 中填写 no-op 存根。
 
 function _findItem(refdes) {
   if (!viewer || !refdes) return null;
@@ -148,10 +148,10 @@ function _findItem(refdes) {
   return items.find((it) => it.id === target) || null;
 }
 
-// Backend WS events come prefixed `boardview.<verb>` (see
-// api/tools/ws_events.py). The agent ships mils for any geometric
-// payload (focus.bbox, draw_arrow.from/to, show_pin.pos) — convert
-// to mm before handing to the WebGL viewer, which works in mm.
+//  后端 WS 事件以“boardview.<verb>”为前缀（请参阅
+//  api/tools/ws_events.py）。对于任何几何形状，代理商都会运送 mils
+//  有效负载（focus.bbox，draw_arrow.from/to，show_pin.pos）-转换
+//  到 mm，然后交给 WebGL 查看器，其工作单位为 mm。
 const MIL_TO_MM = 0.0254;
 
 function _milPairToMm(pair) {
@@ -168,8 +168,8 @@ window.Boardview = {
     const t = ev.type;
     try {
       switch (t) {
-        // ---- legacy / short aliases (kept for any in-flight callers
-        // that still hit the un-prefixed name).
+        //  ---- 遗留/短别名（为任何飞行中的呼叫者保留
+        //  仍然击中未加前缀的名称）。
         case "highlight":
         case "bv_highlight":
           this.highlight(ev.refdes);
@@ -183,7 +183,7 @@ window.Boardview = {
           this.reset();
           return;
 
-        // ---- canonical backend envelopes (api/tools/ws_events.py)
+        //  ---- 规范后端信封 (api/tools/ws_events.py)
         case "boardview.highlight":
           this.highlight(ev.refdes);
           return;
@@ -209,7 +209,7 @@ window.Boardview = {
           this.show_pin(ev.refdes, ev.pin, ev.pos);
           return;
         case "boardview.draw_arrow":
-          // Backend ships {from: [x,y], to: [x,y], id} in mils.
+          //  后端在 mils 中运送{from: [x,y], to: [x,y], id}。
           this.draw_arrow(ev.from, ev.to, ev.id);
           return;
         case "boardview.filter":
@@ -222,12 +222,12 @@ window.Boardview = {
           this.layer_visibility(ev.layer, ev.visible);
           return;
         case "boardview.board_loaded":
-          // Renderer already loaded the board through /api/board/render
-          // (see ensureViewerAndLoad). The board_loaded WS event from
-          // the agent runtime is informational — nothing to do.
+          //  渲染器已经通过 /api/board/render 加载了板子
+          //  （参见ensureViewerAndLoad）。 board_loaded WS 事件来自
+          //  代理运行时是信息性的——无需执行任何操作。
           return;
         default:
-          // Unknown envelope — silent log for diagnosis.
+          //  未知信封 — 用于诊断的静默日志。
           console.warn("[Boardview] unknown event type", t);
       }
     } catch (err) {
@@ -244,10 +244,10 @@ window.Boardview = {
     return !!(_netSet && _netSet.has(String(name).trim()));
   },
   highlight(refdes) {
-    // Backend ships refdes as an array (Highlight.refdes is list[str]).
-    // Pick the first valid match — the WebGL viewer's selectItem only
-    // tracks one selectedItem at a time. Multi-highlight is approximated
-    // by the agent's bv_scene path which calls this once per refdes.
+    //  后端将 refdes 作为数组提供（Highlight.refdes 是 list[str]）。
+    //  选择第一个有效的匹配项 - 仅 WebGL 查看者的 selectItem
+    //  一次跟踪一个选定的项目。多重高光近似
+    //  通过代理的bv_场景路径，每个refdes调用一次。
     const list = Array.isArray(refdes) ? refdes : [refdes];
     for (const r of list) {
       const item = _findItem(r);
@@ -271,15 +271,15 @@ window.Boardview = {
   reset() {
     if (!viewer || !boardPayload) return;
     if (viewer.clearSelection) viewer.clearSelection();
-    // Tear down agent overlays alongside the camera fit so a single
-    // bv_reset_view returns the canvas to a clean baseline.
+    //  拆下代理 overlays 与相机配合，这样就可以了
+    //  bv_reset_view 将画布返回到干净的基线。
     if (typeof viewer.resetAgentOverlays === "function") {
       viewer.resetAgentOverlays();
     }
-    // Defer to the viewer's transform-aware fit: it picks the bbox
-    // matching the current side mode (top / both / bottom) and projects
-    // its centre through the active rotation, so Fit works correctly
-    // after the user has toggled side or rotated the board.
+    //  遵循观看者的变换感知配合：它选择 bbox
+    //  匹配当前侧面模式（顶部/两者/底部）和项目
+    //  它的中心通过主动旋转，因此 Fit 可以正常工作
+    //  用户切换侧面或旋转板后。
     if (typeof viewer._recentreOnSideMode === "function") {
       viewer._recentreOnSideMode();
       if (viewer.requestRender) viewer.requestRender();
@@ -295,19 +295,20 @@ window.Boardview = {
     viewer.zoom = 100 / viewer.frustumSize;
     if (viewer.onResize) viewer.onResize();
   },
-  // Tally pins by net category for the Tweaks colour panel.
-  // Returns null if no board is loaded; otherwise an object keyed by
-  // category ('signal', 'power', 'ground', 'clock', 'reset', 'no-net')
-  // mapped to instance counts. Drives the pin-count pills next to each
-  // color picker — gives the user a sense of how many pins each row
-  // actually affects on the current board.
+  //  按调整颜色面板的网络类别计数引脚。
+  //  如果没有加载板子则返回null；否则是一个由以下键控的对象
+  //  类别（'信号'，'电源'，'接地'，'时钟'，'重置'，'无网'）
+  //  映射到实例计数。驱动每个旁边的针数药丸
+  //  颜色选择器 - 让用户了解每行有多少个引脚
+  //  实际上对当前板有影响。
   /**
-   * Drop the cached payload for `slug` so the next `initBoardview`
-   * call refetches `/api/board/render`. Used by the home dashboard
-   * when the technician pins a different boardview version — the
-   * URL slug stays the same but the underlying file on disk changed,
-   * so the navigation cache (`_loadedSlug`) would otherwise serve
-   * the stale parse. Pass no arg or matching slug to invalidate.
+   * 删除`slug`的缓存有效负载，以便下一个`initBoardview`
+   * 调用重新获取 `/api/board/render`。由主页仪表板使用
+   * 当技术人员固定不同的 boardview 版本时 —
+   * URL slug 保持不变，但磁盘上的底层文件发生了变化，
+   * 因此导航缓存（`_loadedSlug`）将提供服务
+   * 过时的解析。不传递 arg 或匹配的 slug 即可使其无效。
+   
    */
   invalidate(slug) {
     if (!slug || _loadedSlug === slug) {
@@ -327,19 +328,19 @@ window.Boardview = {
       const t = item._instanceType;
       if (t === 'testPad') {
         counts.testPad++;
-        // Also fall through to net-category bucketing so the testpad
-        // count is independent of the per-net signal/power/etc bucket.
+        //  也落入网络类别分桶，因此测试板
+        //  计数与每个网络的信号/功率/等存储桶无关。
       } else if (t === 'via') {
         const isMounting = !item.net || item.net === '' || item.net === 'NC';
         if (!isMounting) counts.via++;
-        continue;  // mounting holes aren't represented in the picker
+        continue;  //  安装孔未在选择器中显示
       } else if (t !== 'pin' && t !== 'rectPin') {
         continue;
       }
       const cat = item.is_gnd ? 'ground' : viewer._netCategory(item.net || '');
-      // _netCategory returns 'default' (named net no special prefix) → bucket as signal,
-      // and 'nc' (NC net) → bucket as no-net. Both 'default' and 'nc' fold here so
-      // every pin lands in exactly one of the picker rows.
+      //  _netCategory 返回 'default' （命名为 net 无特殊前缀）→ Bucket 作为信号，
+      //  和“nc”（NC 净）→ 桶作为无净。 'default' 和 'nc' 都在这里折叠，所以
+      //  每个销钉恰好落在拾取器的一排中。
       const key = cat === 'default' ? 'signal'
                 : cat === 'nc' ? 'no-net'
                 : cat;
@@ -347,12 +348,12 @@ window.Boardview = {
     }
     return counts;
   },
-  // ---------- Agent-driven overlays (bv_* tool events) ----------
+  //  ---------- 代理驱动 overlays（bv_* 工具事件） ----------
   flip(newSide) {
     if (!viewer) return;
-    // The backend Flip event ships the target side it just flipped to.
-    // When supplied, route through setSideMode so the toolbar segment
-    // updates with the correct active class. Otherwise toggle.
+    //  后端翻转事件传送它刚刚翻转到的目标侧。
+    //  提供后，通过 setSideMode 进行路由，以便工具栏段
+    //  使用正确的活动类进行更新。否则切换。
     if (newSide === "top" || newSide === "bottom") {
       if (typeof viewer.setSideMode === "function") {
         viewer.setSideMode(newSide);
@@ -398,8 +399,8 @@ window.Boardview = {
     const label = Number.isFinite(distanceMm)
       ? `${distanceMm.toFixed(2)} mm`
       : "";
-    // Use a deterministic id so repeated calls between the same pair
-    // replace the prior measurement instead of stacking.
+    //  使用确定性 ID，以便在同一对之间重复调用
+    //  替换先前的测量而不是堆叠。
     const id = `meas-${fromRefdes}-${toRefdes}`;
     viewer.addMeasurement(fromRefdes, toRefdes, label, id);
   },
@@ -408,19 +409,19 @@ window.Boardview = {
       viewer.setLayerVisibility(layer, !!visible);
     }
   },
-  // Override reset() above is the canonical user-facing fit. The agent's
-  // bv_reset_view also clears overlays — extend reset() so it tears
-  // down annotations/arrows/measurements/dim/filter alongside the camera
-  // fit.
+  //  上面的重写 reset() 是典型的面向用户的配合。代理的
+  //  bv_reset_view 也会清除 overlays — 扩展 reset() 所以它会撕裂
+  //  沿着相机向下注释/箭头/测量/变暗/过滤器
+  //  适合。
   resetAgent() {
     if (viewer && typeof viewer.resetAgentOverlays === "function") {
       viewer.resetAgentOverlays();
     }
   },
-  // Protocol badges — driven by protocol.js whenever the active protocol
-  // (steps + current_step_id) changes. Delegates to the WebGL viewer's
-  // sprite-based renderer; mirrors brd_viewer.js's same-named API so
-  // protocol.js stays viewer-agnostic.
+  //  协议徽章 — 只要协议处于活动状态，就由 protocol.js 驱动
+  //  (steps + current_step_id) 变化。代表WebGL观众
+  //  基于精灵的渲染器；镜像 brd_viewer.js 的同名 API 所以
+  //  protocol.js 与观众无关。
   setProtocolBadges(steps, currentId) {
     if (viewer && typeof viewer.setProtocolBadges === "function") {
       viewer.setProtocolBadges(steps, currentId);
@@ -431,9 +432,9 @@ window.Boardview = {
       viewer.clearProtocolBadges();
     }
   },
-  // Returns viewport (page) pixel coords of the part's bbox-top centre,
-  // or null when the refdes isn't loaded / off-screen / hidden face.
-  // protocol.js uses this to anchor the floating refdes chip + arrow.
+  //  返回部件 bbox-top 中心的视口（页面）像素坐标，
+  //  或当 refdes 未加载/离屏/隐藏面时为 null。
+  //  protocol.js 使用它来锚定浮动的 refdes chip + 箭头。
   refdesScreenPos(refdes) {
     if (viewer && typeof viewer.refdesScreenPos === "function") {
       return viewer.refdesScreenPos(refdes);
@@ -442,17 +443,17 @@ window.Boardview = {
   },
 };
 
-// Net-category colour API note: the four window.*BoardviewColor* globals are
-// now defined directly by pcb_viewer.js (which owns the palette defaults, the
-// 'msa.pcb.netColors' store, and the live-recolour path). The Tweaks picker in
-// main.js talks to them unchanged. No bridge wrapping is needed anymore — the
-// legacy SVG brd_viewer.js that used to define them has been retired.
+//  Net-category color API 注：四个 window.*BoardviewColor* 全局变量是
+//  现在由 pcb_viewer.js 定义 direct（它拥有调色板默认值，
+//  'msa.pcb.netColors' 存储，以及实时重新着色路径）。调整选择器
+//  main.js 与他们交谈不变。不再需要桥接——
+//  用于定义它们的旧版 SVG brd_viewer.js 已被淘汰。
 
-// ---------- Toolbar wiring (Fit + Top/Bottom) ----------
+//  ---------- 工具栏布线（适合 + 顶部/底部） ----------
 //
-// Idempotent: the first call attaches the listeners and flips a flag
-// so subsequent navigations don't double-attach. Buttons live in
-// index.html under .brd-toolbar.
+//  幂等：第一个调用附加侦听器并翻转标志
+//  因此后续导航不会双重附加。按钮位于
+//  .brd-toolbar 下的index.html。
 
 let _toolbarWired = false;
 function wireToolbarOnce() {
@@ -476,11 +477,11 @@ function wireToolbarOnce() {
   const topBtn = document.getElementById("brdLayerTop");
   const bothBtn = document.getElementById("brdLayerBoth");
   const bottomBtn = document.getElementById("brdLayerBottom");
-  // 3-state segment: TOP / BOTH / BOTTOM. Drives `viewer.setSideMode`,
-  // which on dual-outline boards (XZZ side-by-side / stacked) filters
-  // entity visibility by face and recentres the camera. On single-
-  // outline boards every entity has `_side === null` and the toggle is
-  // effectively a no-op except for centering.
+  //  三态段：顶部/两个/底部。驱动`viewer.setSideMode`，
+  //  在双轮廓板上（XZZ并排/堆叠）过滤器
+  //  通过面部实体可见性并重新调整相机。在单
+  //  每个实体的大纲板都有 `_side === null` 并且切换是
+  //  除了居中之外，实际上是 no-op。
   const setMode = (mode) => {
     if (!viewer) return;
     if (typeof viewer.setSideMode === "function") {
@@ -494,8 +495,8 @@ function wireToolbarOnce() {
   if (bothBtn) bothBtn.addEventListener("click", () => setMode("both"));
   if (bottomBtn) bottomBtn.addEventListener("click", () => setMode("bottom"));
 
-  // DFM-alternate (DNP) overlay toggle. The button stays active (cyan
-  // border) while the dashed-outline layer is visible.
+  //  DFM-备用 (DNP) overlay 切换。该按钮保持活动状态（青色
+  //  边框），而虚线轮廓层可见。
   const dnpBtn = document.getElementById("brdToggleDnp");
   if (dnpBtn) dnpBtn.addEventListener("click", () => {
     if (!viewer || typeof viewer.setShowDnp !== "function") return;
@@ -505,8 +506,8 @@ function wireToolbarOnce() {
     dnpBtn.setAttribute("aria-pressed", next ? "true" : "false");
   });
 
-  // Vias toggle. OFF by default — sync the viewer's `_showVias` flag
-  // with the button's initial state (no `active` class).
+  //  过孔切换。默认关闭 - 同步查看器的“_showVias”标志
+  //  与按钮的初始状态（无“active”类）。
   const viasBtn = document.getElementById("brdToggleVias");
   if (viasBtn) {
     if (viewer && typeof viewer.setShowVias === "function") {
@@ -521,10 +522,10 @@ function wireToolbarOnce() {
     });
   }
 
-  // Traces toggle. OFF by default. Mirrors the vias toggle pattern —
-  // calls `viewer.toggleTraces()` which flips `showTraces` and shows /
-  // hides every copper line/arc mesh in `meshGroups.traces` (outline
-  // traces stay visible regardless, see pcb_viewer.js:3489).
+  //  痕迹切换。默认关闭。镜像过孔切换模式 —
+  //  调用 `viewer.toggleTraces()` 来翻转 `showTraces` 并显示 /
+  //  隐藏`meshGroups.traces`中的每条铜线/弧形网格（轮廓
+  //  不管怎样，痕迹仍然可见，请参阅 pcb_viewer.js:3489)。
   const tracesBtn = document.getElementById("brdToggleTraces");
   if (tracesBtn) {
     tracesBtn.addEventListener("click", () => {
@@ -537,7 +538,7 @@ function wireToolbarOnce() {
   }
 }
 
-// Drain any events queued during module load.
+//  清空模块加载期间排队的所有事件。
 const _pending = (window.Boardview && window.Boardview.__pending) || [];
 _pending.forEach((ev) => {
   try { window.Boardview.apply(ev); } catch (_) {}
