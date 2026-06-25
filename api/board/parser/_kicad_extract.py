@@ -126,6 +126,10 @@ def main(path: str) -> None:
         for pad in pads:
             pos = pad.GetPosition()
             size = pad.GetSize()
+            # Skip zero-sized pads — these are legacy placeholders in KiCad
+            # symbol libraries that pcbnew warns about but still loads.
+            if size.x == 0 or size.y == 0:
+                continue
             shape_id = pad.GetShape()
             shape = PAD_SHAPE_NAMES.get(shape_id, "custom")
             net_code = pad.GetNetCode()
