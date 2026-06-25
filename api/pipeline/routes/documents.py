@@ -386,7 +386,7 @@ async def _reingest_and_cache(slug: str, pack_dir: Path, pdf_path: Path, pdf_has
         logger.error("[sources] cannot reingest without ANTHROPIC_API_KEY for %s", slug)
         return
     try:
-        client = AsyncAnthropic(api_key=api_key, max_retries=4)
+        client = AsyncAnthropic(api_key=api_key, max_retries=4, base_url=settings.anthropic_base_url or None)
 
         # Publish only the per-page sub-steps onto the slug bus. The pipeline's
         # wait-gate (orchestrator: expect_schematic) owns this phase's

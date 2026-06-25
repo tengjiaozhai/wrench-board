@@ -544,7 +544,7 @@ async def expand_pack(
     if client is None:
         if not settings.anthropic_api_key:
             raise RuntimeError("ANTHROPIC_API_KEY not set")
-        client = AsyncAnthropic(api_key=settings.anthropic_api_key, max_retries=settings.anthropic_max_retries)
+        client = AsyncAnthropic(api_key=settings.anthropic_api_key, max_retries=settings.anthropic_max_retries, base_url=settings.anthropic_base_url or None)
 
     # 0. Migration idempotente legacy → T8 (baseline/ + audit/). Après ça, les
     #    fichiers racine n'existent plus : on lit l'état via le pack effectif.

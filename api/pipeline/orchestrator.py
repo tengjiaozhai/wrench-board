@@ -237,7 +237,11 @@ def _get_client() -> AsyncAnthropic:
         raise RuntimeError(
             "ANTHROPIC_API_KEY is not set. Copy .env.example to .env and set your key."
         )
-    return AsyncAnthropic(api_key=settings.anthropic_api_key, max_retries=settings.anthropic_max_retries)
+    return AsyncAnthropic(
+        api_key=settings.anthropic_api_key,
+        max_retries=settings.anthropic_max_retries,
+        base_url=settings.anthropic_base_url or None,
+    )
 
 
 async def generate_knowledge_pack(

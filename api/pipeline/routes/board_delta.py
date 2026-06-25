@@ -31,7 +31,7 @@ async def create_board_delta(
     ``memory/{⟦PRESERVE2⟧}/board_deltas/{board}.json``, and fires one
     ``kind='delta'``计量事件（no-op在self-host上）。"""
     settings = get_settings()
-    client = AsyncAnthropic(api_key=settings.anthropic_api_key, max_retries=settings.anthropic_max_retries)
+    client = AsyncAnthropic(api_key=settings.anthropic_api_key, max_retries=settings.anthropic_max_retries, base_url=settings.anthropic_base_url or None)
     delta = await generate_board_delta(
         client=client,
         model=settings.anthropic_model_main,
