@@ -283,7 +283,7 @@ async def diagnostic_session(websocket: WebSocket, device_slug: str) -> None:
     # 缺席 → None → 无 board-delta 注入。此处无信任逻辑：公开引擎仅作 opaque key 携带。
     set_board_ref(websocket.query_params.get("board"))
 
-    mode = os.environ.get("DIAGNOSTIC_MODE", "managed").lower()
+    mode = get_settings().diagnostic_mode
     if mode == "direct":
         from api.agent.runtime_direct import run_diagnostic_session_direct
 

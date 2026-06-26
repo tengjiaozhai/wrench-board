@@ -47,6 +47,13 @@ class Settings(BaseSettings):
             "用于 API 代理或自定义端点。"
         ),
     )
+    diagnostic_mode: Literal["managed", "direct"] = Field(
+        default="managed",
+        description=(
+            "诊断运行时模式。'managed' 使用 Anthropic Managed Agents（默认）；"
+            "'direct' 使用普通 Messages API tool-use 循环（无需 bootstrap）。"
+        ),
+    )
 
     port: int = Field(default=8000, description="HTTP 服务端口。")
     log_level: str = Field(default="INFO", description="日志级别名称。")
