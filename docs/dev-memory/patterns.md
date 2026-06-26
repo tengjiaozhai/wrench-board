@@ -82,15 +82,11 @@ curl -s -X POST http://127.0.0.1:9000/pipeline/ingest-schematic \
 - 设备是工业/冷门（公开维修资料 ≈ 0），Scout 即便能跑 web_search 也会过不了 `assess_dump` 阈值
 - LLM 代理（mimo 等）不支持 Anthropic server tool（`web_search_20250305`）+ `thinking=adaptive` + `output_config.effort=xhigh`，Scout 必败
 
-机制（已存在于 `api/pipeline/orchestrator.py:316-320`）：
-```python
-scout_dump_path = pack_dir / "raw_research_dump.md"
-if scout_dump_path.exists():
-    raw_dump = scout_dump_path.read_text(encoding="utf-8")
-    # ... bypass Phase 1, run Phase 2-4 directly
-```
+机制（当前正式支持两条入口）：
+- `POST /pipeline/repairs` 传可选 `raw_dump` multipart 文本字段。后端将其写成 `memory/{slug}/raw_research_dump.md`，并显式跳过 Claude Scout。
+- 或者在离线/脚本场景下，预先写入 `memory/{slug}/raw_research_dump.md`（或迁移后的 `audit/raw_research_dump.md`）。orchestrator 检测到非空现有 dump 后，同样跳过 Scout。
 
-手写 dump 落盘到 `memory/{slug}/raw_research_dump.md` → orchestrator 跳过 Scout → Phase 2 (Registry) + Phase 3 (Writers ×3) + Phase 4 (Auditor) + Phase 2.5 (Mapper) 直接跑。
+无论哪条入口，后续都会继续跑 Phase 2 (Registry) + Phase 3 (Writers ×3) + Phase 4 (Auditor) + Phase 2.5 (Mapper)。
 
 ### Dump 模板（来自 `api/pipeline/prompts.py:12-206` 的 SCOUT_SYSTEM）
 

@@ -8,7 +8,7 @@ UVICORN = $(VENV)/bin/uvicorn
 PYTEST = $(VENV)/bin/pytest
 RUFF = $(VENV)/bin/ruff
 
-PORT ?= 8000
+PORT ?= 9000
 # Bind interface for `make run` and `make demo-fallback`. Defaults to
 # 127.0.0.1 so the dev server is local-only and not reachable from the LAN.
 # Override for LAN access (e.g. testing from a phone): `make run HOST=0.0.0.0`.
@@ -35,7 +35,12 @@ install:
 	$(PIP) install -e ".[dev]"
 
 run:
-	@PORT=$(PORT) HOST=$(HOST) bash scripts/start.sh
+	@mkdir -p logs
+	@LOG="logs/wrench-board_$$(date +%Y%m%d_%H%M%S).log"; \
+	echo "日志文件: $$LOG"; \
+	NO_PROXY="localhost,127.0.0.1,*.tinno.com,tinno.com,::1" \
+	HTTPS_PROXY="" HTTP_PROXY="" \
+	PORT=$(PORT) HOST=$(HOST) bash scripts/start.sh 2>&1 | tee -a "$$LOG"
 
 # Rebuild the field-calibrated benchmark fixture from persisted data
 # (live outcome.json + legacy field_reports/*.md). Commit the fixture

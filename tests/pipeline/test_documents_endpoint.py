@@ -5,6 +5,7 @@ other) into memory/{slug}/uploads/."""
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -101,3 +102,20 @@ def test_list_documents_empty_when_no_uploads(
     res = client.get("/pipeline/packs/never-uploaded/documents")
     assert res.status_code == 200
     assert res.json() == {"device_slug": "never-uploaded", "uploads": []}
+
+
+def test_first_schematic_upload_triggers_auto_pin(
+    memory_root: Path, client: TestClient
+) -> None:
+    with patch(
+        "api.pipeline.routes.documents._apply_schematic_pin",
+        return_value=("rebuilding", 123, 4),
+    ) as m_apply:
+        res = client.post(
+            "/pipeline/packs/demo-board/documents",
+            data={"kind": "schematic_pdf"},
+            files={"file": ("a.pdf", b"%PDF a", "application/pdf")},
+        )
+
+    assert res.status_code == 201, res.text
+    m_apply.assert_called_once()

@@ -49,7 +49,11 @@ from api.pipeline.schemas import (
     RulesPatch,
     RulesSet,
 )
-from api.pipeline.tool_call import call_with_forced_tool, call_with_query_tools
+from api.pipeline.tool_call import (
+    _needs_third_party_forced_tool_compat,
+    call_with_forced_tool,
+    call_with_query_tools,
+)
 
 if TYPE_CHECKING:
     from api.pipeline.graph_truth import GraphTruth
@@ -131,6 +135,7 @@ def _build_shared_user_messages(
     raw_dump: str,
     registry: Registry,
     task_suffix: str,
+    enable_cache: bool = True,
 ) -> list[dict]:
     """Build the per-writer message list. The first content block carries the
     `cache_control: ephemeral` marker so the prefix caches across the 3 writers.
@@ -140,15 +145,18 @@ def _build_shared_user_messages(
         raw_dump=raw_dump,
         registry_json=registry.model_dump_json(indent=2),
     )
+    first_block: dict = {
+        "type": "text",
+        "text": shared_prefix,
+    }
+    if enable_cache:
+        first_block["cache_control"] = {"type": "ephemeral"}
+
     return [
         {
             "role": "user",
             "content": [
-                {
-                    "type": "text",
-                    "text": shared_prefix,
-                    "cache_control": {"type": "ephemeral"},
-                },
+                first_block,
                 {
                     "type": "text",
                     "text": task_suffix,
@@ -176,6 +184,7 @@ async def _run_single_writer(
         raw_dump=raw_dump,
         registry=registry,
         task_suffix=task_suffix,
+        enable_cache=not _needs_third_party_forced_tool_compat(model),
     )
     return await call_with_forced_tool(
         client=client,
@@ -473,15 +482,18 @@ async def run_single_writer_revision(
         ground_truth_block=ground_truth_block,
         siblings_block=siblings_block,
     )
+    first_block: dict = {
+        "type": "text",
+        "text": shared_prefix,
+    }
+    if not _needs_third_party_forced_tool_compat(model):
+        first_block["cache_control"] = {"type": "ephemeral"}
+
     messages = [
         {
             "role": "user",
             "content": [
-                {
-                    "type": "text",
-                    "text": shared_prefix,
-                    "cache_control": {"type": "ephemeral"},
-                },
+                first_block,
                 {
                     "type": "text",
                     "text": revision_suffix,

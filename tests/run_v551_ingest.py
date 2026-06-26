@@ -182,6 +182,77 @@ def _reset_build_state(pack_dir: Path) -> None:
     (pack_dir / "_build_state.json").write_text(json.dumps(payload, indent=2) + "\n")
 
 
+def restore_v551(
+    *,
+    memory_root: Path,
+    source_slug: str = SOURCE_SLUG,
+    clone_slug: str = DEFAULT_SLUG,
+    device_label: str = "V551",
+) -> None:
+    """Undo prepare_clone: repairs back on source_slug, drop stale failed build marker.
+
+    The A/B clone moves repair metadata to v551-2 and leaves source without a
+    ticket. This puts the canonical repair back on v551 and removes duplicate
+    clone repairs from the home list. Schematic artefacts already on source are
+    kept; only the Scout-failed _build_state marker is cleared so the UI does
+    not show a permanent failed badge while the knowledge pack is still absent.
+    """
+    source = memory_root / source_slug
+    clone = memory_root / clone_slug
+    source_repairs = source / "repairs"
+    source_repairs.mkdir(parents=True, exist_ok=True)
+
+    # Repairs sitting under the clone → move back to source.
+    clone_repairs = clone / "repairs"
+    if clone_repairs.is_dir():
+        for path in sorted(clone_repairs.glob("*.json")):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                logger.warning("skip malformed repair %s", path)
+                continue
+            payload["device_slug"] = source_slug
+            payload["device_label"] = device_label
+            out = source_repairs / path.name
+            out.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+            path.unlink()
+            logger.info("restored repair %s → %s", path.name, source_slug)
+
+    # Repairs left on source but still tagged with the clone slug (partial undo).
+    for path in sorted(source_repairs.glob("*.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        if payload.get("device_slug") == clone_slug:
+            payload["device_slug"] = source_slug
+            payload["device_label"] = device_label
+            path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+            logger.info("fixed repair slug on %s → %s", path.name, source_slug)
+
+    # Drop Scout-failed marker; schematic ingest on source is already on disk.
+    build_state = source / "_build_state.json"
+    if build_state.is_file():
+        try:
+            state = json.loads(build_state.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            state = {}
+        if state.get("status") == "failed":
+            build_state.unlink()
+            logger.info("removed stale failed _build_state on %s", source_slug)
+
+    # Park the clone so it does not show build_state=running on unrelated repairs.
+    if clone.is_dir():
+        parked = {
+            "status": "failed",
+            "stage": "schematic",
+            "error": "superseded — repairs restored to v551",
+            "finished_at": datetime.now(UTC).isoformat(),
+        }
+        (clone / "_build_state.json").write_text(json.dumps(parked, indent=2) + "\n")
+        logger.info("parked clone pack %s", clone_slug)
+
+
 def prepare_clone(
     *,
     memory_root: Path,
@@ -288,7 +359,21 @@ def main() -> None:
         default=None,
         help="schematic PDF path (default: memory/{slug}/schematic.pdf or latest upload)",
     )
+    parser.add_argument(
+        "--restore",
+        action="store_true",
+        help="move repairs back from clone slug to source and clear stale failed build_state",
+    )
     args = parser.parse_args()
+
+    if args.restore:
+        restore_v551(
+            memory_root=memory_root,
+            source_slug=args.source,
+            clone_slug=args.slug,
+            device_label="V551",
+        )
+        return
 
     if not args.skip_prepare:
         prepare_clone(

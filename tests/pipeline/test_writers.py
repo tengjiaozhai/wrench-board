@@ -399,6 +399,34 @@ async def test_cached_prefix_block_identical_across_writers(
     assert len(set(suffixes)) == 3, "Each writer must carry a distinct task suffix"
 
 
+async def test_qwen_writer_prefix_disables_cache_control(
+    monkeypatch, registry, dummy_outputs
+):
+    captured: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        writers_mod,
+        "call_with_forced_tool",
+        _make_fake_call(captured, dummy_outputs),
+    )
+
+    await writers_mod.run_writers_parallel(
+        client=MagicMock(),
+        cartographe_model="qwen3.7-max",
+        clinicien_model="qwen3.7-max",
+        lexicographe_model="qwen3.7-max",
+        device_label="Demo Device",
+        raw_dump="# the raw research dump\n\nSome content.",
+        registry=registry,
+        cache_warmup_seconds=0.0,
+    )
+
+    assert len(captured) == 3
+    for call in captured:
+        first_block = call["messages"][0]["content"][0]
+        assert first_block["type"] == "text"
+        assert "cache_control" not in first_block
+
+
 async def test_each_writer_receives_full_tool_manifest(
     monkeypatch, registry, dummy_outputs
 ):

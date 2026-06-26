@@ -81,6 +81,13 @@ class _Messages:
         self._calls.append(kwargs)
         return _Stream(self._outcomes[len(self._calls) - 1])
 
+    async def create(self, **kwargs):
+        self._calls.append(kwargs)
+        outcome = self._outcomes[len(self._calls) - 1]
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
 
 class _Client:
     def __init__(self, outcomes, calls):
@@ -155,3 +162,22 @@ async def test_non_transient_errors_are_not_retried():
     with pytest.raises(anthropic.BadRequestError):
         await call_with_forced_tool(**_args(client))
     assert len(calls) == 1  # a 400 is deterministic — retrying it just burns time
+
+
+async def test_qwen_compat_uses_create_and_disables_thinking():
+    calls: list[dict] = []
+    client = _Client([_ok_response()], calls)
+    args = _args(client)
+    args["model"] = "qwen3.7-max"
+    args["max_tokens"] = 16000
+    args["system"] = "sys"
+
+    result = await call_with_forced_tool(**args)
+
+    assert result.rules[0].id == "R-X-001"
+    assert len(calls) == 1
+    # qwen compat 模式完全省略 thinking 参数（tinno 中继不支持）
+    assert "thinking" not in calls[0]
+    assert calls[0]["max_tokens"] == 8192
+    assert calls[0]["tool_choice"] == {"type": "tool", "name": "emit_rules"}
+    assert "CRITICAL: You MUST call the emit_rules tool now." in calls[0]["system"]

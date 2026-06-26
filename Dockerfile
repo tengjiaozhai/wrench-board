@@ -19,7 +19,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
 ENV PATH="/root/.cargo/bin:${PATH}"
-RUN pip install --no-cache-dir maturin
+RUN pip install --no-cache-dir maturin -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com
 WORKDIR /build
 COPY rust/ ./rust/
 RUN mkdir -p /wheels \
@@ -39,14 +39,14 @@ WORKDIR /app
 # Deps d'abord (couche cache) : copie le manifeste, installe, PUIS le code.
 COPY pyproject.toml README.md ./
 COPY api/ ./api/
-RUN pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir -e . -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com
 
 # Accélérateurs Rust (PyO3) installés depuis les wheels du stage builder. OPTIONNELS
 # par conception : si on retire cette couche, le moteur retombe sur le fallback
 # Python pur (cf. _fz_engine/cipher.py + _tvw_engine/walker.py) — il fonctionne,
 # juste plus lentement. Aucune dépendance dure ajoutée pour un self-hoster.
 COPY --from=rust-builder /wheels/ /wheels/
-RUN pip install --no-cache-dir /wheels/*.whl && rm -rf /wheels
+RUN pip install --no-cache-dir /wheels/*.whl -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com && rm -rf /wheels
 
 # Reste du runtime : l'UI web réutilisée par le cloud, les boards démo, le start
 # script, et managed_ids.json (mode Managed Agents → pas de bootstrap au boot).

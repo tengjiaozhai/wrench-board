@@ -140,6 +140,16 @@ async def post_pack_document(
 
     settings = _pkg.get_settings()
     uploads_dir = Path(settings.memory_root) / slug / "uploads"
+    pack_dir = uploads_dir.parent
+    preexisting_pin = False
+    if kind in sources.KNOWN_KINDS:
+        if x_owner_ref is not None:
+            owner_active = live_graph.read_owner_active(pack_dir, x_owner_ref)
+            preexisting_pin = bool(owner_active.get(kind))
+        else:
+            active_file = pack_dir / sources.ACTIVE_FILE
+            if active_file.exists():
+                preexisting_pin = bool(sources.read_active(pack_dir).get(kind))
     filename = _safe_filename(file.filename or "upload")
     target, total = await persist_upload(uploads_dir, kind, file)
 
@@ -172,21 +182,15 @@ async def post_pack_document(
     #      step 2, the pin would point to a file that doesn't match the
     #      derived artefacts on disk — incoherent.
     if kind in sources.KNOWN_KINDS:
-        pack_dir = uploads_dir.parent
         if kind == sources.SCHEMATIC_KIND:
             # MUST run before reading existing uploads — once we've added
             # the new file, list_uploads_for_kind would no longer be empty.
             _archive_legacy_schematic_if_present(pack_dir)
-        # Auto-pin: the FIRST upload of a kind becomes active. "First" is
-        # per-owner in managed mode (each tenant pins its own first upload),
-        # global for self-host.
-        if x_owner_ref is not None:
-            owner_active = live_graph.read_owner_active(pack_dir, x_owner_ref)
-            already_pinned = bool(owner_active.get(kind))
-        else:
-            already_pinned = bool(sources.read_active(pack_dir).get(kind))
-
-        if not already_pinned:
+        # Auto-pin: the FIRST upload of a kind becomes active. Evaluate this
+        # against the pre-upload state; otherwise `read_active()` auto-init
+        # would infer the just-uploaded file and incorrectly suppress the
+        # first-upload pin + reingest path.
+        if not preexisting_pin:
             if kind == sources.SCHEMATIC_KIND:
                 # Pin-write asymmetry: in managed mode the per-owner pointer is
                 # written INSIDE `_apply_schematic_pin` (it needs the PDF hash);

@@ -36,6 +36,22 @@ _TRANSPORT_TRIES = 3
 _TRANSPORT_BACKOFF_S = (2.0, 5.0)
 
 
+def _needs_third_party_forced_tool_compat(model: str) -> bool:
+    """Return True for models known to need Anthropic-compat forced-tool downgrades."""
+    return "qwen" in str(model).lower()
+
+
+def _append_critical_tool_instruction(
+    system: str | list[dict],
+    instruction: str,
+) -> str | list[dict]:
+    """Append a hard tool-use instruction without disturbing caller structure."""
+    suffix = f"\n\nCRITICAL: {instruction}"
+    if isinstance(system, list):
+        return list(system) + [{"type": "text", "text": suffix.lstrip()}]
+    return system + suffix
+
+
 async def _create_with_transport_retry(
     *,
     client: AsyncAnthropic,
@@ -60,6 +76,31 @@ async def _create_with_transport_retry(
         try:
             async with client.messages.stream(**stream_kwargs) as stream:
                 return await stream.get_final_message()
+        except _TRANSPORT_ERRORS as exc:
+            if transport_try >= _TRANSPORT_TRIES:
+                logger.error(
+                    "[%s] transport error persisted after %d tries: %s",
+                    log_label, _TRANSPORT_TRIES, exc,
+                )
+                raise
+            delay = _TRANSPORT_BACKOFF_S[min(transport_try - 1, len(_TRANSPORT_BACKOFF_S) - 1)]
+            logger.warning(
+                "[%s] transient transport error (%s: %s) — retrying in %.0fs (%d/%d)",
+                log_label, type(exc).__name__, exc, delay, transport_try, _TRANSPORT_TRIES - 1,
+            )
+            await asyncio.sleep(delay)
+
+
+async def _create_nonstream_with_transport_retry(
+    *,
+    client: AsyncAnthropic,
+    request_kwargs: dict,
+    log_label: str,
+):
+    """Create one non-streaming Messages response with the same transport retry budget."""
+    for transport_try in range(1, _TRANSPORT_TRIES + 1):
+        try:
+            return await client.messages.create(**request_kwargs)
         except _TRANSPORT_ERRORS as exc:
             if transport_try >= _TRANSPORT_TRIES:
                 logger.error(
@@ -106,6 +147,7 @@ async def call_with_forced_tool(
     """
     last_error: str | None = None
     effective_system: str | list[dict] = system
+    third_party_compat = _needs_third_party_forced_tool_compat(model)
     # thinking 强制 tool_choice="auto"（API 拒绝 thinking + forced tool），
     # 模型可能只返回 thinking、无 tool call。该 miss 时重试去掉 thinking
     # → forced tool_choice → tool 有保证（且不再在已超页的页上烧 thinking 预算）。
@@ -126,6 +168,21 @@ async def call_with_forced_tool(
                 ]
             else:
                 effective_system = system + retry_suffix
+
+        request_system = effective_system
+        if third_party_compat:
+            request_system = _append_critical_tool_instruction(
+                request_system,
+                f"You MUST call the {forced_tool_name} tool now. Do NOT output text-only responses.",
+            )
+            # 第三方中继（tinno/qwen）不支持 Anthropic prompt cache 的
+            # `cache_control` 字段，会报 "Unexpected item type in content"。
+            # 剥离所有 content block 上的 cache_control。
+            if isinstance(request_system, list):
+                request_system = [
+                    {k: v for k, v in block.items() if k != "cache_control"}
+                    for block in request_system
+                ]
 
         # 带 thinking 的 tool_choice 规则（Opus 4.7/4.8）：
         #   - 默认：`{"type": "tool", "name": forced_tool_name}` — 完全
@@ -151,12 +208,21 @@ async def call_with_forced_tool(
         stream_kwargs: dict = dict(
             model=model,
             max_tokens=max_tokens,
-            system=effective_system,
+            system=request_system,
             messages=messages,
             tools=tools,
             tool_choice=tool_choice_param,
         )
-        if thinking_active:
+        if third_party_compat:
+            stream_kwargs["max_tokens"] = min(max_tokens, 8192)
+            # 第三方中继（如 tinno qwen）不支持 thinking 参数，完全省略
+            # 而不是发送 {"type": "disabled"}（会触发 "Unexpected item type" 错误）
+            # 同时剥离 tools 定义中的 cache_control 字段
+            stream_kwargs["tools"] = [
+                {k: v for k, v in tool.items() if k != "cache_control"}
+                for tool in tools
+            ]
+        elif thinking_active:
             # Opus 4.7/4.8 默认 `thinking.display` 为 "omitted"（静默），
             # summarized 块到不了观察者。显式 opt-in。
             stream_kwargs["thinking"] = {"type": "adaptive", "display": "summarized"}
@@ -164,9 +230,14 @@ async def call_with_forced_tool(
                 effort_for_model(model)
             )
 
-        response = await _create_with_transport_retry(
-            client=client, stream_kwargs=stream_kwargs, log_label=log_label,
-        )
+        if third_party_compat:
+            response = await _create_nonstream_with_transport_retry(
+                client=client, request_kwargs=stream_kwargs, log_label=log_label,
+            )
+        else:
+            response = await _create_with_transport_retry(
+                client=client, stream_kwargs=stream_kwargs, log_label=log_label,
+            )
 
         tool_use = next(
             (b for b in response.content if b.type == "tool_use" and b.name == forced_tool_name),
@@ -372,6 +443,7 @@ async def call_with_query_tools(
     （`_create_with_transport_retry`）— 不消耗 attempt 或 query turn。
     """
     convo: list[dict] = list(messages)  # 本地副本 — agent 工作时增长
+    third_party_compat = _needs_third_party_forced_tool_compat(model)
     queries_used = 0
     submit_attempts = 0
     post_cap_reroutes = 0  # 上限后回答的伪装 query（有界 grace）
@@ -396,9 +468,21 @@ async def call_with_query_tools(
             tools=tools,
             tool_choice=tool_choice_param,
         )
-        response = await _create_with_transport_retry(
-            client=client, stream_kwargs=stream_kwargs, log_label=log_label,
-        )
+        if third_party_compat:
+            stream_kwargs["system"] = _append_critical_tool_instruction(
+                system,
+                f"You MUST call either the {query_tool['name']} tool or the {submit_tool_name} tool. "
+                f"When ready to finalize, call the {submit_tool_name} tool. Do NOT output text-only responses.",
+            )
+            stream_kwargs["max_tokens"] = min(max_tokens, 8192)
+            stream_kwargs["thinking"] = {"type": "disabled"}
+            response = await _create_nonstream_with_transport_retry(
+                client=client, request_kwargs=stream_kwargs, log_label=log_label,
+            )
+        else:
+            response = await _create_with_transport_retry(
+                client=client, stream_kwargs=stream_kwargs, log_label=log_label,
+            )
         _record_usage(
             response, stats, log_label,
             turn_desc=f"queries={queries_used} attempts={submit_attempts}",
@@ -589,6 +673,8 @@ def _try_unwrap(payload: object, output_schema: type[T]) -> T | None:
     Case B — 整目标塌进单字段，如
              `{"rules": "<{schema_version, rules} 的 JSON>"}`。深度 unwrap 后
              尝试用各顶层值校验目标 schema。
+    Case C — qwen 模型字段名不规范（pin→number、缺失 page、value 结构错误）。
+             `_normalize_qwen_fields` 标准化这些字段。
 
     返回校验后的模型；无法恢复合法 payload 时返回 None。
     """
@@ -597,17 +683,23 @@ def _try_unwrap(payload: object, output_schema: type[T]) -> T | None:
 
     unwrapped = _deep_unwrap_strings(payload)
 
-    if unwrapped != payload:
+    # 获取顶层 page 作为 hint，用于填充缺失的 page 字段
+    page_hint = unwrapped.get("page") if isinstance(unwrapped, dict) else None
+
+    # 标准化 qwen 字段
+    normalized = _normalize_qwen_fields(unwrapped, page_hint)
+
+    if normalized != payload:
         try:
-            return output_schema.model_validate(unwrapped)
+            return output_schema.model_validate(normalized)
         except ValidationError as exc:
             logger.debug(
-                "deep-unwrap revalidation failed: %s",
+                "normalize+unwrap revalidation failed: %s",
                 str(exc).replace("\n", " ")[:300],
             )
 
-    if isinstance(unwrapped, dict):
-        for value in unwrapped.values():
+    if isinstance(normalized, dict):
+        for value in normalized.values():
             if isinstance(value, dict):
                 try:
                     return output_schema.model_validate(value)
@@ -638,3 +730,45 @@ def _deep_unwrap_strings(obj: object) -> object:
     if isinstance(obj, dict):
         return {k: _deep_unwrap_strings(v) for k, v in obj.items()}
     return obj
+
+
+def _normalize_qwen_fields(obj: object, page_hint: int | None = None) -> object:
+    """标准化 qwen 模型的不规范字段名和缺失字段。
+
+    qwen3-vl-plus 等模型有时不遵循 tool schema：
+    - `pin` 应为 `number`（PagePin）
+    - `nodes[].page` 缺失 → 从顶层 page 填充
+    - `nets[].page` 缺失 → 从顶层 page 填充
+    - `value.{nominal, unit}` 应为 `value.raw`（ComponentValue）
+    """
+    if isinstance(obj, list):
+        return [_normalize_qwen_fields(x, page_hint) for x in obj]
+    if not isinstance(obj, dict):
+        return obj
+
+    result = {}
+    for k, v in obj.items():
+        # 字段名映射：pin → number
+        if k == "pin":
+            result["number"] = _normalize_qwen_fields(v, page_hint)
+        else:
+            result[k] = _normalize_qwen_fields(v, page_hint)
+
+    # 自动填充缺失的 page 字段
+    if "page" not in result and page_hint is not None:
+        # 对 nodes、nets、cross_page_refs 中的元素填充 page
+        if "refdes" in result or "local_id" in result or "direction" in result:
+            result["page"] = page_hint
+
+    # ComponentValue 结构转换：{nominal, unit} → raw
+    if "value" in result and isinstance(result["value"], dict):
+        val = result["value"]
+        if "raw" not in val and ("nominal" in val or "unit" in val):
+            parts = []
+            if "nominal" in val:
+                parts.append(str(val["nominal"]))
+            if "unit" in val:
+                parts.append(str(val["unit"]))
+            val["raw"] = " ".join(parts) if parts else ""
+
+    return result

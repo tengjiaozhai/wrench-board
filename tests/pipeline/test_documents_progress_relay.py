@@ -38,6 +38,7 @@ async def test_reingest_relays_only_page_steps_to_bus(tmp_path: Path):
 
     settings = MagicMock()
     settings.anthropic_api_key = "sk-ant-stub"
+    settings.anthropic_base_url = ""
     settings.memory_root = str(tmp_path)
 
     queue = events.subscribe(slug)

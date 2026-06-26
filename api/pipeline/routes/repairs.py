@@ -643,6 +643,7 @@ async def _run_pipeline_with_events(
     slug: str,
     focus_symptom: str | None = None,
     *,
+    raw_dump_override: str | None = None,
     confirmed_device_kind: str | None = None,
     user_device_kind: str | None = None,
     expect_schematic: bool = False,
@@ -681,6 +682,7 @@ async def _run_pipeline_with_events(
             device_slug=slug,
             on_event=_on_event,  # ← orchestrator.emit 的最终落点
             focus_symptom=focus_symptom,
+            raw_dump_override=raw_dump_override,
             confirmed_device_kind=confirmed_device_kind,
             user_device_kind=user_device_kind,
             expect_schematic=expect_schematic,
@@ -777,6 +779,7 @@ async def resolve_device_route(
 async def create_repair(
     device_label: str = Form(...),
     symptom: str = Form(...),
+    raw_dump: str | None = Form(default=None),
     device_slug: str | None = Form(default=None),
     device_kind: str | None = Form(default=None),
     force_rebuild: bool = Form(default=False),
@@ -824,6 +827,7 @@ async def create_repair(
         request = RepairRequest(
             device_label=device_label,
             symptom=symptom,
+            raw_dump=raw_dump,
             device_slug=device_slug,
             device_kind=device_kind,
             force_rebuild=force_rebuild,
@@ -832,6 +836,17 @@ async def create_repair(
         )
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=exc.errors()) from exc
+
+    if request.raw_dump is not None and not request.raw_dump.strip():
+        raise HTTPException(
+            status_code=422,
+            detail=[{
+                "type": "value_error",
+                "loc": ["body", "raw_dump"],
+                "msg": "raw_dump must not be blank",
+                "input": request.raw_dump,
+            }],
+        )
 
     settings = _pkg.get_settings()
     memory_root = Path(settings.memory_root)
@@ -1082,6 +1097,7 @@ async def create_repair(
                 request.device_label,
                 slug,
                 focus_symptom=request.symptom,
+                raw_dump_override=request.raw_dump,
                 user_device_kind=request.device_kind,
                 expect_schematic=schematic_pending and file is None,
                 owner_ref=request.owner_ref,

@@ -217,6 +217,34 @@ def _load_existing_electrical_graph(pack_dir: Path) -> ElectricalGraph | None:
         )
         return None
 
+
+def _canonical_raw_dump_path(pack_dir: Path) -> Path:
+    """Return the authoritative path for newly-written Phase 1 raw dumps."""
+    return pack_dir / "raw_research_dump.md"
+
+
+def _load_existing_raw_dump(pack_dir: Path) -> str | None:
+    """Load an existing non-blank raw dump from audit/ or the legacy root path."""
+    for path in (
+        pack_dir / "audit" / "raw_research_dump.md",
+        pack_dir / "raw_research_dump.md",
+    ):
+        if not path.is_file():
+            continue
+        try:
+            raw_dump = path.read_text(encoding="utf-8")
+        except OSError:
+            logger.warning(
+                "[Pipeline] Could not read existing raw dump at %s — ignoring",
+                path,
+                exc_info=True,
+            )
+            continue
+        if raw_dump.strip():
+            return raw_dump
+        logger.warning("[Pipeline] Ignoring blank raw dump at %s", path)
+    return None
+
 OnEvent = Callable[[dict[str, Any]], Awaitable[None]]
 
 
@@ -254,6 +282,7 @@ async def generate_knowledge_pack(
     on_event: OnEvent | None = None,
     uploaded_documents_dir: Path | None = None,
     focus_symptom: str | None = None,
+    raw_dump_override: str | None = None,
     user_device_kind: str | None = None,
     confirmed_device_kind: str | None = None,
     expect_schematic: bool = False,
@@ -580,24 +609,59 @@ async def generate_knowledge_pack(
         t0 = time.monotonic()
         await emit({"type": "phase_started", "phase": "scout"})
         scout_stats = PhaseTokenStats(phase="scout")
-        raw_dump = await run_scout(
-            client=client,
-            model=models_by_role["scout"],
-            device_label=device_label,
-            focus_symptom=focus_symptom,
-            min_symptoms=settings.pipeline_scout_min_symptoms,
-            min_components=settings.pipeline_scout_min_components,
-            min_sources=settings.pipeline_scout_min_sources,
-            max_retries=settings.pipeline_scout_max_retries,
-            device_kind=resolved_kind,
-            stats=scout_stats,
-            on_event=emit,
-        )
-        scout_stats.duration_s = time.monotonic() - t0
-        phase_stats.append(scout_stats)
-        (pack_dir / "raw_research_dump.md").write_text(raw_dump, encoding="utf-8")
-        logger.info("[Pipeline] Phase 1 complete · raw_research_dump.md written")
-        await emit({"type": "phase_finished", "phase": "scout", "elapsed_s": scout_stats.duration_s})
+        raw_dump_source = "claude_scout"
+        if raw_dump_override is not None:
+            raw_dump = raw_dump_override
+            raw_dump_source = "external_raw_dump"
+            scout_stats.duration_s = time.monotonic() - t0
+            phase_stats.append(scout_stats)
+            _canonical_raw_dump_path(pack_dir).write_text(raw_dump, encoding="utf-8")
+            logger.info("[Pipeline] Phase 1 skipped · using raw_dump_override")
+            await emit({
+                "type": "phase_finished",
+                "phase": "scout",
+                "elapsed_s": scout_stats.duration_s,
+                "skipped": True,
+                "source": raw_dump_source,
+            })
+        else:
+            existing_raw_dump = _load_existing_raw_dump(pack_dir)
+            if existing_raw_dump is not None:
+                raw_dump = existing_raw_dump
+                raw_dump_source = "existing_raw_dump"
+                scout_stats.duration_s = time.monotonic() - t0
+                phase_stats.append(scout_stats)
+                logger.info("[Pipeline] Phase 1 skipped · using existing raw_research_dump.md")
+                await emit({
+                    "type": "phase_finished",
+                    "phase": "scout",
+                    "elapsed_s": scout_stats.duration_s,
+                    "skipped": True,
+                    "source": raw_dump_source,
+                })
+            else:
+                raw_dump = await run_scout(
+                    client=client,
+                    model=models_by_role["scout"],
+                    device_label=device_label,
+                    focus_symptom=focus_symptom,
+                    min_symptoms=settings.pipeline_scout_min_symptoms,
+                    min_components=settings.pipeline_scout_min_components,
+                    min_sources=settings.pipeline_scout_min_sources,
+                    max_retries=settings.pipeline_scout_max_retries,
+                    device_kind=resolved_kind,
+                    stats=scout_stats,
+                    on_event=emit,
+                )
+                scout_stats.duration_s = time.monotonic() - t0
+                phase_stats.append(scout_stats)
+                _canonical_raw_dump_path(pack_dir).write_text(raw_dump, encoding="utf-8")
+                logger.info("[Pipeline] Phase 1 complete · raw_research_dump.md written")
+                await emit({
+                    "type": "phase_finished",
+                    "phase": "scout",
+                    "elapsed_s": scout_stats.duration_s,
+                })
 
         # -------- Phase 2 — Registry --------------------------------------------
         t0 = time.monotonic()

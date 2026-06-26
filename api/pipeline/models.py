@@ -137,6 +137,13 @@ class RepairRequest(BaseModel):
         max_length=2000,
         description="客户观察到的现象的自由文本描述。",
     )
+    raw_dump: str | None = Field(
+        default=None,
+        description=(
+            "可选的第三方 Scout Markdown dump。提供时作为 Phase 1 的权威输入，"
+            "直接跳过 Claude Scout。必须是非空白字符串。"
+        ),
+    )
     device_kind: _DeviceKind | None = Field(
         default=None,
         description="技师声明的设备类别（先验）。由 graph 分类器校验/覆盖。"

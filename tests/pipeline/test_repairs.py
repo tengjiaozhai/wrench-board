@@ -942,6 +942,22 @@ def test_create_repair_multipart_stashes_schematic_and_threads_kind(memory_root)
     assert run.call_args.kwargs["user_device_kind"] == "laptop_logic_board"
 
 
+def test_create_repair_multipart_threads_raw_dump_with_schematic(memory_root):
+    with patch("api.pipeline.routes.repairs._run_pipeline_with_events", new=AsyncMock()) as run:
+        with TestClient(app) as c:
+            r = c.post(
+                "/pipeline/repairs",
+                data={
+                    "device_label": "MSI V311_11",
+                    "symptom": "no display output",
+                    "raw_dump": "# imported scout dump",
+                },
+                files={"file": ("sch.pdf", io.BytesIO(b"%PDF-1.4 x"), "application/pdf")},
+            )
+    assert r.status_code == 200
+    assert run.call_args.kwargs["raw_dump_override"] == "# imported scout dump"
+
+
 def test_create_repair_multipart_without_file_still_works(memory_root):
     with patch("api.pipeline.routes.repairs._run_pipeline_with_events", new=AsyncMock()) as run:
         with TestClient(app) as c:

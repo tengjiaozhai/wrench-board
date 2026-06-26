@@ -1274,14 +1274,27 @@ async def run_diagnostic_session_direct(
     pending_materialize = False
     conversation_count = 0
     if repair_id:
-        resolved_conv_id, pending_materialize = ensure_conversation(
-            device_slug=device_slug,
-            repair_id=repair_id,
-            conv_id=conv_id,
-            tier=tier,
-            memory_root=memory_root,
-            materialize=False,
-        )
+        try:
+            resolved_conv_id, pending_materialize = ensure_conversation(
+                device_slug=device_slug,
+                repair_id=repair_id,
+                conv_id=conv_id,
+                tier=tier,
+                memory_root=memory_root,
+                materialize=False,
+            )
+        except KeyError:
+            # conv_id was pre-allocated in a prior session but never materialized
+            # (tech opened the panel but never sent a message). Fall back to
+            # creating a fresh conversation instead of crashing the WS handler.
+            resolved_conv_id, pending_materialize = ensure_conversation(
+                device_slug=device_slug,
+                repair_id=repair_id,
+                conv_id=None,
+                tier=tier,
+                memory_root=memory_root,
+                materialize=False,
+            )
         conversation_count = len(
             list_conversations(
                 device_slug=device_slug,
@@ -1321,188 +1334,188 @@ async def run_diagnostic_session_direct(
         )
 
     await ws.accept()
-    await ws.send_json(
-        {
-            "type": "session_ready",
-            "mode": "direct",
-            "device_slug": device_slug,
-            "tier": tier,
-            "conv_tier": conv_tier_pref,
-            "model": model,
-            "board_loaded": session.board is not None,
-            "repair_id": repair_id,
-            "conv_id": resolved_conv_id,
-            "conversation_count": conversation_count,
-        }
-    )
-
-    # Hydrate any active protocol so the UI panel rebuilds on reconnect.
-    # Same protocol_cleared fallback as runtime_managed — silence at WS
-    # open would otherwise leave the previous conv's wizard pinned.
-    if repair_id:
-        from api.tools.protocol import load_active_protocol as _lap
-        active = _lap(memory_root, device_slug, repair_id or "", conv_id=resolved_conv_id)
-        if active is not None:
-            await ws.send_json({
-                "type": "protocol_proposed",
-                "protocol_id": active.protocol_id,
-                "title": active.title,
-                "rationale": active.rationale,
-                "steps": [s.model_dump(mode="json") for s in active.steps],
-                "current_step_id": active.current_step_id,
-                "replay": True,
-            })
-        else:
-            await ws.send_json({"type": "protocol_cleared"})
-
-    # Hydrate the boardview overlay snapshot — same rationale as the
-    # managed runtime: the overlay state is the on-disk truth, not
-    # something to reconstruct from chat events. Apply to live SessionState
-    # AND emit the boardview.* events so brd_viewer reconstructs visually.
-    if repair_id:
-        from api.agent.board_state import load_board_state, replay_board_state_to_ws
-        # Wipe the renderer's overlay first — same rationale as
-        # runtime_managed: silence ≠ clear, the previous conv's overlay
-        # would otherwise leak onto a fresh conv's empty canvas.
-        await ws.send_json({"type": "boardview.reset_view"})
-        snapshot = load_board_state(
-            memory_root=memory_root,
-            device_slug=device_slug,
-            repair_id=repair_id,
-            conv_id=resolved_conv_id,
+    try:
+        await ws.send_json(
+            {
+                "type": "session_ready",
+                "mode": "direct",
+                "device_slug": device_slug,
+                "tier": tier,
+                "conv_tier": conv_tier_pref,
+                "model": model,
+                "board_loaded": session.board is not None,
+                "repair_id": repair_id,
+                "conv_id": resolved_conv_id,
+                "conversation_count": conversation_count,
+            }
         )
-        if snapshot:
-            session.restore_view(snapshot)
-            sent = await replay_board_state_to_ws(ws, snapshot)
-            if sent:
+
+        # Hydrate any active protocol so the UI panel rebuilds on reconnect.
+        # Same protocol_cleared fallback as runtime_managed — silence at WS
+        # open would otherwise leave the previous conv's wizard pinned.
+        if repair_id:
+            from api.tools.protocol import load_active_protocol as _lap
+            active = _lap(memory_root, device_slug, repair_id or "", conv_id=resolved_conv_id)
+            if active is not None:
+                await ws.send_json({
+                    "type": "protocol_proposed",
+                    "protocol_id": active.protocol_id,
+                    "title": active.title,
+                    "rationale": active.rationale,
+                    "steps": [s.model_dump(mode="json") for s in active.steps],
+                    "current_step_id": active.current_step_id,
+                    "replay": True,
+                })
+            else:
+                await ws.send_json({"type": "protocol_cleared"})
+
+        # Hydrate the boardview overlay snapshot — same rationale as the
+        # managed runtime: the overlay state is the on-disk truth, not
+        # something to reconstruct from chat events. Apply to live SessionState
+        # AND emit the boardview.* events so brd_viewer reconstructs visually.
+        if repair_id:
+            from api.agent.board_state import load_board_state, replay_board_state_to_ws
+            # Wipe the renderer's overlay first — same rationale as
+            # runtime_managed: silence ≠ clear, the previous conv's overlay
+            # would otherwise leak onto a fresh conv's empty canvas.
+            await ws.send_json({"type": "boardview.reset_view"})
+            snapshot = load_board_state(
+                memory_root=memory_root,
+                device_slug=device_slug,
+                repair_id=repair_id,
+                conv_id=resolved_conv_id,
+            )
+            if snapshot:
+                session.restore_view(snapshot)
+                sent = await replay_board_state_to_ws(ws, snapshot)
+                if sent:
+                    logger.info(
+                        "[Diag-Direct] replayed boardview state for repair=%s conv=%s (%d events)",
+                        repair_id, resolved_conv_id, sent,
+                    )
+
+        # NOTE: prompt + manifest are a snapshot of the session at open time.
+        # The user-turn loop below re-checks the active boardview each turn
+        # (`refresh_board_if_changed`) and recomputes both when it changed.
+        # T9a Phase B: when this board has no schematic of its own, offer the agent a
+        # same-family sibling pack as an indicative fallback reference.
+        cousin_line = None
+        if not _has_electrical_graph(device_slug):
+            cousin_line = await build_cousin_line(device_slug)
+        system_prompt = render_system_prompt(
+            session, device_slug=device_slug, cousin_line=cousin_line
+        )
+        tools = build_tools_manifest(session)
+
+        # Load prior history (+ per-turn costs) when reopening a persisted repair —
+        # the agent continues the same conversation and the chat panel rebuilds
+        # with the right lifetime cost total.
+        records: list[tuple[dict, dict | None]] = []
+        if resolved_conv_id:
+            records = load_events_with_costs(
+                device_slug=device_slug,
+                repair_id=repair_id,
+                conv_id=resolved_conv_id,
+                memory_root=memory_root,
+            )
+        messages: list[dict] = [event for event, _cost in records]
+        if records:
+            logger.info(
+                "[Diag-Direct] Resuming repair=%s conv=%s with %d prior events",
+                repair_id,
+                resolved_conv_id,
+                len(records),
+            )
+            await _replay_history_to_ws(ws, records)
+        elif repair_id and resolved_conv_id:
+            # Fresh session on a known repair — stash the device identity + the
+            # reported symptom as a hidden first user message so the agent has
+            # context the moment the tech DOES type. We do NOT call the agent
+            # here: compute only runs on explicit user action.
+            # The intro is kept in the in-memory `messages` list but we DO NOT
+            # `append_event` it on disk yet when the conv is pending — otherwise
+            # an open-without-message would persist a single intro line into a
+            # never-indexed conv directory. The deferred append happens on the
+            # first real user input below, right after _materialize_pending().
+            intro = build_session_intro(device_slug=device_slug, repair_id=repair_id)
+            if intro:
+                intro_msg = {"role": "user", "content": intro}
+                messages.append(intro_msg)
+                if not pending_state["pending"]:
+                    append_event(
+                        device_slug=device_slug,
+                        repair_id=repair_id,
+                        conv_id=resolved_conv_id,
+                        event=intro_msg,
+                    )
+                await ws.send_json(
+                    {
+                        "type": "context_loaded",
+                        "device_slug": device_slug,
+                        "repair_id": repair_id,
+                    }
+                )
                 logger.info(
-                    "[Diag-Direct] replayed boardview state for repair=%s conv=%s (%d events)",
-                    repair_id, resolved_conv_id, sent,
+                    "[Diag-Direct] Stashed session intro for repair=%s conv=%s (awaiting tech input, pending=%s)",
+                    repair_id,
+                    resolved_conv_id,
+                    pending_state["pending"],
                 )
 
-    # NOTE: prompt + manifest are a snapshot of the session at open time.
-    # The user-turn loop below re-checks the active boardview each turn
-    # (`refresh_board_if_changed`) and recomputes both when it changed.
-    # T9a Phase B: when this board has no schematic of its own, offer the agent a
-    # same-family sibling pack as an indicative fallback reference.
-    cousin_line = None
-    if not _has_electrical_graph(device_slug):
-        cousin_line = await build_cousin_line(device_slug)
-    system_prompt = render_system_prompt(
-        session, device_slug=device_slug, cousin_line=cousin_line
-    )
-    tools = build_tools_manifest(session)
+        # When the conv is pending, the intro_msg above isn't yet on disk. Track
+        # it so we can flush it as the first appended event right after
+        # materialization (preserves the chronological JSONL even though the
+        # write is deferred).
+        pending_intro_msg = (
+            messages[-1]
+            if pending_state["pending"]
+            and messages
+            and isinstance(messages[-1], dict)
+            and messages[-1].get("role") == "user"
+            and isinstance(messages[-1].get("content"), str)
+            and messages[-1]["content"].startswith("[New diagnostic session")
+            else None
+        )
 
-    # Load prior history (+ per-turn costs) when reopening a persisted repair —
-    # the agent continues the same conversation and the chat panel rebuilds
-    # with the right lifetime cost total.
-    records: list[tuple[dict, dict | None]] = []
-    if resolved_conv_id:
-        records = load_events_with_costs(
-            device_slug=device_slug,
-            repair_id=repair_id,
-            conv_id=resolved_conv_id,
-            memory_root=memory_root,
-        )
-    messages: list[dict] = [event for event, _cost in records]
-    if records:
-        logger.info(
-            "[Diag-Direct] Resuming repair=%s conv=%s with %d prior events",
-            repair_id,
-            resolved_conv_id,
-            len(records),
-        )
-        await _replay_history_to_ws(ws, records)
-    elif repair_id and resolved_conv_id:
-        # Fresh session on a known repair — stash the device identity + the
-        # reported symptom as a hidden first user message so the agent has
-        # context the moment the tech DOES type. We do NOT call the agent
-        # here: compute only runs on explicit user action.
-        # The intro is kept in the in-memory `messages` list but we DO NOT
-        # `append_event` it on disk yet when the conv is pending — otherwise
-        # an open-without-message would persist a single intro line into a
-        # never-indexed conv directory. The deferred append happens on the
-        # first real user input below, right after _materialize_pending().
-        intro = build_session_intro(device_slug=device_slug, repair_id=repair_id)
-        if intro:
-            intro_msg = {"role": "user", "content": intro}
-            messages.append(intro_msg)
-            if not pending_state["pending"]:
+        def _materialize_and_flush_intro() -> None:
+            """Materialize the conv on disk, then write the deferred intro so
+            the JSONL still starts with the device-context line — same on-disk
+            shape that resume / replay paths expect."""
+            was_pending = pending_state["pending"]
+            _materialize_pending()
+            if was_pending and pending_intro_msg is not None and resolved_conv_id:
                 append_event(
                     device_slug=device_slug,
                     repair_id=repair_id,
                     conv_id=resolved_conv_id,
-                    event=intro_msg,
+                    event=pending_intro_msg,
                 )
-            await ws.send_json(
-                {
-                    "type": "context_loaded",
-                    "device_slug": device_slug,
-                    "repair_id": repair_id,
-                }
-            )
-            logger.info(
-                "[Diag-Direct] Stashed session intro for repair=%s conv=%s (awaiting tech input, pending=%s)",
-                repair_id,
-                resolved_conv_id,
-                pending_state["pending"],
-            )
 
-    # When the conv is pending, the intro_msg above isn't yet on disk. Track
-    # it so we can flush it as the first appended event right after
-    # materialization (preserves the chronological JSONL even though the
-    # write is deferred).
-    pending_intro_msg = (
-        messages[-1]
-        if pending_state["pending"]
-        and messages
-        and isinstance(messages[-1], dict)
-        and messages[-1].get("role") == "user"
-        and isinstance(messages[-1].get("content"), str)
-        and messages[-1]["content"].startswith("[New diagnostic session")
-        else None
-    )
+        first_user_seen = any(
+            isinstance(m, dict)
+            and m.get("role") == "user"
+            and not (isinstance(m.get("content"), str) and m["content"].startswith("[New diagnostic session"))
+            for m in messages
+        )
 
-    def _materialize_and_flush_intro() -> None:
-        """Materialize the conv on disk, then write the deferred intro so
-        the JSONL still starts with the device-context line — same on-disk
-        shape that resume / replay paths expect."""
-        was_pending = pending_state["pending"]
-        _materialize_pending()
-        if was_pending and pending_intro_msg is not None and resolved_conv_id:
-            append_event(
-                device_slug=device_slug,
-                repair_id=repair_id,
-                conv_id=resolved_conv_id,
-                event=pending_intro_msg,
-            )
+        # Per-turn context tag — restated on EVERY user message so smaller models
+        # don't lose device + symptom on terse follow-ups. ~25 tokens, stable
+        # cacheable prefix.
+        ctx_tag = build_ctx_tag(
+            device_slug=device_slug, repair_id=repair_id, memory_root=memory_root
+        )
 
-    first_user_seen = any(
-        isinstance(m, dict)
-        and m.get("role") == "user"
-        and not (isinstance(m.get("content"), str) and m["content"].startswith("[New diagnostic session"))
-        for m in messages
-    )
+        import asyncio as _asyncio
 
-    # Per-turn context tag — restated on EVERY user message so smaller models
-    # don't lose device + symptom on terse follow-ups. ~25 tokens, stable
-    # cacheable prefix.
-    ctx_tag = build_ctx_tag(
-        device_slug=device_slug, repair_id=repair_id, memory_root=memory_root
-    )
+        from api.tools.measurements import set_ws_emitter
+        from api.tools.validation import set_ws_emitter as set_validation_emitter
 
-    import asyncio as _asyncio
+        def _emit(event: dict) -> None:
+            _asyncio.create_task(ws.send_json(event))
 
-    from api.tools.measurements import set_ws_emitter
-    from api.tools.validation import set_ws_emitter as set_validation_emitter
+        set_ws_emitter(_emit)
+        set_validation_emitter(_emit)
 
-    def _emit(event: dict) -> None:
-        _asyncio.create_task(ws.send_json(event))
-
-    set_ws_emitter(_emit)
-    set_validation_emitter(_emit)
-
-    try:
         while True:
             raw = await ws.receive_text()
             try:
