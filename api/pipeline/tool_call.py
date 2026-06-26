@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from collections.abc import Callable
 from typing import TYPE_CHECKING, TypeVar
 
@@ -196,6 +197,14 @@ async def call_with_forced_tool(
 
         if tool_use is None:
             got = [b.type for b in response.content]
+            fallback = _try_extract_json_from_text(response.content, output_schema)
+            if fallback is not None:
+                logger.warning(
+                    "[%s] no tool_use block — recovered from text content on attempt=%d",
+                    log_label,
+                    attempt,
+                )
+                return fallback
             last_error = f"Expected a tool_use block named '{forced_tool_name}', got blocks: {got}"
             logger.warning("[%s] %s", log_label, last_error)
             if thinking_active:
@@ -530,6 +539,45 @@ async def call_with_query_tools(
         f"[{log_label}] Failed to produce a valid {submit_tool_name} output after "
         f"{submit_attempts} attempts. Last error:\n{last_error}"
     )
+
+
+def _try_extract_json_from_text(content_blocks: list, output_schema: type[T]) -> T | None:
+    """Extract JSON from text blocks when a model ignores tool_use and emits raw JSON.
+
+    Some models (e.g. mimo-v2.5 via newapi proxy) don't honour
+    ``tool_choice={"type":"tool"}`` — they return a single text block containing
+    the full JSON payload instead of a tool_use block. This fallback scans each
+    text block, attempts ``json.loads``, and validates against the schema.
+
+    Tries the full text first, then searches for fenced or bare JSON substrings.
+    Returns the validated model or ``None``.
+    """
+    text_parts = [b.text for b in content_blocks if getattr(b, "type", None) == "text" and getattr(b, "text", None)]
+    if not text_parts:
+        return None
+    full_text = "\n".join(text_parts).strip()
+    candidates: list[str] = []
+    candidates.append(full_text)
+    for m in re.finditer(r"```(?:json)?\s*\n?([\s\S]*?)```", full_text):
+        candidates.append(m.group(1).strip())
+    for m in re.finditer(r"\{[\s\S]*\}", full_text):
+        candidates.append(m.group(0).strip())
+    seen: set[str] = set()
+    for candidate in candidates:
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        try:
+            parsed = json.loads(candidate)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        try:
+            return output_schema.model_validate(parsed)
+        except ValidationError:
+            continue
+    return None
 
 
 def _try_unwrap(payload: object, output_schema: type[T]) -> T | None:

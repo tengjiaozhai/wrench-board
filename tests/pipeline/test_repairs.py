@@ -294,6 +294,92 @@ def test_repairs_endpoint_force_rebuild_persists_repair_and_fires_pipeline(memor
     assert list((slug_dir / "repairs").glob("*.json"))
 
 
+def test_repairs_endpoint_rejects_blank_raw_dump(memory_root, client):
+    res = client.post(
+        "/pipeline/repairs",
+        data={
+            "device_label": "Demo Pi",
+            "symptom": "dead PMIC on power-on",
+            "raw_dump": "   \n\t",
+        },
+    )
+    assert res.status_code == 422
+    assert "raw_dump" in res.text
+
+
+def test_repairs_endpoint_threads_raw_dump_to_pipeline(memory_root, client):
+    captured_kwargs: dict = {}
+
+    async def _capture_pipeline(device_label, **kwargs):
+        captured_kwargs["device_label"] = device_label
+        captured_kwargs.update(kwargs)
+
+    with patch(
+        "api.pipeline.generate_knowledge_pack",
+        new=AsyncMock(side_effect=_capture_pipeline),
+    ):
+        res = client.post(
+            "/pipeline/repairs",
+            data={
+                "device_label": "Brand New Device",
+                "symptom": "screen is dark on power-on",
+                "raw_dump": "# external scout dump",
+            },
+        )
+
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(asyncio.sleep(0.05))
+    finally:
+        loop.close()
+
+    assert res.status_code == 200
+    assert res.json()["pipeline_started"] is True
+    assert captured_kwargs["raw_dump_override"] == "# external scout dump"
+
+
+def test_repairs_endpoint_threads_raw_dump_on_force_rebuild(memory_root, client):
+    slug_dir = memory_root / "demo-pi"
+    slug_dir.mkdir()
+    for name, body in (
+        ("registry.json", '{"schema_version":"1.0","device_label":"Demo Pi","components":[],"signals":[]}'),
+        ("knowledge_graph.json", '{"schema_version":"1.0","nodes":[],"edges":[]}'),
+        ("rules.json", '{"schema_version":"1.0","rules":[]}'),
+        ("dictionary.json", '{"schema_version":"1.0","entries":[]}'),
+    ):
+        (slug_dir / name).write_text(body)
+
+    captured_kwargs: dict = {}
+
+    async def _capture_pipeline(device_label, **kwargs):
+        captured_kwargs["device_label"] = device_label
+        captured_kwargs.update(kwargs)
+
+    with patch(
+        "api.pipeline.generate_knowledge_pack",
+        new=AsyncMock(side_effect=_capture_pipeline),
+    ):
+        res = client.post(
+            "/pipeline/repairs",
+            data={
+                "device_label": "Demo Pi",
+                "symptom": "force rebuild on existing pack",
+                "force_rebuild": "true",
+                "raw_dump": "# override dump",
+            },
+        )
+
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(asyncio.sleep(0.05))
+    finally:
+        loop.close()
+
+    assert res.status_code == 200
+    assert res.json()["pipeline_started"] is True
+    assert captured_kwargs["raw_dump_override"] == "# override dump"
+
+
 def test_repairs_branch_full_when_pack_absent(memory_root, client):
     """Pack missing on disk → Branch 1: full pipeline fires with focus_symptom."""
     captured_kwargs: dict = {}

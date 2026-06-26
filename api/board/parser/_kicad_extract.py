@@ -9,7 +9,9 @@ Output on stdout: JSON dict with keys: outline, parts, pins, nets, nails.
 from __future__ import annotations
 
 import json
+import tempfile
 import sys
+from pathlib import Path
 
 try:
     import pcbnew
@@ -19,7 +21,7 @@ except ImportError as e:  # pragma: no cover - system dep
 
 # KiCad 10.0 requires wxApp before pcbnew.LoadBoard()
 # Redirect wx debug messages to stderr so they don't pollute stdout JSON
-import os, io
+import os
 os.environ["wxLOG"] = ""
 _real_stdout = sys.stdout
 sys.stdout = sys.stderr
@@ -30,6 +32,7 @@ sys.stdout = _real_stdout
 
 
 NM_PER_MIL = 25400  # 1 mil = 25400 nm
+_PAD_ZERO_SIZE_REPLACEMENT = "0.001 0.001"
 
 PAD_SHAPE_NAMES = {
     pcbnew.PAD_SHAPE_CIRCLE: "circle",
@@ -45,122 +48,176 @@ def nm_to_mils(nm: int) -> int:
     return int(round(nm / NM_PER_MIL))
 
 
+def _sanitize_zero_sized_pad_file(path: str) -> str:
+    """Return a temp copy with zero-sized pad sizes nudged to 1um.
+
+    KiCad warns while loading pads with `(size 0 0)`. The downstream parser
+    skips those pads anyway, so we can safely normalize only the pad size
+    literal before handing the file to pcbnew.
+    """
+
+    src = Path(path)
+    text = src.read_text()
+    out_lines: list[str] = []
+    in_pad = False
+    pad_depth = 0
+    replaced = False
+
+    for line in text.splitlines(keepends=True):
+        stripped = line.lstrip()
+        if not in_pad and stripped.startswith("(pad "):
+            in_pad = True
+            pad_depth = 0
+
+        if in_pad and "(size 0 0)" in line:
+            line = line.replace("(size 0 0)", f"(size {_PAD_ZERO_SIZE_REPLACEMENT})")
+            replaced = True
+
+        out_lines.append(line)
+        if in_pad:
+            pad_depth += line.count("(") - line.count(")")
+            if pad_depth <= 0:
+                in_pad = False
+
+    if not replaced:
+        return path
+
+    tmp = tempfile.NamedTemporaryFile(
+        suffix=".kicad_pcb",
+        delete=False,
+        mode="w",
+        encoding="utf-8",
+    )
+    try:
+        tmp.writelines(out_lines)
+        tmp.flush()
+    finally:
+        tmp.close()
+    return tmp.name
+
+
 def main(path: str) -> None:
-    pcb = pcbnew.LoadBoard(path)
+    original_path = path
+    path = _sanitize_zero_sized_pad_file(path)
+    try:
+        pcb = pcbnew.LoadBoard(path)
 
-    # Outline: use GetBoardPolygonOutlines, take first polygon
-    outlines = pcbnew.SHAPE_POLY_SET()
-    pcb.GetBoardPolygonOutlines(outlines, True)  # True = infer outline if necessary
-    outline_pts: list[dict] = []
-    if outlines.OutlineCount() > 0:
-        o = outlines.Outline(0)
-        for i in range(o.PointCount()):
-            p = o.GetPoint(i)
-            outline_pts.append({"x": nm_to_mils(p.x), "y": nm_to_mils(p.y)})
+        # Outline: use GetBoardPolygonOutlines, take first polygon
+        outlines = pcbnew.SHAPE_POLY_SET()
+        pcb.GetBoardPolygonOutlines(outlines, True)  # True = infer outline if necessary
+        outline_pts: list[dict] = []
+        if outlines.OutlineCount() > 0:
+            o = outlines.Outline(0)
+            for i in range(o.PointCount()):
+                p = o.GetPoint(i)
+                outline_pts.append({"x": nm_to_mils(p.x), "y": nm_to_mils(p.y)})
 
-    # Nets: id 0 is "no net" by pcbnew convention
-    net_info = pcb.GetNetInfo()
-    nets: list[dict] = []
-    for n in range(1, net_info.GetNetCount()):
-        ni = net_info.GetNetItem(n)
-        nets.append({"code": ni.GetNetCode(), "name": ni.GetNetname()})
+        # Nets: id 0 is "no net" by pcbnew convention
+        net_info = pcb.GetNetInfo()
+        nets: list[dict] = []
+        for n in range(1, net_info.GetNetCount()):
+            ni = net_info.GetNetItem(n)
+            nets.append({"code": ni.GetNetCode(), "name": ni.GetNetname()})
 
-    # Footprints (parts) and pads (pins)
-    parts: list[dict] = []
-    pins: list[dict] = []
-    pin_index_counter = 0
+        # Footprints (parts) and pads (pins)
+        parts: list[dict] = []
+        pins: list[dict] = []
+        pin_index_counter = 0
 
-    for fp in pcb.GetFootprints():
-        refdes = fp.GetReference()
-        value = fp.GetValue()
-        footprint_name = str(fp.GetFPID().GetLibItemName())
-        lib_nickname = str(fp.GetFPID().GetLibNickname())
-        footprint_ref = f"{lib_nickname}:{footprint_name}" if lib_nickname else footprint_name
-        rotation_deg = fp.GetOrientationDegrees()
-        flipped = fp.IsFlipped()
-        side = 2 if flipped else 1  # match BRD2 convention (1=top, 2=bottom)
-        # Attributes: SMD flag lives in GetAttributes() bitmask
-        attrs = fp.GetAttributes()
-        is_smd = bool(attrs & pcbnew.FP_SMD)
+        for fp in pcb.GetFootprints():
+            refdes = fp.GetReference()
+            value = fp.GetValue()
+            footprint_name = str(fp.GetFPID().GetLibItemName())
+            lib_nickname = str(fp.GetFPID().GetLibNickname())
+            footprint_ref = f"{lib_nickname}:{footprint_name}" if lib_nickname else footprint_name
+            rotation_deg = fp.GetOrientationDegrees()
+            flipped = fp.IsFlipped()
+            side = 2 if flipped else 1  # match BRD2 convention (1=top, 2=bottom)
+            # Attributes: SMD flag lives in GetAttributes() bitmask
+            attrs = fp.GetAttributes()
+            is_smd = bool(attrs & pcbnew.FP_SMD)
 
-        # Pads-only bounding box (union over pad.GetBoundingBox() in board coords)
-        pads = list(fp.Pads())
-        if pads:
-            x0 = y0 = float("inf")
-            x1 = y1 = float("-inf")
+            # Pads-only bounding box (union over pad.GetBoundingBox() in board coords)
+            pads = list(fp.Pads())
+            if pads:
+                x0 = y0 = float("inf")
+                x1 = y1 = float("-inf")
+                for pad in pads:
+                    bb = pad.GetBoundingBox()
+                    if bb.GetLeft() < x0:
+                        x0 = bb.GetLeft()
+                    if bb.GetTop() < y0:
+                        y0 = bb.GetTop()
+                    if bb.GetRight() > x1:
+                        x1 = bb.GetRight()
+                    if bb.GetBottom() > y1:
+                        y1 = bb.GetBottom()
+            else:
+                # Fallback: overall bbox
+                bb = fp.GetBoundingBox()
+                x0, y0, x1, y1 = bb.GetLeft(), bb.GetTop(), bb.GetRight(), bb.GetBottom()
+
+            part_first_pin = pin_index_counter
+            part_entry = {
+                "refdes": refdes,
+                "value": value or None,
+                "footprint": footprint_ref,
+                "rotation_deg": rotation_deg,
+                "side": side,
+                "is_smd": is_smd,
+                "bbox": [
+                    {"x": nm_to_mils(x0), "y": nm_to_mils(y0)},
+                    {"x": nm_to_mils(x1), "y": nm_to_mils(y1)},
+                ],
+                "first_pin": part_first_pin,
+            }
+            parts.append(part_entry)
+
+            # Per-pin data — note: each pad has its own orientation independent
+            # of the parent footprint (on multi-row packages like QFP / BGA the
+            # pads on the sides are rotated 90° relative to the top/bottom pads,
+            # regardless of the footprint's overall placement rotation).
             for pad in pads:
-                bb = pad.GetBoundingBox()
-                if bb.GetLeft() < x0:
-                    x0 = bb.GetLeft()
-                if bb.GetTop() < y0:
-                    y0 = bb.GetTop()
-                if bb.GetRight() > x1:
-                    x1 = bb.GetRight()
-                if bb.GetBottom() > y1:
-                    y1 = bb.GetBottom()
-        else:
-            # Fallback: overall bbox
-            bb = fp.GetBoundingBox()
-            x0, y0, x1, y1 = bb.GetLeft(), bb.GetTop(), bb.GetRight(), bb.GetBottom()
+                pos = pad.GetPosition()
+                size = pad.GetSize()
+                # Skip zero-sized pads — these are legacy placeholders in KiCad
+                # symbol libraries that pcbnew warns about but still loads.
+                if size.x == 0 or size.y == 0:
+                    continue
+                shape_id = pad.GetShape()
+                shape = PAD_SHAPE_NAMES.get(shape_id, "custom")
+                net_code = pad.GetNetCode()
+                pin_side_flipped = pad.IsFlipped()
+                pad_rot = pad.GetOrientationDegrees() if hasattr(pad, "GetOrientationDegrees") else 0.0
+                pins.append({
+                    "x": nm_to_mils(pos.x),
+                    "y": nm_to_mils(pos.y),
+                    "net_code": net_code,
+                    "side": 2 if pin_side_flipped else 1,
+                    "pad_shape": shape,
+                    "pad_size": [nm_to_mils(size.x), nm_to_mils(size.y)],
+                    "pad_rotation_deg": pad_rot,
+                    "pin_number": pad.GetNumber(),
+                })
+                pin_index_counter += 1
 
-        part_first_pin = pin_index_counter
-        part_entry = {
-            "refdes": refdes,
-            "value": value or None,
-            "footprint": footprint_ref,
-            "rotation_deg": rotation_deg,
-            "side": side,
-            "is_smd": is_smd,
-            "bbox": [
-                {"x": nm_to_mils(x0), "y": nm_to_mils(y0)},
-                {"x": nm_to_mils(x1), "y": nm_to_mils(y1)},
-            ],
-            "first_pin": part_first_pin,
+        # Nails: pcbnew exposes test points as footprints with PTH/SMD attrs;
+        # for MVP we emit an empty list — upstream BRD2 parser handles nails from
+        # the .brd NAILS: block, but KiCad doesn't have a dedicated "nails" concept
+        # in the same sense. Leave empty; downstream is fine (b.nails = []).
+        nails: list[dict] = []
+
+        out = {
+            "outline": outline_pts,
+            "parts": parts,
+            "pins": pins,
+            "nets": nets,
+            "nails": nails,
         }
-        parts.append(part_entry)
-
-        # Per-pin data — note: each pad has its own orientation independent
-        # of the parent footprint (on multi-row packages like QFP / BGA the
-        # pads on the sides are rotated 90° relative to the top/bottom pads,
-        # regardless of the footprint's overall placement rotation).
-        for pad in pads:
-            pos = pad.GetPosition()
-            size = pad.GetSize()
-            # Skip zero-sized pads — these are legacy placeholders in KiCad
-            # symbol libraries that pcbnew warns about but still loads.
-            if size.x == 0 or size.y == 0:
-                continue
-            shape_id = pad.GetShape()
-            shape = PAD_SHAPE_NAMES.get(shape_id, "custom")
-            net_code = pad.GetNetCode()
-            pin_side_flipped = pad.IsFlipped()
-            pad_rot = pad.GetOrientationDegrees() if hasattr(pad, "GetOrientationDegrees") else 0.0
-            pins.append({
-                "x": nm_to_mils(pos.x),
-                "y": nm_to_mils(pos.y),
-                "net_code": net_code,
-                "side": 2 if pin_side_flipped else 1,
-                "pad_shape": shape,
-                "pad_size": [nm_to_mils(size.x), nm_to_mils(size.y)],
-                "pad_rotation_deg": pad_rot,
-                "pin_number": pad.GetNumber(),
-            })
-            pin_index_counter += 1
-
-    # Nails: pcbnew exposes test points as footprints with PTH/SMD attrs;
-    # for MVP we emit an empty list — upstream BRD2 parser handles nails from
-    # the .brd NAILS: block, but KiCad doesn't have a dedicated "nails" concept
-    # in the same sense. Leave empty; downstream is fine (b.nails = []).
-    nails: list[dict] = []
-
-    out = {
-        "outline": outline_pts,
-        "parts": parts,
-        "pins": pins,
-        "nets": nets,
-        "nails": nails,
-    }
-    sys.stdout.write(json.dumps(out))
+        sys.stdout.write(json.dumps(out))
+    finally:
+        if path != original_path:
+            Path(path).unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

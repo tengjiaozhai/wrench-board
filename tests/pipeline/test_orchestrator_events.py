@@ -106,6 +106,85 @@ async def test_pipeline_emits_phase_events_in_order(
     assert done["revise_rounds_used"] == 0
 
 
+async def test_pipeline_skips_scout_when_raw_dump_override_supplied(
+    tmp_path, dummy_registry, dummy_outputs, approved_verdict
+):
+    kg, rules, dictionary = dummy_outputs
+    events: list[dict[str, Any]] = []
+
+    async def collect(ev: dict[str, Any]) -> None:
+        events.append(ev)
+
+    with (
+        patch("api.pipeline.orchestrator.run_scout", new=AsyncMock()) as m_scout,
+        patch(
+            "api.pipeline.orchestrator.run_registry_builder",
+            new=AsyncMock(return_value=dummy_registry),
+        ),
+        patch(
+            "api.pipeline.orchestrator.run_writers_parallel",
+            new=AsyncMock(return_value=(kg, rules, dictionary)),
+        ),
+        patch(
+            "api.pipeline.orchestrator.run_auditor",
+            new=AsyncMock(return_value=approved_verdict),
+        ),
+    ):
+        result = await orchestrator.generate_knowledge_pack(
+            "Demo",
+            client=object(),
+            memory_root=tmp_path,
+            on_event=collect,
+            raw_dump_override="# external dump",
+        )
+
+    assert result.verdict.overall_status == "APPROVED"
+    m_scout.assert_not_called()
+    assert (tmp_path / "demo" / "raw_research_dump.md").read_text(encoding="utf-8") == "# external dump"
+    scout_finish = next(
+        e for e in events if e["type"] == "phase_finished" and e.get("phase") == "scout"
+    )
+    assert scout_finish["skipped"] is True
+    assert scout_finish["source"] == "external_raw_dump"
+
+
+async def test_pipeline_reuses_existing_raw_dump_without_calling_scout(
+    tmp_path, dummy_registry, dummy_outputs, approved_verdict
+):
+    kg, rules, dictionary = dummy_outputs
+    pack_dir = tmp_path / "demo"
+    pack_dir.mkdir(parents=True)
+    (pack_dir / "audit").mkdir()
+    (pack_dir / "audit" / "raw_research_dump.md").write_text(
+        "# existing dump", encoding="utf-8"
+    )
+
+    with (
+        patch("api.pipeline.orchestrator.run_scout", new=AsyncMock()) as m_scout,
+        patch(
+            "api.pipeline.orchestrator.run_registry_builder",
+            new=AsyncMock(return_value=dummy_registry),
+        ) as m_registry,
+        patch(
+            "api.pipeline.orchestrator.run_writers_parallel",
+            new=AsyncMock(return_value=(kg, rules, dictionary)),
+        ),
+        patch(
+            "api.pipeline.orchestrator.run_auditor",
+            new=AsyncMock(return_value=approved_verdict),
+        ),
+    ):
+        result = await orchestrator.generate_knowledge_pack(
+            "Demo",
+            client=object(),
+            memory_root=tmp_path,
+        )
+
+    assert result.verdict.overall_status == "APPROVED"
+    m_scout.assert_not_called()
+    assert m_registry.await_args.kwargs["raw_dump"] == "# existing dump"
+
+
 async def test_pipeline_emits_audit_round_step(
     tmp_path, dummy_registry, dummy_outputs, approved_verdict
 ):

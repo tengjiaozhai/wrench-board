@@ -89,6 +89,29 @@ def test_kicad_parser_rejects_invalid_path(tmp_path):
         KicadPcbParser().parse_file(bad)
 
 
+def test_kicad_extract_sanitizes_zero_sized_pads_before_load(tmp_path):
+    from api.board.parser._kicad_extract import _sanitize_zero_sized_pad_file
+
+    pcb = tmp_path / "board.kicad_pcb"
+    pcb.write_text(
+        "(kicad_pcb (version 20221018)\n"
+        "  (footprint \"\"\n"
+        "    (pad \"1\" smd circle\n"
+        "      (at 0 0)\n"
+        "      (size 0 0)\n"
+        "    )\n"
+        "  )\n"
+        "  (gr_line (start 0 0) (end 1 1) (layer \"Edge.Cuts\") (width 0))\n"
+        ")\n"
+    )
+
+    sanitized = _sanitize_zero_sized_pad_file(str(pcb))
+    assert sanitized != str(pcb)
+    assert "(size 0.001 0.001)" in Path(sanitized).read_text()
+    assert "(size 0 0)" not in Path(sanitized).read_text()
+    assert "(width 0)" in Path(sanitized).read_text()
+
+
 # --- Pre-extracted sidecar (deploys without pcbnew) ---------------------------
 # pcbnew ships with KiCad (not pip-installable), so a slim Docker runtime can't
 # run the extractor subprocess. A `<file>.extract.json` sidecar generated where

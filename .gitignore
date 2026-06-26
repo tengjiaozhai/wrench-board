@@ -216,3 +216,5 @@ docs/superpowers/
 archive-evolve-runs/
 tests/fixtures/macro_devboard_synthetic.png
 memory/
+.env copy
+.env copy 2

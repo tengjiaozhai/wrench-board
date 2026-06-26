@@ -86,6 +86,14 @@ make run              # uvicorn --reload on http://localhost:8000
 ```bash
 make demo-fallback
 # or: DIAGNOSTIC_MODE=direct make run
+
+cd /Volumes/PortableSSD/tin/wrench-board && \
+mkdir -p logs && \
+LOG="logs/wrench-board_$(date +%Y%m%d_%H%M%S).log" && \
+echo "日志文件: $LOG" && \
+NO_PROXY="localhost,127.0.0.1,*.tinno.com,tinno.com,::1" \
+HTTPS_PROXY="" HTTP_PROXY="" \
+make run 2>&1 | tee -a "$LOG"
 ```
 
 ## 许可与致谢
