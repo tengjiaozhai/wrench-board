@@ -36,9 +36,13 @@ _TRANSPORT_TRIES = 3
 _TRANSPORT_BACKOFF_S = (2.0, 5.0)
 
 
+_THIRD_PARTY_MODEL_KEYWORDS = ("qwen", "mimo")
+
+
 def _needs_third_party_forced_tool_compat(model: str) -> bool:
     """Return True for models known to need Anthropic-compat forced-tool downgrades."""
-    return "qwen" in str(model).lower()
+    lower = str(model).lower()
+    return any(kw in lower for kw in _THIRD_PARTY_MODEL_KEYWORDS)
 
 
 def _append_critical_tool_instruction(

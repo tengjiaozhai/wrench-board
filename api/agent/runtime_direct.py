@@ -1781,7 +1781,7 @@ async def run_diagnostic_session_direct(
                 conv_id=resolved_conv_id,
                 memory_root=memory_root,
             )
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, OSError):
         logger.info(
             "[Diag-Direct] WS closed for device=%s repair=%s conv=%s",
             device_slug,

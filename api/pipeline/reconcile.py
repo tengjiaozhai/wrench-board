@@ -189,6 +189,33 @@ def prune_contradicted_edges(
     return pruned, contradicted
 
 
+def prune_orphan_nodes(
+    knowledge_graph: KnowledgeGraph,
+) -> tuple[KnowledgeGraph, list[str]]:
+    """Return a NEW knowledge graph with every orphan node removed, plus the
+    list of removed node ids.
+
+    An orphan is a node referenced by no edge — a dangling assertion the
+    Cartographe forgot to wire. The LLM revise-loop cannot fix these (they
+    require topology changes, not text edits), so this deterministic backstop
+    drops them after the revise-loop ends. Self-edges (src == dst) are
+    skipped — a node wired only to itself is still dangling. Does NOT mutate
+    the input."""
+    edged: set[str] = set()
+    for edge in knowledge_graph.edges:
+        if edge.source_id == edge.target_id:
+            continue
+        edged.add(edge.source_id)
+        edged.add(edge.target_id)
+    orphans = sorted(n.id for n in knowledge_graph.nodes if n.id not in edged)
+    if not orphans:
+        return knowledge_graph, []
+    orphan_set = set(orphans)
+    kept_nodes = [n for n in knowledge_graph.nodes if n.id not in orphan_set]
+    pruned = knowledge_graph.model_copy(update={"nodes": kept_nodes})
+    return pruned, orphans
+
+
 def find_kg_fictions(
     knowledge_graph: KnowledgeGraph, graph_truth: GraphTruth, seen_refdes: set[str]
 ) -> list[str]:

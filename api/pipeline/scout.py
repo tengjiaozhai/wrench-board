@@ -23,6 +23,7 @@ from api.pipeline.prompts import (
     SCOUT_USER_TEMPLATE,
     device_kind_constraint,
 )
+from api.pipeline.tool_call import _needs_third_party_forced_tool_compat
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -235,6 +236,17 @@ async def _scout_once(
     on_event: Callable[[dict], Awaitable[None]] | None = None,
 ) -> str:
     """One end-to-end Scout run, including server-side `pause_turn` handling."""
+    # Scout relies on Anthropic's native `web_search` tool which third-party
+    # relays (qwen, mimo) don't support. Fail fast with a clear error instead
+    # of wasting tokens on a call that will return no text output.
+    if _needs_third_party_forced_tool_compat(model):
+        raise RuntimeError(
+            f"[Scout] web_search tool is not supported by third-party model {model!r}. "
+            "Scout requires Anthropic's native web_search_20250305 tool. "
+            "Use a native Anthropic model (claude-*) for Scout, or provide a "
+            "raw_dump_override to skip the research phase."
+        )
+
     user_prompt = _build_user_prompt(
         device_label=device_label,
         attempt=attempt,
@@ -263,15 +275,20 @@ async def _scout_once(
                 "index": iteration + 1,
             })
         effort = "xhigh" if str(model).startswith("claude-opus-4-") else "high"
-        response = await client.messages.create(
-            model=model,
-            max_tokens=16000,
-            system=SCOUT_SYSTEM,
-            messages=messages,
-            tools=[web_search_tool],
-            thinking={"type": "adaptive", "display": "summarized"},
-            output_config={"effort": effort},
-        )
+        third_party = _needs_third_party_forced_tool_compat(model)
+        create_kwargs: dict = {
+            "model": model,
+            "max_tokens": 16000,
+            "system": SCOUT_SYSTEM,
+            "messages": messages,
+            "tools": [web_search_tool],
+        }
+        # Third-party relays (qwen, mimo) don't support Anthropic's native
+        # thinking parameter or output_config — skip them to avoid crashes.
+        if not third_party:
+            create_kwargs["thinking"] = {"type": "adaptive", "display": "summarized"}
+            create_kwargs["output_config"] = {"effort": effort}
+        response = await client.messages.create(**create_kwargs)
 
         total_input += response.usage.input_tokens
         total_output += response.usage.output_tokens
