@@ -43,6 +43,56 @@ PAGE_MAX_TOKENS = 32768
 # direct path (via tool_call.py) and the batch-vision twin.
 PAGE_THINKING_PARAM = {"type": "adaptive", "display": "summarized"}
 
+# ┌─────────────────────────────────────────────────────────────────────┐
+# │ 中文参考译文（仅供注释，不参与实际调用）                            │
+# ├─────────────────────────────────────────────────────────────────────┤
+# │ 你是一名专业的电子技师和原理图分析师。                               │
+# │                                                                     │
+# │ 你将收到一块板级原理图 PDF 的单页渲染图。你的任务是发出一次           │
+# │ `submit_schematic_page` 工具调用，其 payload 须严格匹配              │
+# │ SchematicPageGraph schema。                                         │
+# │                                                                     │
+# │ 硬性规则——绝不违反：                                                │
+# │ 1. 绝不捏造 refdes、网络标签、引脚号、数值或 MPN。若从图像无法       │
+# │    确定某字段，使用 null 或省略该条目。空值永远优于编造值。            │
+# │ 2. 只要能从页面推断语义关系，就填充 `typed_edges`：                   │
+# │    `powers`/`powered_by`（稳压器输出/输入）、`enables`（EN/ON/OFF    │
+# │    信号）、`resets`（RESET 引脚）、`decouples`（电源引脚旁的旁路      │
+# │    电容）、`filters`（轨道上的串联电感）。                            │
+# │ 3. 对页面上可见的每个跨页连接器或层次端口，发出一条                   │
+# │    `CrossPageRef`，填入其标签（符号旁印刷的文字）。根据箭头方向       │
+# │    设置 `direction` 为 `in`、`out`、`bidir`；KiCad 子图引用用         │
+# │    `subsheet`。                                                     │
+# │ 4. 根据引脚名称和元件上下文分类每个引脚的 `role`。典型模式：          │
+# │    - 电源：`VIN`/`VDD`/`VCC` → `power_in`；`VOUT` → `power_out`；   │
+# │      `SW`/`LX` → `switch_node`；`GND`/`VSS` → `ground`。            │
+# │    - 控制：`EN`/`SHDN` → `enable_in`；`PG`/`PGOOD` →                │
+# │      `power_good_out`；`RESET`/`RSTn` → `reset_in`/`reset_out`；    │
+# │      `FB`/`SENSE` → `feedback_in`；`CLK`/`XTAL` →                   │
+# │      `clock_in`/`clock_out`。                                       │
+# │    - 数字总线：`Dn`/`DQn`（数据）、`An`/`BA`/`RAS`/`CAS`/`WE`       │
+# │      （地址/控制）、`D+`/`D-`/`TX_P`/`RX_P`（差分对）→ `bus_pin`。   │
+# │    - 通用 IO：`GPIOn`/`IO_n` → `signal_inout`；`IRQ`/`INT` →        │
+# │      `signal_out`。                                                 │
+# │    - 其他：`NC`/`N.C.` → `no_connect`；连接器上无标签引脚 →          │
+# │      `terminal`。无匹配时用 `unknown`，绝不捏造 role。               │
+# │ 5. 标注为 "NOSTUFF"/"DNP"/"DNI" 的元件设置 `populated=False`         │
+# │    （该字段在 PageNode 顶层，不在 `value` 内）。                     │
+# │ 6. 捕获设计者标注（品红色/斜体文本）为 `designer_notes`。             │
+# │                                                                     │
+# │ schema 字段放置要点：                                                │
+# │ - `populated`（布尔）仅在 PageNode 顶层。                           │
+# │ - `polarity_marker`（布尔）仅在嵌套 `value` 对象内                   │
+# │   （即 `node.value.polarity_marker`），不在节点顶层。                │
+# │ - `primary`、`package`、`mpn`、`tolerance` 等均在 `value` 内。       │
+# │   读到 "LM2677SX-5" 时，同时填入 `value.raw` 和 `value.mpn`。       │
+# │ 7. 诚实使用 `confidence`（0.0–1.0）：所有元素清晰可辨时为 1.0，       │
+# │    模糊/旋转/密度过高时降低。                                       │
+# │ 8. 用 `ambiguities` 标记你*看到*但*无法确认*的内容。                  │
+# │                                                                     │
+# │ 页面图像是唯一事实来源——看不到的就视为真正未知，输出 null/空而非      │
+# │ 编造。                                                              │
+# └─────────────────────────────────────────────────────────────────────┘
 
 SYSTEM_PROMPT = """You are an expert electronics technician and schematic analyst.
 
@@ -109,16 +159,108 @@ as genuinely unknown, and emit null/empty rather than fabricate.
 
 
 def _submit_page_tool() -> dict:
+    """构建传给 Anthropic Messages API 的工具声明——告诉模型"你可以调用这个工具"。
+
+    返回的 dict 会作为 `tools` 参数的一项传给 `client.messages.create()`。
+    模型分析完图片后，以 `tool_use` 块返回结构化 JSON，代码侧通过
+    `call_with_forced_tool` 捕获并用 Pydantic 校验 payload。
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │ 返回值 JSON 结构说明                                            │
+    ├─────────────────────────────────────────────────────────────────┤
+    │ {                                                               │
+    │   "name": "submit_schematic_page",                              │
+    │     ↑ 工具名称。模型返回的 tool_use 块中 name 字段必须匹配此值。 │
+    │                                                                 │
+    │   "description": "Submit the structured analysis of one         │
+    │     schematic page as a SchematicPageGraph payload.",            │
+    │     ↑ 工具描述，帮助模型理解何时/如何使用。                      │
+    │                                                                 │
+    │   "input_schema": { ... },                                      │
+    │     ↑ 从 SchematicPageGraph Pydantic model 自动生成的 JSON       │
+    │     Schema，定义模型调用时必须遵守的参数结构。Anthropic API 用   │
+    │     此 schema 校验输出，不合法的 payload 会被拒绝。              │
+    │                                                                 │
+    │   "cache_control": {"type": "ephemeral"}                        │
+    │     ↑ 启用 Anthropic prompt cache。12 页批量调用共享同一份       │
+    │     ~5-6k token 的 schema 定义，热命中时 input 成本降 50-90%。   │
+    │ }                                                               │
+    ├─────────────────────────────────────────────────────────────────┤
+    │ input_schema 展开后的顶层字段（SchematicPageGraph）：            │
+    │                                                                 │
+    │ schema_version  — 固定 "1.0"                                    │
+    │ page            — 1-based 页码                                  │
+    │ sheet_name      — 标题栏中的图纸名（可选）                      │
+    │ sheet_path      — 层次化图纸路径（可选，用于重建图纸树）        │
+    │ page_kind       — 页面类别：schematic/notes/block_diagram 等    │
+    │ orientation     — 页面方向：portrait/landscape                  │
+    │ confidence      — 模型自评可信度 0.0–1.0（引脚不可辨/密集时降低）│
+    │ nodes           — 元件列表（PageNode[]）：refdes/type/value/    │
+    │                   pins/populated                                │
+    │ nets            — 网络列表（PageNet[]）：local_id/label/        │
+    │                   is_power/connects                             │
+    │ cross_page_refs — 跨页连接器（CrossPageRef[]）：label/direction │
+    │ typed_edges     — 语义拓扑边（TypedEdge[]）：src/dst/kind       │
+    │                   （powers/enables/decouples/filters 等）        │
+    │ designer_notes  — 设计者标注（DesignerNote[]）                  │
+    │ ambiguities     — 模型看到但无法确认的内容（Ambiguity[]）       │
+    ├─────────────────────────────────────────────────────────────────┤
+    │ 子模型速查：                                                    │
+    │                                                                 │
+    │ PageNode:                                                       │
+    │   refdes (str)     — 位号，如 "U7", "C29"                      │
+    │   type (str)       — 元件族：resistor/capacitor/ic/connector…   │
+    │   value (obj|null) — 值：raw/primary/package/mpn/tolerance…     │
+    │   pins (PagePin[]) — 引脚：number/name/role/net_label           │
+    │   populated (bool) — false = DNP/DNI/NOSTUFF                    │
+    │                                                                 │
+    │ PagePin:                                                        │
+    │   number (str)       — 引脚号，如 "1", "A3"                     │
+    │   name (str|null)    — 引脚功能名，如 "VIN", "EN", "SW"         │
+    │   role (str)         — 语义分类：power_in/ground/signal_out/    │
+    │                        enable_in/feedback_in/bus_pin/unknown…   │
+    │   net_label (str|null)— 连接的网络标签，如 "+3V3", null=未标注   │
+    │                                                                 │
+    │ PageNet:                                                        │
+    │   local_id (str)    — 页内唯一标识，如 "net_0001"               │
+    │   label (str|null)  — 网络标签："+3V3", "GND", null=未标注       │
+    │   is_power (bool)   — 是否电源轨（VCC/VDD/GND/+xVy）           │
+    │   is_global (bool)  — 是否跨页全局融合（GND, 主电源轨）         │
+    │   connects (str[])  — 连接的引脚列表，如 ["U7.1", "C29.2"]     │
+    │                                                                 │
+    │ CrossPageRef:                                                   │
+    │   label (str|null)     — 跨页连接器旁的文字标签                 │
+    │   direction (str)      — in/out/bidir/subsheet                  │
+    │   at_pin (str|null)    — 根植引脚，如 "U7.22"                   │
+    │   target_hint (str|null)— 目标位置提示，如 "page 5, zone B3"    │
+    │                                                                 │
+    │ TypedEdge:                                                      │
+    │   src (str)  — 边起点（refdes 或 net label）                    │
+    │   dst (str)  — 边终点（refdes 或 net label）                    │
+    │   kind (str) — 语义关系：powers/enables/resets/decouples/       │
+    │                filters/clocks/produces_signal/consumes_signal…  │
+    │                                                                 │
+    │ DesignerNote:                                                   │
+    │   text (str)                — 标注原文                          │
+    │   attached_to_refdes (str|null) — 关联的元件                    │
+    │   attached_to_net (str|null)    — 关联的网络                    │
+    │                                                                 │
+    │ Ambiguity:                                                      │
+    │   description (str)   — 无法确认的内容描述                      │
+    │   related_refdes (str[]) — 关联元件                            │
+    │   related_nets (str[])   — 关联网络                            │
+    └─────────────────────────────────────────────────────────────────┘
+    """
     return {
         "name": SUBMIT_PAGE_TOOL_NAME,
         "description": (
             "Submit the structured analysis of one schematic page as a "
             "SchematicPageGraph payload."
         ),
+        # 从 Pydantic model 自动生成 JSON Schema，Anthropic API 用此校验输出
         "input_schema": SchematicPageGraph.model_json_schema(),
-        # Cache the (large) tool definition — identical across every page call
-        # in a batch. On a warm hit Anthropic reports these tokens as
-        # `cache_read_input_tokens`, cutting input cost 50-90%.
+        # 标记为可缓存——12 页批量调用共享同一份 schema 定义，
+        # 热命中时 input 成本降 50-90%
         "cache_control": {"type": "ephemeral"},
     }
 
@@ -142,23 +284,30 @@ def build_page_user_content(
     labels and values from the grounding — collapsing the fabrication failure
     mode observed on cheaper models running nu.
     """
+    # 读取渲染好的 PNG 文件并转为 base64，供 vision API 接收图片
     png_bytes = rendered.png_path.read_bytes()
     b64 = base64.standard_b64encode(png_bytes).decode("ascii")
 
+    # 拼装上下文信息行：设备名 + 页码 + 页面方向
     context_line = (
         f"Device: {device_label or 'unknown'}. "
         f"Page {rendered.page_number} of {total_pages}. "
         f"Orientation: {rendered.orientation}."
     )
+    # 扫描件（无文字/矢量）清晰度低，提示模型降低 confidence
     if rendered.is_scanned:
         context_line += (
             " This page looks rasterised (no extractable text or vectors) — "
             "expect lower legibility and set `confidence` accordingly."
         )
 
+    # ── 构建 user message 的 content block 列表 ──
+    # block 1: 上下文文本（设备名、页码、方向、扫描件提示）
     user_content: list[dict] = [{"type": "text", "text": context_line}]
+    # block 2: grounding 文本真值集（可选，PDF 提取的文字，用于防幻觉）
     if grounding:
         user_content.append({"type": "text", "text": grounding})
+    # block 3: 原理图页面图片（base64 编码）
     user_content.append(
         {
             "type": "image",
@@ -169,6 +318,79 @@ def build_page_user_content(
             },
         }
     )
+
+    # ── 主分析指令 ──
+    # 告诉模型：调用 submit_schematic_page 提交结构化结果；
+    # 遵守 system prompt 的硬性规则，空值优于编造；
+    # nodes/nets/typed_edges/designer_notes 都应填充，空数组是红旗；
+    # 100+ 引脚元件页应有 30-50+ 独立网络标签（含 _0/_1/_2 后缀变体）；
+    # 小字电源轨标签是最常遗漏的，要系统性扫描整页；
+    # 追踪每根印制导线从引脚到终端标签/跨页连接器/电源符号，
+    # 不要从空间邻近关系猜 net 归属；
+    # 电源分配页每个拓扑关系都应产生 typed_edges（decouples/filters/powers）；
+    # 80+ 元件的电源页通常应有 40-80 条边，<15 条说明拓扑未真正追踪；
+    # 反幻觉守卫：边的端点必须已存在于 nodes 或 nets 中，不能捏造。
+    #
+    # ┌─────────────────────────────────────────────────────────────────┐
+    # │ SYSTEM_PROMPT 与 instruction 的关系：                          │
+    # │                                                                 │
+    # │ SYSTEM_PROMPT = "宪法"（永久规则，所有页面共享，通过 prompt     │
+    # │   cache 缓存）：定义角色身份、6 条硬性规则、schema 字段放置     │
+    # │   要点、confidence/ambiguities 使用规范。                       │
+    # │                                                                 │
+    # │ instruction = "操作手册"（针对当前页面的具体指导，每次调用时     │
+    # │   动态构建）：告诉模型如何处理这张具体的图片——提交结构化结果、  │
+    # │   填充所有字段、网络标签密度要求、导线追踪方法、电源页拓扑边    │
+    # │   要求、反幻觉守卫。                                            │
+    # │                                                                 │
+    # │ 两者分工：SYSTEM_PROMPT 约束"怎么做"（规则），instruction       │
+    # │ 约束"做什么"（任务）。Anthropic prompt cache 对 SYSTEM_PROMPT   │
+    # │ 做前缀缓存，12 页批量调用共享同一份缓存，节省 ~5-6k tokens。    │
+    # └─────────────────────────────────────────────────────────────────┘
+    #
+    # ┌─────────────────────────────────────────────────────────────────┐
+    # │ instruction 中文参考译文（仅供注释，不参与实际调用）             │
+    # ├─────────────────────────────────────────────────────────────────┤
+    # │ 分析此页面并调用 submit_schematic_page 工具提交完整的            │
+    # │ SchematicPageGraph payload。遵守 system prompt 的所有硬性规则。  │
+    # │ 空值/空字段永远优于编造。                                       │
+    # │                                                                 │
+    # │ 一页真实的原理图应填充所有字段：`nodes`、`nets`、                │
+    # │ `typed_edges`、`designer_notes`——空数组是红旗，不是目标。        │
+    # │                                                                 │
+    # │ 引脚/扇出页（单个元件 100+ 引脚）应有 30-50+ 个独立网络标签：    │
+    # │ 逐一枚举为各自的 PageNet，含索引后缀变体（如 _0/_1/_2/_3 是      │
+    # │ 不同网络，不是基础名的别名）。                                   │
+    # │                                                                 │
+    # │ 角落或辅助功能块旁的小字电源轨标签是最常遗漏的——要系统性扫描     │
+    # │ 整张图，不要只看视觉主导区域。                                   │
+    # │                                                                 │
+    # │ 分配引脚到网络时，沿每根印制导线从引脚追踪到终端标签、跨页       │
+    # │ 连接器或电源符号；不要仅凭引脚与附近标签的空间邻近关系猜测。     │
+    # │                                                                 │
+    # │ 另外，在板级电源分配页（可通过多个稳压器 [buck/LDO/负载开关      │
+    # │ IC] 经磁珠、电感、保险丝和旁路电容馈电给多个下游负载来识别）     │
+    # │ 上，每个可见的拓扑关系都应产生一条 `typed_edges`。具体而言：      │
+    # │   - IC 电源/GND 引脚旁聚集的陶瓷电容 → `decouples` 边            │
+    # │   - 轨道上源与负载之间的串联磁珠/电感 → `filters` 边             │
+    # │   - 轨道入口处的保险丝/串联电阻 → `powers` 边（源→汇）           │
+    # │   - 稳压器输出引脚（VOUT/SW 后 LC/LDO 输出）→ `powers` 边       │
+    # │     （馈给页面上每个负载）                                       │
+    # │ 80+ 元件的电源页通常应有 40-80 条此类边；<15 条说明拓扑未真正    │
+    # │ 追踪。                                                          │
+    # │                                                                 │
+    # │ 关键反幻觉守卫：边的端点（`src`/`dst`）必须已存在于你的          │
+    # │ `nodes`（refdes）或 `nets` 列表中——绝不为凑齐边而捏造端点；      │
+    # │ 若无法从图像确认两个端点，就省略该边。                           │
+    # │                                                                 │
+    # │ grounding 存在时追加：                                           │
+    # │ 以 grounding 文本块为拼写/存在性校验基准：你发出的 refdes 和     │
+    # │ 网络标签应来自 grounding 集合（如果与 grounding 矛盾，以         │
+    # │ grounding 为准，拒绝你自己的读数）。grounding 在密集页面上不一   │
+    # │ 定完整——如果图像清晰显示了列表中缺失的标签，你可以发出它，同时   │
+    # │ 在 `ambiguities` 中添加一条注明差异。追踪每根导线到目标标签，    │
+    # │ 而非仅凭邻近关系猜测。                                          │
+    # └─────────────────────────────────────────────────────────────────┘
     instruction = (
         "Analyse this page and call the submit_schematic_page tool with a "
         "complete SchematicPageGraph payload. Respect all hard rules from the "
@@ -206,6 +428,10 @@ def build_page_user_content(
         "edge completeness; if you cannot confidently identify both "
         "endpoints from the image, omit the edge."
     )
+    # grounding 存在时追加：以 grounding 为拼写/存在性校验基准，
+    # refdes 和网络标签应来自 grounding 集合；图像清晰但 grounding
+    # 缺失的标签允许发出，但需在 ambiguities 中注明差异；
+    # 追踪导线而非仅凭邻近关系猜测。
     if grounding:
         instruction += (
             " Use the grounding block as a spelling / existence check: refdes "
@@ -217,6 +443,7 @@ def build_page_user_content(
             "discrepancy. Trace wires from each pin to its destination label "
             "rather than guessing from adjacency alone."
         )
+    # block 4（或 5）: 主分析指令文本
     user_content.append({"type": "text", "text": instruction})
     return user_content
 
@@ -243,15 +470,14 @@ def build_page_vision_params(
     device_label: str | None = None,
     grounding: str | None = None,
 ) -> dict:
-    """Full Messages-API params for one page's vision call — the batch twin.
+    """构建单页 vision 调用的完整 Messages-API 参数（批量路径专用）。
 
-    Mirrors `call_with_forced_tool`'s FIRST attempt with thinking active
-    (tool_choice "auto": the API rejects thinking + forced tool; the system
-    prompt tells the model to always emit the tool). The retry tail of the
-    direct path (validation suffix, thinking→forced fallback) has no batch
-    equivalent — a failed batch page falls back to the direct path instead.
-    Guarded by a parity test that diffs these params against the kwargs the
-    direct path actually sends.
+    镜像 `call_with_forced_tool` 在 thinking 激活时的首次尝试
+    （tool_choice 为 "auto"：API 拒绝 thinking + 强制 tool；system prompt
+    要求模型始终发出 tool 调用）。直接路径的重试逻辑（validation 后缀、
+    thinking→forced 回退）在批量路径中没有等价物——批量失败的页面会回退
+    到直接路径重试。有 parity test 守卫，会 diff 这些参数与直接路径实际
+    发送的 kwargs 是否一致。
     """
     return {
         "model": model,
