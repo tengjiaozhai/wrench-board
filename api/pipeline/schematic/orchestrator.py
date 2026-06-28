@@ -1,4 +1,4 @@
-"""Orchestrator — full schematic ingestion for one device.
+"""Orchestrator - full schematic ingestion for one device.
 
 Renders the PDF page by page, extracts pdfplumber grounding, runs the Claude
 vision pass in parallel with a cache-warmup sequence (page 1 first, then
@@ -7,12 +7,12 @@ burst), merges the per-page graphs into a flat catalogue, compiles that into
 an `ElectricalGraph`, and persists every artefact under `memory/{device_slug}/`.
 
 Side-effect artefacts written:
-- `schematic.pdf`                      — copy of the source PDF (for re-viewing)
-- `schematic_pages/page-NN.png`        — rasterised page, shown by the web viewer
-- `schematic_pages/page-NN.anchors.json` — refdes bboxes (for search highlight)
-- `schematic_pages/page_XXX.json`      — one per page, raw vision output
-- `schematic_graph.json`               — merged flat catalogue
-- `electrical_graph.json`              — final interrogeable graph
+- `schematic.pdf`                      - copy of the source PDF (for re-viewing)
+- `schematic_pages/page-NN.png`        - rasterised page, shown by the web viewer
+- `schematic_pages/page-NN.anchors.json` - refdes bboxes (for search highlight)
+- `schematic_pages/page_XXX.json`      - one per page, raw vision output
+- `schematic_graph.json`               - merged flat catalogue
+- `electrical_graph.json`              - final interrogeable graph
 
 Returns the `ElectricalGraph` for callers that want to act on it directly
 without re-reading from disk.
@@ -59,27 +59,27 @@ from api.pipeline.schematic.schemas import (
     SchematicPageGraph,
 )
 
-# api.stock.parts_index is imported lazily inside _write_parts_index — a
+# api.stock.parts_index is imported lazily inside _write_parts_index - a
 # top-level import here triggers a circular load via api.pipeline.__init__
-# (which re-exports ingest_schematic) → api.stock.__init__ → router →
-# schemas → api.pipeline.schematic.schemas → us. Keep the import local.
+# (which re-exports ingest_schematic) -> api.stock.__init__ -> router ->
+# schemas -> api.pipeline.schematic.schemas -> us. Keep the import local.
 
 logger = logging.getLogger("wrench_board.pipeline.schematic.orchestrator")
 
 
 async def ingest_schematic(
     *,
-    device_slug: str,
-    pdf_path: Path,
-    client: AsyncAnthropic,
-    memory_root: Path | None = None,
-    model: str | None = None,
-    device_label: str | None = None,
-    use_grounding: bool = True,
-    cache_warmup_seconds: float | None = None,
-    vision_concurrency: int | None = None,
-    render_dpi: int = 200,
-    on_event: Callable[[dict], Awaitable[None]] | None = None,
+    device_slug: str,  # 设备唯一标识，用作 memory/ 下的子目录名
+    pdf_path: Path,  # 原理图 PDF 的本地路径
+    client: AsyncAnthropic,  # 已初始化的 Anthropic 异步客户端（由调用方持有生命周期）
+    memory_root: Path | None = None,  # 知识包根目录，默认读 settings.memory_root
+    model: str | None = None,  # vision 模型 ID，默认读 settings.anthropic_model_main
+    device_label: str | None = None,  # 设备可读名称（品牌+型号），注入 prompt；默认取 PDF 文件名
+    use_grounding: bool = True,  # 是否用 pdfplumber 提取 refdes/网表锚点以稳定 vision 输出
+    cache_warmup_seconds: float | None = None,  # page 1 完成后等待缓存预热的秒数，其余页再并发
+    vision_concurrency: int | None = None,  # 同时进行的 vision API 调用数，默认读 settings.pipeline_vision_concurrency
+    render_dpi: int = 200,  # PDF 渲染分辨率（DPI），越高 vision 越清晰但 token 越多
+    on_event: Callable[[dict], Awaitable[None]] | None = None,  # 进度回调，每页完成时推送 phase_step 事件
 ) -> ElectricalGraph:
     """Run the full ingestion pipeline for `pdf_path` and persist artefacts.
 

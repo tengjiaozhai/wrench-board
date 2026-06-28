@@ -1,4 +1,4 @@
-"""Phase 3 — 3 Writers running in parallel with a shared, cached prefix.
+"""Phase 3 - 3 Writers running in parallel with a shared, cached prefix.
 
 The 3 writers (Cartographe / Clinicien / Lexicographe) share:
 - Identical `tools` array (all 3 submit_* tools declared)
@@ -8,7 +8,7 @@ The 3 writers (Cartographe / Clinicien / Lexicographe) share:
 
 They differ only in:
 - The user-message suffix (per-writer task instructions)
-- `tool_choice` — each forced to its specific submit_* tool
+- `tool_choice` - each forced to its specific submit_* tool
 
 We launch writer 1 first and `asyncio.sleep(CACHE_WARMUP_SECONDS)` before dispatching
 writers 2 and 3, so Anthropic has time to materialize the cache entry from writer 1's
@@ -62,32 +62,35 @@ if TYPE_CHECKING:
 logger = logging.getLogger("wrench_board.pipeline.writers")
 
 
-# Tool names — must match the forced tool_choice calls below.
+# Tool names - must match the forced tool_choice calls below.
 SUBMIT_KG_TOOL_NAME = "submit_knowledge_graph"
 SUBMIT_RULES_TOOL_NAME = "submit_rules"
 SUBMIT_DICT_TOOL_NAME = "submit_dictionary"
 
 
 def _submit_kg_tool() -> dict:
+    """Cartographe tool definition - typed knowledge graph."""
     return {
         "name": SUBMIT_KG_TOOL_NAME,
-        "description": "Cartographe output — typed knowledge graph.",
+        "description": "Cartographe output - typed knowledge graph.",
         "input_schema": KnowledgeGraph.model_json_schema(),
     }
 
 
 def _submit_rules_tool() -> dict:
+    """Clinicien tool definition - diagnostic rules."""
     return {
         "name": SUBMIT_RULES_TOOL_NAME,
-        "description": "Clinicien output — diagnostic rules.",
+        "description": "Clinicien output - diagnostic rules.",
         "input_schema": RulesSet.model_json_schema(),
     }
 
 
 def _submit_dict_tool() -> dict:
+    """Lexicographe tool definition - component sheets."""
     return {
         "name": SUBMIT_DICT_TOOL_NAME,
-        "description": "Lexicographe output — component sheets.",
+        "description": "Lexicographe output - component sheets.",
         "input_schema": Dictionary.model_json_schema(),
     }
 
@@ -97,7 +100,7 @@ def _all_writer_tools() -> list[dict]:
     return [_submit_kg_tool(), _submit_rules_tool(), _submit_dict_tool()]
 
 
-# Reviser patch tools — the revise path forces ONE of these (per file_name)
+# Reviser patch tools - the revise path forces ONE of these (per file_name)
 # instead of the full submit_* tool, so the reviser emits a surgical delta the
 # `api.pipeline.patch` applicator applies to the current artefact.
 SUBMIT_KG_PATCH_TOOL_NAME = "submit_knowledge_graph_patch"

@@ -528,18 +528,74 @@ async def extract_page(
     device_label: str | None = None,
     grounding: str | None = None,
 ) -> SchematicPageGraph:
-    """Run the per-page vision call and return a validated SchematicPageGraph.
+    """对单页原理图执行 vision 调用，返回经 Pydantic 校验的 SchematicPageGraph。
 
-    See `build_page_user_content` for the grounding semantics; the prompt and
-    knobs are shared with the batch pass via the builders above.
+    ┌─────────────────────────────────────────────────────────────────┐
+    │ 整体流程                                                        │
+    ├─────────────────────────────────────────────────────────────────┤
+    │ 1. 构建 system prompt（含 prompt cache 标记）                    │
+    │ 2. 构建 user message（上下文 + grounding + 图片 + 分析指令）     │
+    │ 3. 声明 submit_schematic_page 工具（含 JSON Schema）             │
+    │ 4. 调用 call_with_forced_tool：                                 │
+    │    - 首次尝试：thinking 开启 → tool_choice="auto"               │
+    │    - 若模型未调 tool：关闭 thinking → tool_choice="forced"      │
+    │    - 若 payload 校验失败：附加错误信息重试一次                   │
+    │ 5. 校验通过后，调用 ensure_canonical_page 强制页码正确           │
+    └─────────────────────────────────────────────────────────────────┘
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │ 参数说明                                                        │
+    ├─────────────────────────────────────────────────────────────────┤
+    │ client        — AsyncAnthropic 客户端实例                       │
+    │ model         — 模型 ID（如 "claude-opus-4-8" 或 "mimo-v2.5"） │
+    │ rendered      — 当前页的渲染结果（RenderedPage），包含：         │
+    │                   .png_path    — PNG 文件路径                    │
+    │                   .page_number — 1-based 页码                   │
+    │                   .orientation — portrait/landscape              │
+    │                   .is_scanned  — 是否扫描件（无文字/矢量）       │
+    │ total_pages   — PDF 总页数，用于 "Page X of Y" 上下文           │
+    │ device_label  — 设备名称（可选），如 "iPhone 11"                 │
+    │ grounding     — PDF 提取的文字真值集（可选），用于防幻觉         │
+    ├─────────────────────────────────────────────────────────────────┤
+    │ 返回值                                                          │
+    ├─────────────────────────────────────────────────────────────────┤
+    │ SchematicPageGraph — 经 Pydantic 校验的单页原理图结构化数据，    │
+    │ 包含 nodes/nets/cross_page_refs/typed_edges/designer_notes/     │
+    │ ambiguities/confidence 等字段。                                  │
+    ├─────────────────────────────────────────────────────────────────┤
+    │ 错误处理                                                        │
+    ├─────────────────────────────────────────────────────────────────┤
+    │ - call_with_forced_tool 最多重试 2 次                           │
+    │ - 若 2 次均失败，抛出 RuntimeError（含最后一次的错误信息）       │
+    │ - 第三方模型（mimo/qwen）会提前抛出 RuntimeError（web_search    │
+    │   不支持）——但 page_vision 不走 web_search，所以不受影响         │
+    ├─────────────────────────────────────────────────────────────────┤
+    │ thinking 行为                                                   │
+    ├─────────────────────────────────────────────────────────────────┤
+    │ - thinking_budget=24000 → thinking_active=True                  │
+    │ - 首次尝试：tool_choice="auto"（API 要求 thinking 不能 + forced）│
+    │ - 若模型只返回 thinking 未调 tool：关闭 thinking → 强制 tool    │
+    │ - 第三方模型（mimo/qwen）自动跳过 thinking 参数                  │
+    ├─────────────────────────────────────────────────────────────────┤
+    │ 与批量路径的关系                                                │
+    ├─────────────────────────────────────────────────────────────────┤
+    │ - 直接路径（本函数）：每页单独调用，支持重试                     │
+    │ - 批量路径（batch_vision）：所有页一起提交，失败页回退到直接路径 │
+    │ - 两者共享 build_page_user_content + _submit_page_tool +        │
+    │   _system_cached，确保 prompt 完全一致（parity test 守卫）       │
+    └─────────────────────────────────────────────────────────────────┘
     """
+    # 调用 call_with_forced_tool：发送 vision 请求，强制模型调用
+    # submit_schematic_page 工具，返回经 Pydantic 校验的 SchematicPageGraph
     graph = await call_with_forced_tool(
         client=client,
         model=model,
+        # system prompt（含 cache_control 标记，12 页批量调用共享缓存）
         system=_system_cached(),
         messages=[
             {
                 "role": "user",
+                # 构建 user message：上下文 + grounding + 图片 + 分析指令
                 "content": build_page_user_content(
                     rendered=rendered,
                     total_pages=total_pages,
@@ -548,13 +604,20 @@ async def extract_page(
                 ),
             }
         ],
+        # 声明可用工具：submit_schematic_page（含 JSON Schema + cache 标记）
         tools=[_submit_page_tool()],
+        # 强制模型调用此工具（thinking 开启时降级为 auto，见 tool_call.py）
         forced_tool_name=SUBMIT_PAGE_TOOL_NAME,
+        # Pydantic model，用于校验 tool_use 的 input payload
         output_schema=SchematicPageGraph,
+        # 最大输出 token 数（32k，覆盖密集 Apple 原理图的长输出）
         max_tokens=PAGE_MAX_TOKENS,
-        # The integer budget is unused under adaptive thinking (see
-        # tool_call.py) — non-None simply switches thinking on.
+        # thinking budget：非 None 即开启 adaptive thinking（实际预算由
+        # API 的 adaptive 模式自动管理，此值仅作为开关）
         thinking_budget=24000,
+        # 日志标签，便于定位是哪一页的调用
         log_label=f"page_vision:page_{rendered.page_number}",
     )
+    # 模型偶尔从自身 prompt 上下文填入错误的 page 编号，
+    # 强制覆盖为渲染时的 canonical 值，保证下游 merger/编译器身份一致
     return ensure_canonical_page(graph, rendered.page_number)

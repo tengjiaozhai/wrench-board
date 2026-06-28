@@ -1,13 +1,13 @@
 """`mb_*` custom tools for the diagnostic agent.
 
 Deliberately simple: prefix-letter closest-matches (no Levenshtein at this
-layer — the boardview validator keeps the distance-based version for refdes
+layer - the boardview validator keeps the distance-based version for refdes
 typos on a parsed board). Reads straight from disk on every call.
 
 mb_record_finding powers cross-session memory: every confirmed repair becomes
 a field report on disk, mirrored to the device's MA memory store mount under
 /mnt/memory/wrench-board-{slug}/field_reports/. The agent reads them via grep
-on the mount (with the layered MA memory architecture) — there is no
+on the mount (with the layered MA memory architecture) - there is no
 mb_list_findings tool: that's a redundant API surface vs. the mount.
 """
 
@@ -27,13 +27,13 @@ from api.session.state import SessionState
 
 
 def _unflatten_effective(eff: dict[str, Any]) -> dict[str, Any]:
-    """Convertit la forme effective T8 {kind: {items:[...]}} vers la forme
-    attendue par les tools mb_* : {registry:{components,signals}, dictionary:
+    """Convert the effective T8 form {kind: {items:[...]}} to the form
+    expected by mb_* tools: {registry:{components,signals}, dictionary:
     {entries}, rules:{rules}}.
 
-    Registry : un item est un composant si kind (insensible à la casse) ∈
-    COMPONENT_KINDS, sinon un signal (couvre les packs legacy lowercase
-    'pmic'/'power_rail' aussi bien que le T8 uppercase).
+    Registry: an item is a component if kind (case-insensitive) is in
+    COMPONENT_KINDS, otherwise a signal (covers legacy lowercase
+    'pmic'/'power_rail' as well as T8 uppercase).
     """
     reg_items = eff.get("registry", {}).get("items", [])
     components = [it for it in reg_items if str(it.get("kind", "")).upper() in COMPONENT_KINDS]
@@ -46,8 +46,8 @@ def _unflatten_effective(eff: dict[str, Any]) -> dict[str, Any]:
 
 
 def _pack_max_mtime(memory_root: Path, slug: str) -> float:
-    """mtime max des couches lues (baseline + promoted) pour l'invalidation du
-    cache de session. 0.0 si rien sur disque (cache toujours considéré frais)."""
+    """Max mtime of the layers read (baseline + promoted) for session cache
+    invalidation. 0.0 if nothing on disk (cache always considered fresh)."""
     base = memory_root / slug
     mtimes = [0.0]
     for layer in ("baseline", "promoted"):
@@ -63,15 +63,18 @@ def _load_pack(
     memory_root: Path,
     session: SessionState | None = None,
 ) -> dict[str, Any]:
-    # T8 : migration idempotente legacy → baseline/ au premier accès, puis lecture
-    # de la vue effective (baseline + promoted, résolution par clé canonique).
+    """Load the effective pack for a device slug.
+
+    T8: idempotent migration legacy -> baseline/ on first access, then read
+    the effective view (baseline + promoted, resolution by canonical key).
+    """
     migrate_pack_if_needed(memory_root, slug)
     owner_ref = current_owner_ref()
 
-    # Cache de session : clé logique (slug, owner_ref). owner_ref est constant
-    # sur une session — on le stocke dans la VALEUR (pas la clé) pour rester
-    # compatible avec invalidate_pack_cache(slug) qui pop par slug (str). Un autre
-    # owner_ref → cache-miss (anti-fuite cross-tenant + future-proof).
+    # Session cache: logical key (slug, owner_ref). owner_ref is constant
+    # for a session - we store it in the VALUE (not the key) to stay
+    # compatible with invalidate_pack_cache(slug) which pops by slug (str).
+    # A different owner_ref -> cache-miss (anti-cross-tenant leak + future-proof).
     max_mtime = _pack_max_mtime(memory_root, slug)
     if session is not None:
         cached = session.pack_cache.get(slug)

@@ -1,4 +1,4 @@
-"""Reverse-diagnostic hypothesis engine — inverse of the behavioral simulator.
+"""Reverse-diagnostic hypothesis engine - inverse of the behavioral simulator.
 
 Given a partial observation of the board (dead / alive components and rails,
 four classes), enumerate refdes-kill candidates that explain the observation,
@@ -7,7 +7,7 @@ ranked hypotheses with a structured diff + a deterministic French narrative.
 
 Single-fault exhaustive + 2-fault pruned (seed from top-K single survivors,
 pair only with components whose cascade intersects the residual unexplained
-observations). Pure sync, no LLM, no IO — depends only on the existing
+observations). Pure sync, no LLM, no IO - depends only on the existing
 ElectricalGraph + SimulationEngine.
 """
 
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 CascadeFn = Callable[["ElectricalGraph", "_CompNode"], dict]
 
 # ---------------------------------------------------------------------------
-# Tunable constants — exported so tests and scripts can override without
+# Tunable constants - exported so tests and scripts can override without
 # monkey-patching. `tune_hypothesize_weights.py` rewrites PENALTY_WEIGHTS
 # based on benchmark accuracy.
 #
@@ -49,21 +49,21 @@ TWO_FAULT_ENABLED: bool = _params["two_fault_enabled"]
 MAX_PAIRS: int = _params["max_pairs"]  # 2-fault pair cap (safety net, rarely hit)
 
 # ---------------------------------------------------------------------------
-# Phase 4: visibility multiplier — dampens topologically weak passive cascades.
+# Phase 4: visibility multiplier - dampens topologically weak passive cascades.
 # Key is (kind, role, mode). Missing entries default to 1.0 (no dampening).
 # Applied to `tp_comps` only; FP/FN weights are unchanged.
 #
 # JSON storage uses a list of [kind, role, mode, multiplier] rows (tuple
-# keys aren't JSON-representable); we re-key to tuple → float here.
+# keys aren't JSON-representable); we re-key to tuple -> float here.
 # ---------------------------------------------------------------------------
 
 _SCORE_VISIBILITY: dict[tuple[str, str, str], float] = {
     (kind, role, mode): float(mult) for kind, role, mode, mult in _params["score_visibility"]
 }
-# shorts are visible at rail level → no multiplier (no entry in the dict).
+# shorts are visible at rail level -> no multiplier (no entry in the dict).
 
 # ---------------------------------------------------------------------------
-# Mode vocabulary — imported by tools, HTTP, tests, UI JSON.
+# Mode vocabulary - imported by tools, HTTP, tests, UI JSON.
 # ---------------------------------------------------------------------------
 
 ComponentMode = Literal[
@@ -80,14 +80,14 @@ RailMode = Literal[
     "dead",
     "alive",
     "shorted",  # to GND OR overvolt (Phase 1 semantics)
-    "stuck_on",  # Phase 4.5 — rail alive when it should be off
+    "stuck_on",  # Phase 4.5 - rail alive when it should be off
 ]
 
 # Failure modes that can be attributed to a component as the root-cause kill.
 # `alive` omitted (a live component is not a failure). `shorted` is rail-side
 # but produced by a component that shorts its input rail to GND. `open` /
 # `short` are passive Phase 4 modes. `stuck_on` / `stuck_off` are Phase 4.5 Q
-# modes — stuck_on = conducts permanently (rail stays on), stuck_off =
+# modes - stuck_on = conducts permanently (rail stays on), stuck_off =
 # never conducts (rail stays off).
 FailureMode = Literal[
     "dead",

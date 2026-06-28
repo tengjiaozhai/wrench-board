@@ -21,10 +21,12 @@ from pydantic import BaseModel, ValidationError
 if TYPE_CHECKING:
     from api.pipeline.telemetry.token_stats import PhaseTokenStats
 
+# 类型变量：T 是 BaseModel 的子类，用于泛型返回值类型标注
 T = TypeVar("T", bound=BaseModel)
 
 logger = logging.getLogger("wrench_board.pipeline.tool_call")
 
+# ── 传输层重试配置 ──
 # 瞬时 TRANSPORT 失败（对端中途关闭流、连接拒绝/重置）。
 # SDK 的 max_retries 仅重发 INITIAL 请求 — 迭代流时断开
 # 会冒出原始 httpx 错误（2026-06-10 线上观测：一次 RemoteProtocolError
@@ -32,15 +34,16 @@ logger = logging.getLogger("wrench_board.pipeline.tool_call")
 # 非模型质量失败，故不消耗 validation 尝试，且永不改动 prompt
 #（改动也会 bust prompt cache）。
 _TRANSPORT_ERRORS = (httpx.TransportError, APIConnectionError)
-_TRANSPORT_TRIES = 3
-_TRANSPORT_BACKOFF_S = (2.0, 5.0)
+_TRANSPORT_TRIES = 3        # 最多重试 3 次
+_TRANSPORT_BACKOFF_S = (2.0, 5.0)  # 退避策略：第 1 次等 2 秒，第 2 次等 5 秒
 
-
+# ── 第三方模型关键字 ──
+# 模型名包含这些关键字时，启用第三方兼容模式（跳过 thinking、剥离 cache_control 等）
 _THIRD_PARTY_MODEL_KEYWORDS = ("qwen", "mimo")
 
 
 def _needs_third_party_forced_tool_compat(model: str) -> bool:
-    """Return True for models known to need Anthropic-compat forced-tool downgrades."""
+    """判断模型是否需要第三方兼容降级（跳过 thinking、剥离 cache_control 等）。"""
     lower = str(model).lower()
     return any(kw in lower for kw in _THIRD_PARTY_MODEL_KEYWORDS)
 
@@ -49,7 +52,7 @@ def _append_critical_tool_instruction(
     system: str | list[dict],
     instruction: str,
 ) -> str | list[dict]:
-    """Append a hard tool-use instruction without disturbing caller structure."""
+    """在 system prompt 末尾追加强制 tool 调用指令，不扰动调用方结构。"""
     suffix = f"\n\nCRITICAL: {instruction}"
     if isinstance(system, list):
         return list(system) + [{"type": "text", "text": suffix.lstrip()}]
@@ -101,7 +104,7 @@ async def _create_nonstream_with_transport_retry(
     request_kwargs: dict,
     log_label: str,
 ):
-    """Create one non-streaming Messages response with the same transport retry budget."""
+    """创建一次非流式 Messages 响应，带相同的 transport 重试预算。"""
     for transport_try in range(1, _TRANSPORT_TRIES + 1):
         try:
             return await client.messages.create(**request_kwargs)
@@ -148,16 +151,42 @@ async def call_with_forced_tool(
     """以 `tool_choice` 强制为 `forced_tool_name` 调用 Messages API 并校验。
 
     校验失败时用 system 后缀告知模型错在哪并重试。`max_attempts` 次后抛错。
+
+    ┌─────────────────────────────────────────────────────────────────┐
+    │ 核心流程                                                        │
+    ├─────────────────────────────────────────────────────────────────┤
+    │ 1. 首次尝试：thinking 开启 → tool_choice="auto"                │
+    │ 2. 若模型未调 tool：关闭 thinking → tool_choice="forced"       │
+    │ 3. 若 payload 校验失败：附加错误信息重试                        │
+    │ 4. 2 次均失败 → 抛出 RuntimeError                              │
+    ├─────────────────────────────────────────────────────────────────┤
+    │ 第三方模型（mimo/qwen）特殊处理：                               │
+    │ - 跳过 thinking 参数（中继不支持）                              │
+    │ - 剥离 cache_control（中继不支持）                              │
+    │ - 使用非流式请求（中继兼容性更好）                              │
+    │ - max_tokens 限制为 8192（中继限制）                            │
+    ├─────────────────────────────────────────────────────────────────┤
+    │ thinking 行为                                                   │
+    ├─────────────────────────────────────────────────────────────────┤
+    │ - thinking_budget 非 None → thinking_active=True               │
+    │ - API 限制：thinking 不能 + forced tool（会 400）              │
+    │ - 所以 thinking 开启时用 tool_choice="auto"                    │
+    │ - 模型可能只返回 thinking 未调 tool → 关闭 thinking 重试       │
+    └─────────────────────────────────────────────────────────────────┘
     """
+    # last_error：记录最后一次错误信息，用于重试时告知模型
     last_error: str | None = None
     effective_system: str | list[dict] = system
+    # 第三方模型兼容检测
     third_party_compat = _needs_third_party_forced_tool_compat(model)
     # thinking 强制 tool_choice="auto"（API 拒绝 thinking + forced tool），
     # 模型可能只返回 thinking、无 tool call。该 miss 时重试去掉 thinking
     # → forced tool_choice → tool 有保证（且不再在已超页的页上烧 thinking 预算）。
     thinking_active = thinking_budget is not None
 
+    # ── 重试循环 ──
     for attempt in range(1, max_attempts + 1):
+        # 第二次尝试：附加上次错误信息到 system prompt，告诉模型错在哪
         if attempt > 1 and last_error:
             retry_suffix = (
                 "\n\n---\nPREVIOUS ATTEMPT FAILED VALIDATION:\n"
@@ -173,8 +202,10 @@ async def call_with_forced_tool(
             else:
                 effective_system = system + retry_suffix
 
+        # 构建 system prompt
         request_system = effective_system
         if third_party_compat:
+            # 第三方模型：追加强制 tool 调用指令
             request_system = _append_critical_tool_instruction(
                 request_system,
                 f"You MUST call the {forced_tool_name} tool now. Do NOT output text-only responses.",
@@ -209,6 +240,7 @@ async def call_with_forced_tool(
         else:
             tool_choice_param = {"type": "tool", "name": forced_tool_name}
 
+        # 构建 API 请求参数
         stream_kwargs: dict = dict(
             model=model,
             max_tokens=max_tokens,
@@ -218,6 +250,7 @@ async def call_with_forced_tool(
             tool_choice=tool_choice_param,
         )
         if third_party_compat:
+            # 第三方中继：限制 max_tokens、剥离 tools 中的 cache_control
             stream_kwargs["max_tokens"] = min(max_tokens, 8192)
             # 第三方中继（如 tinno qwen）不支持 thinking 参数，完全省略
             # 而不是发送 {"type": "disabled"}（会触发 "Unexpected item type" 错误）
@@ -227,6 +260,7 @@ async def call_with_forced_tool(
                 for tool in tools
             ]
         elif thinking_active:
+            # 原生 Anthropic 模型：启用 adaptive thinking + effort 旋钮
             # Opus 4.7/4.8 默认 `thinking.display` 为 "omitted"（静默），
             # summarized 块到不了观察者。显式 opt-in。
             stream_kwargs["thinking"] = {"type": "adaptive", "display": "summarized"}
@@ -234,6 +268,7 @@ async def call_with_forced_tool(
                 effort_for_model(model)
             )
 
+        # 发起 API 请求（流式或非流式）
         if third_party_compat:
             response = await _create_nonstream_with_transport_retry(
                 client=client, request_kwargs=stream_kwargs, log_label=log_label,
@@ -243,11 +278,13 @@ async def call_with_forced_tool(
                 client=client, stream_kwargs=stream_kwargs, log_label=log_label,
             )
 
+        # 从响应中提取目标 tool_use 块
         tool_use = next(
             (b for b in response.content if b.type == "tool_use" and b.name == forced_tool_name),
             None,
         )
 
+        # 记录 token 用量
         cache_read = getattr(response.usage, "cache_read_input_tokens", 0) or 0
         cache_write = getattr(response.usage, "cache_creation_input_tokens", 0) or 0
         logger.info(
@@ -270,8 +307,10 @@ async def call_with_forced_tool(
         if cache_read > 0:
             logger.info("[Cache] Hit for %s (read=%d tokens)", log_label, cache_read)
 
+        # ── 处理无 tool_use 的情况 ──
         if tool_use is None:
             got = [b.type for b in response.content]
+            # 尝试从文本内容中恢复 JSON（某些模型忽略 tool_choice 返回纯文本）
             fallback = _try_extract_json_from_text(response.content, output_schema)
             if fallback is not None:
                 logger.warning(
@@ -289,6 +328,7 @@ async def call_with_forced_tool(
                 logger.warning("[%s] disabling thinking → forced tool_choice on retry", log_label)
             continue
 
+        # ── 校验 tool_use payload ──
         try:
             validated = output_schema.model_validate(tool_use.input)
             return validated
@@ -318,6 +358,7 @@ async def call_with_forced_tool(
                 str(exc).replace("\n", " ")[:500],
             )
 
+    # 所有尝试均失败
     raise RuntimeError(
         f"[{log_label}] Failed to produce a valid {forced_tool_name} output after "
         f"{max_attempts} attempts. Last error:\n{last_error}"

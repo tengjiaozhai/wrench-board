@@ -46,9 +46,9 @@ from api.agent.manifest import (
     render_system_prompt,
 )
 from api.agent.owner_ref import current_owner_ref, set_owner_ref
-from api.agent.session_caps import set_can_expand
 from api.agent.pricing import cost_from_response
 from api.agent.sanitize import sanitize_agent_text
+from api.agent.session_caps import set_can_expand
 from api.agent.tools import (
     mb_expand_knowledge,
     mb_get_component,
@@ -63,7 +63,7 @@ from api.tools.schematic import mb_schematic_graph
 def _strip_output_only(block: Any) -> Any:
     """Remove OUTPUT-only fields the API rejects when a block is re-sent as input.
 
-    SDK ≥0.97 streaming returns ParsedTextBlock with `parsed_output` (the
+    SDK >=0.97 streaming returns ParsedTextBlock with `parsed_output` (the
     structured-outputs sink). Echoing it back in the next turn's messages is a
     400 ("messages.N.content.M.text.parsed_output: Extra inputs are not
     permitted"), which broke every turn after the first tool call. Strip it
@@ -78,7 +78,7 @@ def _normalize_message(msg: Any) -> dict[str, Any]:
     JSONL and passed back to client.messages.create on the next turn.
 
     Anthropic's response.content is a list of typed Block objects (pydantic
-    models). This coerces them to dicts — the SDK still accepts dicts for
+    models). This coerces them to dicts - the SDK still accepts dicts for
     subsequent calls, and we can json.dump them safely.
     """
     if isinstance(msg, dict):

@@ -1,14 +1,14 @@
-"""Compiler — SchematicGraph → ElectricalGraph.
+"""Compiler - SchematicGraph -> ElectricalGraph.
 
 Derives the final interrogeable artefact:
 
 - `power_rails`   from nets marked `is_power` and their `powers` / `powered_by` /
                   `enables` / `decouples` edges produced by the vision pass
-- `depends_on`    edges added globally (component → component) whenever a consumer
+- `depends_on`    edges added globally (component -> component) whenever a consumer
                   is powered by a rail whose producer is known
 - `boot_sequence` phases built via Kahn topological sort on those deps
-- `voltage_nominal` parsed from net labels ('+3V3' → 3.3, '+5V' → 5.0, …)
-- `quality`       report — counts of orphan refs, missing values, global confidence
+- `voltage_nominal` parsed from net labels ('+3V3' -> 3.3, '+5V' -> 5.0, ...)
+- `quality`       report - counts of orphan refs, missing values, global confidence
 
 No LLM call. Pure function of its `SchematicGraph` input (plus optional
 per-page confidences for the quality report).
@@ -42,6 +42,18 @@ def compile_electrical_graph(
     *,
     page_confidences: dict[int, float] | None = None,
 ) -> ElectricalGraph:
+    """Compile SchematicGraph into ElectricalGraph.
+
+    Steps:
+    1. Mark untraced components (no pin-level connectivity)
+    2. Derive power rails from nets and typed edges
+    3. Rewrite pin nets through rail aliases
+    4. Synthesize pins for edge-only consumers
+    5. Derive depends_on edges (component -> component)
+    6. Compute boot sequence via topological sort
+    7. Classify passive components (heuristic)
+    8. Build quality report
+    """
     graph = _mark_untraced_components(graph)
     power_rails, rail_alias_map = _derive_power_rails(graph)
     graph = _rewrite_pin_nets_through_aliases(graph, rail_alias_map)

@@ -1,12 +1,29 @@
-"""Pipeline orchestrator — full Phase 1 → 2 → 3 → 4 chain (+ revise loop).
+"""Pipeline 编排器 - 完整的 Phase 1 -> 2 -> 3 -> 4 链(含修订循环).
 
-Persists all intermediate artefacts under `memory/{device_slug}/` on disk:
-    raw_research_dump.md
-    registry.json
-    knowledge_graph.json
-    rules.json
-    dictionary.json
-    audit_verdict.json
++-----------------------------------------------------------------+
+| Pipeline 阶段                                                    |
++-----------------------------------------------------------------+
+| Phase 1.5 - 设备类别分类 + 确认门控                              |
+| Phase 1   - Scout(网络调研)                                    |
+| Phase 2   - Registry Builder(注册表构建)                       |
+| Phase 2.5 - Mapper(功能->位号映射)                              |
+| Phase 2.6 - 从电气图丰富注册表                                   |
+| Phase 2.7 - 删除网络注册表虚构                                   |
+| Phase 3   - Writers(并行生成 knowledge_graph/rules/dictionary) |
+| Phase 4   - Auditor(审计)                                      |
+| 修订循环   - NEEDS_REVISION 时重跑 Writers,最多 N 轮           |
++-----------------------------------------------------------------+
+| 持久化产物(写入 memory/{device_slug}/)                         |
++-----------------------------------------------------------------+
+| raw_research_dump.md   - Scout 原始调研报告                      |
+| registry.json          - 注册表(词汇表 + 设备分类)             |
+| knowledge_graph.json   - 知识图谱                                |
+| rules.json             - 诊断规则                                |
+| dictionary.json        - 术语字典                                |
+| audit_verdict.json     - 审计结论                                |
+| token_stats.json       - token 用量统计                          |
+| pack_quality.json      - 包质量报告                              |
++-----------------------------------------------------------------+
 """
 
 from __future__ import annotations
@@ -59,39 +76,33 @@ from api.pipeline.schemas import (
     RulesSet,
 )
 from api.pipeline.schematic.schemas import ElectricalGraph
-from api.pipeline.tool_call import _needs_third_party_forced_tool_compat
 from api.pipeline.scout import run_scout
 from api.pipeline.telemetry.token_stats import PhaseTokenStats, write_token_stats
+from api.pipeline.tool_call import _needs_third_party_forced_tool_compat
 from api.pipeline.writers import run_single_writer_revision, run_writers_parallel
 
 logger = logging.getLogger("wrench_board.pipeline.orchestrator")
 
 
-# When the caller signals a schematic is being ingested out-of-band (via the
-# /packs/{slug}/documents endpoint, not the repair-create body), the pipeline
-# waits up to this long for `electrical_graph.json` to land before Phase 1.5,
-# so device-kind classification + the Mapper run grounded. On timeout it
-# degrades to a blind run (the pack still builds; the graph surfaces later).
-_SCHEMATIC_WAIT_TIMEOUT_S = 300.0
-_SCHEMATIC_WAIT_POLL_S = 2.0
+# -- 原理图等待配置 --
+# 当调用者通过 /packs/{slug}/documents 端点(非 repair-create body)信号
+# 原理图正在带外摄取时,pipeline 等待 electrical_graph.json 落盘的最长时间.
+# 超时后降级为盲运行(pack 仍构建,graph 后续到达).
+_SCHEMATIC_WAIT_TIMEOUT_S = 300.0  # 最长等待 5 分钟
+_SCHEMATIC_WAIT_POLL_S = 2.0  # 每 2 秒轮询一次
 
-
-# Upload kinds the orchestrator recognises in `memory/{slug}/uploads/`.
-# Filenames follow `{ISO-timestamp}-{kind}-{original-filename}`. Anything
-# whose filename doesn't match this pattern is left in `other` and not
-# threaded into the prompts.
+# -- 上传文件类型 --
+# orchestrator 识别的上传类型.文件名格式:`{ISO-timestamp}-{kind}-{original-filename}`.
+# 不匹配此模式的文件归入 `other`,不注入 prompt.
 _UPLOAD_KINDS = {"schematic_pdf", "boardview", "datasheet", "notes", "other"}
-_UPLOAD_NAME_RE = re.compile(
-    r"^(?P<ts>[^-]+(?:-[^-]+)*?)-(?P<kind>[a-z_]+)-(?P<filename>.+)$"
-)
+_UPLOAD_NAME_RE = re.compile(r"^(?P<ts>[^-]+(?:-[^-]+)*?)-(?P<kind>[a-z_]+)-(?P<filename>.+)$")
 
 
 @dataclass(frozen=True)
 class UploadedDocuments:
-    """Grouped technician uploads found under `memory/{slug}/uploads/`.
+    """技师上传文件分组(memory/{slug}/uploads/).
 
-    Schematic and boardview slots are most-recent-wins (keyed off the
-    timestamp prefix); datasheets, notes, and other accumulate.
+    schematic 和 boardview 槽位按时间戳取最新;datasheets,notes 和 other 累积.
     """
 
     schematic_pdf: Path | None = None
@@ -111,11 +122,11 @@ class UploadedDocuments:
 
 
 def scan_uploads(uploads_dir: Path) -> UploadedDocuments:
-    """List the files under `uploads_dir` and group them by kind.
+    """扫描 uploads 目录并按类型分组文件.
 
-    Empty / missing directories return an empty `UploadedDocuments`.
-    Filenames that don't match `{ts}-{kind}-{name}` land in `other`,
-    so the technician's manually-dropped files are not silently lost.
+    空目录或不存在的目录返回空的 UploadedDocuments.
+    不匹配 `{ts}-{kind}-{name}` 模式的文件归入 `other`,
+    确保技师手动放置的文件不会被静默丢失.
     """
     if not uploads_dir.exists() or not uploads_dir.is_dir():
         return UploadedDocuments()
@@ -137,6 +148,7 @@ def scan_uploads(uploads_dir: Path) -> UploadedDocuments:
             continue
         kind = match.group("kind")
         ts = match.group("ts")
+        # schematic 和 boardview 按时间戳取最新
         if kind == "schematic_pdf":
             if schematic_pdf_ts is None or ts > schematic_pdf_ts:
                 schematic_pdf = path
@@ -168,22 +180,24 @@ def _stage_if_private(
     owner_ref: str | None,
     coverage_verdict: str | None = None,
 ) -> bool:
-    """Lot 2 + Lot 3 — after a build completes, decide SHARED vs per-owner PRIVATE.
+    """构建完成后决定 SHARED vs 每租户 PRIVATE.
 
-    A build is kept PRIVATE (relocated to `_staged/{owner_ref}/`) in a managed
-    context (`owner_ref` set) when EITHER:
-      - it is web-only (no electrical graph was produced = no schematic), OR
-      - the graph↔boardview QA gate returned FAIL (Lot 3) — an incomplete source
-        PDF must not become the authoritative shared pack.
-
-    Private packs are seen only by the requesting tenant
-    (`load_effective_pack(owner_ref)`); the slug stays free for a future clean
-    build and other tenants never get served the unverified pack. A
-    schematic-backed build that PASSes/WARNs, or self-host (owner_ref None),
-    stays at the root → migrated to the shared `baseline/` as before.
-
-    Returns True when the pack was staged private (caller then SKIPS the shared
-    MA device-store seed — that mount is cross-tenant).
+    +-----------------------------------------------------------------+
+    | PRIVATE 条件(迁移到 `_staged/{owner_ref}/`)                   |
+    +-----------------------------------------------------------------+
+    | 1. web-only(无 electrical_graph.json = 无原理图)              |
+    | 2. graph↔boardview QA 门控返回 FAIL(不完整的源 PDF)          |
+    +-----------------------------------------------------------------+
+    | SHARED 条件                                                     |
+    +-----------------------------------------------------------------+
+    | - 原理图构建且 PASS/WARN                                       |
+    | - self-host(owner_ref 为 None)                               |
+    +-----------------------------------------------------------------+
+    | 返回值                                                          |
+    +-----------------------------------------------------------------+
+    | True  - pack 已私有化(调用方跳过共享 MA 设备存储 seed)       |
+    | False - pack 保持共享                                          |
+    +-----------------------------------------------------------------+
     """
     if owner_ref is None:
         return False  # self-host: always shared, byte-identical legacy behaviour
@@ -205,13 +219,13 @@ def _stage_if_private(
 
 
 def _load_existing_electrical_graph(pack_dir: Path) -> ElectricalGraph | None:
-    """Load `electrical_graph.json` if present and parseable. None otherwise."""
+    """加载已存在的 electrical_graph.json (如果存在且可解析). 否则返回 None."""
     path = pack_dir / "electrical_graph.json"
     if not path.exists():
         return None
     try:
         return ElectricalGraph.model_validate_json(path.read_text(encoding="utf-8"))
-    except Exception:  # noqa: BLE001 — corrupted artefact must not abort
+    except Exception:  # noqa: BLE001 - 损坏的产物不能中断 pipeline
         logger.exception(
             "[Pipeline] electrical_graph.json at %s is malformed; "
             "continuing without graph for Scout/Registry",
@@ -221,56 +235,55 @@ def _load_existing_electrical_graph(pack_dir: Path) -> ElectricalGraph | None:
 
 
 def _canonical_raw_dump_path(pack_dir: Path) -> Path:
-    """Return the authoritative path for newly-written Phase 1 raw dumps."""
+    """返回新写入的 Phase 1 raw dump 的权威路径."""
     return pack_dir / "raw_research_dump.md"
 
 
-
 def _generate_third_party_stub_dump(device_label: str, focus_symptom: str | None) -> str:
-    """Generate a minimal stub dump for third-party models that do not support web_search.
+    """为不支持 web_search 的第三方模型生成最小 stub dump.
 
-    This stub passes the assess_dump() threshold check (3 symptoms, 3 components, 3 sources)
-    so the pipeline can continue without actual web research.
+    此 stub 通过 assess_dump() 阈值检查(3 症状,3 组件,3 来源),
+    使 pipeline 可以在无实际网络调研的情况下继续.
     """
     focus_block = ""
     if focus_symptom:
         focus_block = (
             "\n- **Symptom:** " + focus_symptom + "\n"
-            "  - **Likely cause:** Unknown — third-party model cannot perform web research\n"
+            "  - **Likely cause:** Unknown - third-party model cannot perform web research\n"
             "  - **Resolution:** ambiguous\n"
         )
 
     return (
-        "# Research dump — " + device_label + "\n\n"
+        "# Research dump - " + device_label + "\n\n"
         "> Auto-generated stub for third-party model. Web research not available.\n\n"
         "## Device overview\n\n"
-        + device_label + " — no web research available (third-party model).\n\n"
-        "## Known failure modes\n"
-        + focus_block +
-        "- **Symptom:** Device not functioning\n"
-        "  - **Likely cause:** Unknown — requires manual investigation\n"
+        + device_label
+        + " - no web research available (third-party model).\n\n"
+        "## Known failure modes\n" + focus_block + "- **Symptom:** Device not functioning\n"
+        "  - **Likely cause:** Unknown - requires manual investigation\n"
         "  - **Resolution:** ambiguous\n\n"
         "- **Symptom:** Intermittent failures\n"
-        "  - **Likely cause:** Unknown — requires manual investigation\n"
+        "  - **Likely cause:** Unknown - requires manual investigation\n"
         "  - **Resolution:** ambiguous\n\n"
         "## Components mentioned by the community\n\n"
-        "- **U1** — aliases: Unknown. Role: Unknown.\n"
+        "- **U1** - aliases: Unknown. Role: Unknown.\n"
         "  Typical failure: Unknown.\n"
-        "- **C1** — aliases: Unknown. Role: Unknown.\n"
+        "- **C1** - aliases: Unknown. Role: Unknown.\n"
         "  Typical failure: Unknown.\n"
-        "- **R1** — aliases: Unknown. Role: Unknown.\n"
+        "- **R1** - aliases: Unknown. Role: Unknown.\n"
         "  Typical failure: Unknown.\n\n"
         "## Signals / power rails / nets mentioned\n\n"
-        "- **VCC** — aliases: Power supply. Nominal voltage: Unknown.\n"
-        "- **GND** — aliases: Ground. Nominal voltage: 0V.\n\n"
+        "- **VCC** - aliases: Power supply. Nominal voltage: Unknown.\n"
+        "- **GND** - aliases: Ground. Nominal voltage: 0V.\n\n"
         "## Sources\n\n"
-        "- local://stub-generated — Auto-generated stub for third-party model\n"
-        "- local://device-label — " + device_label + "\n"
-        "- local://no-web-research — Web research not available\n"
+        "- local://stub-generated - Auto-generated stub for third-party model\n"
+        "- local://device-label - " + device_label + "\n"
+        "- local://no-web-research - Web research not available\n"
     )
 
+
 def _load_existing_raw_dump(pack_dir: Path) -> str | None:
-    """Load an existing non-blank raw dump from audit/ or the legacy root path."""
+    """从 audit/ 或遗留根路径加载已存在的非空 raw dump."""
     for path in (
         pack_dir / "audit" / "raw_research_dump.md",
         pack_dir / "raw_research_dump.md",
@@ -281,7 +294,7 @@ def _load_existing_raw_dump(pack_dir: Path) -> str | None:
             raw_dump = path.read_text(encoding="utf-8")
         except OSError:
             logger.warning(
-                "[Pipeline] Could not read existing raw dump at %s — ignoring",
+                "[Pipeline] Could not read existing raw dump at %s - ignoring",
                 path,
                 exc_info=True,
             )
@@ -291,21 +304,24 @@ def _load_existing_raw_dump(pack_dir: Path) -> str | None:
         logger.warning("[Pipeline] Ignoring blank raw dump at %s", path)
     return None
 
+
+# 事件回调类型别名
 OnEvent = Callable[[dict[str, Any]], Awaitable[None]]
 
 
 async def _noop_on_event(_event: dict[str, Any]) -> None:
-    """Default on_event callback — swallow the event."""
+    """默认的 on_event 回调 - 吞掉事件."""
 
 
 def _slugify(label: str) -> str:
-    """Turn a device label into a safe directory slug."""
+    """将设备标签转换为安全的目录 slug."""
     slug = re.sub(r"[^a-zA-Z0-9._-]+", "-", label.strip().lower())
     slug = re.sub(r"-+", "-", slug).strip("-")
     return slug or "unknown-device"
 
 
 def _get_client() -> AsyncAnthropic:
+    """创建 Anthropic 客户端实例(从 settings 读取配置)."""
     settings = get_settings()
     if not settings.anthropic_api_key:
         raise RuntimeError(
@@ -332,31 +348,38 @@ async def generate_knowledge_pack(
     user_device_kind: str | None = None,
     confirmed_device_kind: str | None = None,
     expect_schematic: bool = False,
-    # T13 build metering: tenant + repair identity for the kind='build' usage
-    # reports (None = self-host / untracked → reports no-op or land as anon).
+    # T13 构建计量:租户 + 维修标识,用于 kind='build' 用量报告
+    # (None = self-host / 未追踪 -> 报告为空或匿名)
     owner_ref: str | None = None,
     engine_repair_id: str | None = None,
 ) -> PipelineResult:
-    """Run the full pipeline for one device.
+    """运行完整的 pipeline(单设备).
 
-    Returns a `PipelineResult` with the on-disk path and the final audit verdict.
-    Raises RuntimeError on REJECTED verdicts or terminal failures.
-
-    When `on_event` is supplied, the orchestrator emits progress events at
-    every phase transition. Event types:
-      - pipeline_started      → {device_slug, device_label, model}
-      - phase_started/finished → {phase: device_kind|scout|registry|writers|audit, elapsed_s?}
-      - pipeline_paused       → {reason: needs_kind_confirmation, device_slug, ...}
-      - pipeline_finished     → {status, revise_rounds_used, consistency_score}
-      - pipeline_failed       → {status, error} (REJECTED or unexpected exception)
-
-    【progress 链路中的角色】
-      create_repair 传入的 on_event 经 _wrap_on_event 包装为 emit()；
-      各阶段 await emit({...}) → repairs._on_event → events.publish(slug, ev)
-      → progress_ws 转发给浏览器。emit 内 listener 抛错会被吞掉，避免 UI 拖垮 pipeline。
-
-    The callback is awaited between phases but errors inside it are swallowed
-    with a warning — UI delivery must never crash the pipeline.
+    +-----------------------------------------------------------------+
+    | 返回值                                                          |
+    +-----------------------------------------------------------------+
+    | PipelineResult - 包含 on-disk 路径和最终审计结论               |
+    +-----------------------------------------------------------------+
+    | 错误处理                                                        |
+    +-----------------------------------------------------------------+
+    | - REJECTED 结论 -> 抛出 RuntimeError                            |
+    | - 终端失败 -> 抛出 RuntimeError                                  |
+    +-----------------------------------------------------------------+
+    | 进度事件(当 on_event 提供时)                                  |
+    +-----------------------------------------------------------------+
+    | pipeline_started      -> {device_slug, device_label, model}     |
+    | phase_started/finished -> {phase, elapsed_s?}                    |
+    | pipeline_paused       -> {reason, device_slug, ...}             |
+    | pipeline_finished     -> {status, revise_rounds_used, ...}      |
+    | pipeline_failed       -> {status, error}                        |
+    +-----------------------------------------------------------------+
+    | progress 链路                                                    |
+    +-----------------------------------------------------------------+
+    | create_repair -> on_event -> _wrap_on_event -> emit()             |
+    | -> repairs._on_event -> events.publish(slug, ev)                 |
+    | -> progress_ws 转发给浏览器                                     |
+    | emit 内 listener 抛错被吞掉,避免 UI 拖垮 pipeline            |
+    +-----------------------------------------------------------------+
     """
     settings = get_settings()
     client = client or _get_client()
@@ -364,12 +387,12 @@ async def generate_knowledge_pack(
     max_revise_rounds = (
         max_revise_rounds if max_revise_rounds is not None else settings.pipeline_max_revise_rounds
     )
-    # emit = 安全的 on_event 包装；repairs 侧 _on_event 最终写入 events 总线。
+    # emit = 安全的 on_event 包装;repairs 侧 _on_event 最终写入 events 总线.
     emit = _wrap_on_event(on_event)
 
-    # Per-phase model distribution. Opus handles synthesis + judgment (graph,
-    # rules, audit); Sonnet handles extraction (web research, registry, per-component
-    # sheets) — cheaper and plenty for those shapes.
+    # -- 每阶段模型分配 --
+    # Opus 处理综合 + 判断(graph,rules,audit);
+    # Sonnet 处理提取(web research,registry,per-component sheets)- 更便宜且足够.
     model_main = settings.anthropic_model_main  # Opus
     model_sonnet = settings.anthropic_model_sonnet  # Sonnet
     models_by_role = {
@@ -381,34 +404,27 @@ async def generate_knowledge_pack(
         "lexicographe": model_sonnet,
         "auditor": model_main,
     }
-    # A pinned slug (create_repair's `device_slug`, or the cloud's canonical
-    # slug) decides the pack directory — re-slugifying the rich label here
-    # would build a FRESH pack next to the one holding the uploaded documents
-    # (live pilot 2026-06-12: pinned `macbook-pro-m1`, label slugified to
-    # `macbook-pro-13-m1-2020-…` → graph=no, schematic ignored).
+    # 固定的 slug(create_repair 的 `device_slug` 或云端的 canonical slug)
+    # 决定 pack 目录 - 此处重新 slugify 会在上传文档旁构建新 pack.
     slug = device_slug or _slugify(device_label)
 
     pack_dir = memory_root / slug
     pack_dir.mkdir(parents=True, exist_ok=True)
-    # Truthfulness contract: the pack writes are incremental, so record that a
-    # build is in flight — any exit that doesn't reach mark_complete/mark_paused
-    # below leaves the pack vetoed as incomplete (no phantom coverage, a retry
-    # rebuilds riding the caches). See api/pipeline/build_state.py.
+    # 真实性契约:pack 写入是增量的,记录构建正在进行 -
+    # 任何未到达 mark_complete/mark_paused 的退出都会将 pack 标记为不完整.
     build_state.mark_building(pack_dir)
 
-    # ---- Technician-supplied documents ----------------------------------
-    # Default search location is the device's per-pack uploads directory;
-    # callers (tests) can point at any other directory. An empty / missing
-    # directory leaves every optional input as None — Scout and Registry
-    # then run their legacy paths byte-for-byte.
+    # -- 技师上传的文档 --
+    # 默认搜索位置是设备的 per-pack uploads 目录;
+    # 调用方(测试)可以指向其他目录.空/缺失目录使所有可选输入为 None.
     uploads_dir = uploaded_documents_dir or (pack_dir / "uploads")
     uploads = scan_uploads(uploads_dir)
     if not uploads.is_empty():
         logger.info(
             "[Pipeline] Found uploads in %s · schematic=%s boardview=%s datasheets=%d notes=%d other=%d",
             uploads_dir,
-            uploads.schematic_pdf.name if uploads.schematic_pdf else "—",
-            uploads.boardview.name if uploads.boardview else "—",
+            uploads.schematic_pdf.name if uploads.schematic_pdf else "-",
+            uploads.boardview.name if uploads.boardview else "-",
             len(uploads.datasheets),
             len(uploads.notes),
             len(uploads.other),
@@ -416,11 +432,8 @@ async def generate_knowledge_pack(
 
     # If a schematic PDF was uploaded and no electrical_graph yet exists,
     # ingest the schematic INLINE before Scout. Failure logs and falls
-    # through — the pipeline still runs without a graph.
-    if (
-        uploads.schematic_pdf is not None
-        and not (pack_dir / "electrical_graph.json").exists()
-    ):
+    # through - the pipeline still runs without a graph.
+    if uploads.schematic_pdf is not None and not (pack_dir / "electrical_graph.json").exists():
         try:
             from api.pipeline.schematic.orchestrator import ingest_schematic
 
@@ -439,14 +452,16 @@ async def generate_knowledge_pack(
                 pack_dir,
                 time.monotonic() - t_ing,
             )
-            await emit({
-                "type": "phase_finished",
-                "phase": "schematic_ingest",
-                "elapsed_s": time.monotonic() - t_ing,
-            })
-        except Exception:  # noqa: BLE001 — falling back is fine, we just lose enrichment
+            await emit(
+                {
+                    "type": "phase_finished",
+                    "phase": "schematic_ingest",
+                    "elapsed_s": time.monotonic() - t_ing,
+                }
+            )
+        except Exception:  # noqa: BLE001 - falling back is fine, we just lose enrichment
             logger.exception(
-                "[Pipeline] Inline schematic ingestion failed — continuing without graph"
+                "[Pipeline] Inline schematic ingestion failed - continuing without graph"
             )
 
     # A technician-attached schematic does NOT land in uploads/: it rides the
@@ -455,7 +470,7 @@ async def generate_knowledge_pack(
     # caller signalled one is coming (`expect_schematic`), wait for that graph
     # before Phase 1.5 so device-kind classification + the Mapper run grounded
     # on the real topology instead of blind. We poll by LOADING (not stat): the
-    # ingest rewrites the file several times (compile → boot → passives) without
+    # ingest rewrites the file several times (compile -> boot -> passives) without
     # atomic renames, so a present-but-half-written file parses to None and we
     # simply keep waiting. The first parseable graph is complete enough for
     # Phase 1.5 (it only reads rail names + component families) and is held in
@@ -478,25 +493,31 @@ async def generate_knowledge_pack(
         if graph is not None:
             logger.info(
                 "[Pipeline] Schematic graph arrived after %.1fs (pack=%s)",
-                elapsed, pack_dir,
+                elapsed,
+                pack_dir,
             )
-            await emit({
-                "type": "phase_finished",
-                "phase": "schematic_ingest",
-                "elapsed_s": elapsed,
-            })
+            await emit(
+                {
+                    "type": "phase_finished",
+                    "phase": "schematic_ingest",
+                    "elapsed_s": elapsed,
+                }
+            )
         else:
             logger.warning(
                 "[Pipeline] Expected schematic graph never arrived within %.0fs "
-                "— continuing without graph (pack=%s)",
-                _SCHEMATIC_WAIT_TIMEOUT_S, pack_dir,
+                "- continuing without graph (pack=%s)",
+                _SCHEMATIC_WAIT_TIMEOUT_S,
+                pack_dir,
             )
-            await emit({
-                "type": "phase_finished",
-                "phase": "schematic_ingest",
-                "elapsed_s": elapsed,
-                "timed_out": True,
-            })
+            await emit(
+                {
+                    "type": "phase_finished",
+                    "phase": "schematic_ingest",
+                    "elapsed_s": elapsed,
+                    "timed_out": True,
+                }
+            )
 
     # Inline-ingest path (schema in uploads/) or already-on-disk graph: load it
     # here. Skipped only when the wait-gate above already produced one.
@@ -505,19 +526,19 @@ async def generate_knowledge_pack(
 
     # The deterministic existence ground-truth over the compiled graph. Built
     # ONCE here (the graph is now final) and threaded through Phase 2.6 (registry
-    # enrichment), compute_drift (registry ∪ graph universe), the auditor (report
+    # enrichment), compute_drift (registry union graph universe), the auditor (report
     # + query_graph tool), and the revisers (graph-grounded fixes). None when no
-    # graph exists → every downstream consumer keeps its legacy web-only path.
+    # graph exists -> every downstream consumer keeps its legacy web-only path.
     # Construction is defensive: indexing the graph must never abort a build, so
     # an unexpected/half-built graph object degrades to graph_truth=None (the
-    # web-only path) rather than crashing — same discipline as the loader above.
+    # web-only path) rather than crashing - same discipline as the loader above.
     graph_truth: GraphTruth | None = None
     if graph is not None:
         try:
             graph_truth = GraphTruth(graph)
-        except Exception:  # noqa: BLE001 — a bad graph must not abort the build
+        except Exception:  # noqa: BLE001 - a bad graph must not abort the build
             logger.exception(
-                "[Pipeline] GraphTruth construction failed — continuing without "
+                "[Pipeline] GraphTruth construction failed - continuing without "
                 "graph ground-truth (pack=%s)",
                 pack_dir,
             )
@@ -532,30 +553,32 @@ async def generate_knowledge_pack(
     )
     logger.info("=" * 72)
 
-    # 第一条 progress 事件：前端 timeline/drawer 收到后切换为「构建中」态。
-    # 若 WS 尚未连上，events._history 会缓冲，subscribe 时回放。
-    await emit({
-        "type": "pipeline_started",
-        "device_slug": slug,
-        "device_label": device_label,
-        "models": models_by_role,
-        "uploads": {
-            "schematic_pdf": uploads.schematic_pdf.name if uploads.schematic_pdf else None,
-            "boardview": uploads.boardview.name if uploads.boardview else None,
-            "datasheets": [p.name for p in uploads.datasheets],
-        },
-    })
+    # 第一条 progress 事件:前端 timeline/drawer 收到后切换为"构建中"态.
+    # 若 WS 尚未连上,events._history 会缓冲,subscribe 时回放.
+    await emit(
+        {
+            "type": "pipeline_started",
+            "device_slug": slug,
+            "device_label": device_label,
+            "models": models_by_role,
+            "uploads": {
+                "schematic_pdf": uploads.schematic_pdf.name if uploads.schematic_pdf else None,
+                "boardview": uploads.boardview.name if uploads.boardview else None,
+                "datasheets": [p.name for p in uploads.datasheets],
+            },
+        }
+    )
 
     phase_stats: list[PhaseTokenStats] = []
 
     try:
-        # -------- Phase 1.5 — Device-kind classification + confirmation gate -----
+        # -------- Phase 1.5 - Device-kind classification + confirmation gate -----
         # Resolve the device class BEFORE any Scout spend, so a graph/declaration
         # disagreement pauses the pipeline instead of burning a research call on
         # the wrong device family. Two entry modes:
         #   • re-run after the technician confirmed a disagreement
-        #     (`confirmed_device_kind` set) — trust it, clear the pending file;
-        #   • fresh run — classify from the graph (when present) and reconcile
+        #     (`confirmed_device_kind` set) - trust it, clear the pending file;
+        #   • fresh run - classify from the graph (when present) and reconcile
         #     with the technician's declared kind. A low-confidence verdict or a
         #     user↔graph mismatch short-circuits with NEEDS_KIND_CONFIRMATION.
         # The resolved kind is threaded into Scout + Registry as a constraint and
@@ -590,20 +613,21 @@ async def generate_knowledge_pack(
                         graph=graph,
                         stats=kind_stats,
                     )
-                except Exception:  # noqa: BLE001 — fall back to user-declared kind
+                except Exception:  # noqa: BLE001 - fall back to user-declared kind
                     logger.exception(
-                        "[Pipeline] Phase 1.5 classification failed — "
-                        "falling back to declared kind"
+                        "[Pipeline] Phase 1.5 classification failed - falling back to declared kind"
                     )
                     verdict_kind = None
                 finally:
                     kind_stats.duration_s = time.monotonic() - t_kind
                     phase_stats.append(kind_stats)
-                await emit({
-                    "type": "phase_finished",
-                    "phase": "device_kind",
-                    "elapsed_s": time.monotonic() - t_kind,
-                })
+                await emit(
+                    {
+                        "type": "phase_finished",
+                        "phase": "device_kind",
+                        "elapsed_s": time.monotonic() - t_kind,
+                    }
+                )
 
             resolution = device_kind.reconcile_kind(
                 user_declared=user_device_kind, verdict=verdict_kind
@@ -612,21 +636,23 @@ async def generate_knowledge_pack(
                 device_kind.write_pending_kind(pack_dir, resolution)
                 logger.info(
                     "[Pipeline] Phase 1.5 · device-kind needs confirmation · "
-                    "user=%r graph=%r conf=%s — pausing before Scout",
+                    "user=%r graph=%r conf=%s - pausing before Scout",
                     resolution.user_declared,
                     resolution.graph_inferred,
                     resolution.confidence,
                 )
-                await emit({
-                    "type": "pipeline_paused",
-                    "reason": "needs_kind_confirmation",
-                    "device_slug": slug,
-                    "user_declared": resolution.user_declared,
-                    "graph_inferred": resolution.graph_inferred,
-                    "confidence": resolution.confidence,
-                    "evidence": resolution.evidence,
-                })
-                # A legitimate early exit, not a failure — keep the finally-hook
+                await emit(
+                    {
+                        "type": "pipeline_paused",
+                        "reason": "needs_kind_confirmation",
+                        "device_slug": slug,
+                        "user_declared": resolution.user_declared,
+                        "graph_inferred": resolution.graph_inferred,
+                        "confidence": resolution.confidence,
+                        "evidence": resolution.evidence,
+                    }
+                )
+                # A legitimate early exit, not a failure - keep the finally-hook
                 # from recording the parked build as failed. The pack still
                 # counts as incomplete until the confirmed re-run completes.
                 build_state.mark_paused(pack_dir, reason="needs_kind_confirmation")
@@ -645,11 +671,11 @@ async def generate_knowledge_pack(
 
         logger.info("[Pipeline] Phase 1.5 · resolved device_kind=%r", resolved_kind)
 
-        # -------- Phase 1 — Scout ------------------------------------------------
+        # -------- Phase 1 - Scout ------------------------------------------------
         # Scout runs blind: no graph / board / datasheets in its prompt. The
         # 2026-04-24 enrichment was reverted after URL-by-URL audit found 23/23
         # fabricated refdes attributions when Scout was given the graph as
-        # context. The function→refdes bridge is now Phase 2.5 (Mapper) — a
+        # context. The function->refdes bridge is now Phase 2.5 (Mapper) - a
         # forced-tool agent with deterministic post-validation. See
         # docs/superpowers/specs/2026-04-25-refdes-mapper-agent.md.
         t0 = time.monotonic()
@@ -663,13 +689,15 @@ async def generate_knowledge_pack(
             phase_stats.append(scout_stats)
             _canonical_raw_dump_path(pack_dir).write_text(raw_dump, encoding="utf-8")
             logger.info("[Pipeline] Phase 1 skipped · using raw_dump_override")
-            await emit({
-                "type": "phase_finished",
-                "phase": "scout",
-                "elapsed_s": scout_stats.duration_s,
-                "skipped": True,
-                "source": raw_dump_source,
-            })
+            await emit(
+                {
+                    "type": "phase_finished",
+                    "phase": "scout",
+                    "elapsed_s": scout_stats.duration_s,
+                    "skipped": True,
+                    "source": raw_dump_source,
+                }
+            )
         else:
             existing_raw_dump = _load_existing_raw_dump(pack_dir)
             if existing_raw_dump is not None:
@@ -678,30 +706,36 @@ async def generate_knowledge_pack(
                 scout_stats.duration_s = time.monotonic() - t0
                 phase_stats.append(scout_stats)
                 logger.info("[Pipeline] Phase 1 skipped · using existing raw_research_dump.md")
-                await emit({
-                    "type": "phase_finished",
-                    "phase": "scout",
-                    "elapsed_s": scout_stats.duration_s,
-                    "skipped": True,
-                    "source": raw_dump_source,
-                })
-            else:
-                scout_model = models_by_role["scout"]
-                if _needs_third_party_forced_tool_compat(scout_model):
-                    # Third-party models don't support web_search — generate stub dump
-                    raw_dump = _generate_third_party_stub_dump(device_label, focus_symptom)
-                    raw_dump_source = "third_party_stub"
-                    scout_stats.duration_s = time.monotonic() - t0
-                    phase_stats.append(scout_stats)
-                    _canonical_raw_dump_path(pack_dir).write_text(raw_dump, encoding="utf-8")
-                    logger.warning("[Pipeline] Scout model %r is third-party — using stub dump", scout_model)
-                    await emit({
+                await emit(
+                    {
                         "type": "phase_finished",
                         "phase": "scout",
                         "elapsed_s": scout_stats.duration_s,
                         "skipped": True,
                         "source": raw_dump_source,
-                    })
+                    }
+                )
+            else:
+                scout_model = models_by_role["scout"]
+                if _needs_third_party_forced_tool_compat(scout_model):
+                    # Third-party models don't support web_search - generate stub dump
+                    raw_dump = _generate_third_party_stub_dump(device_label, focus_symptom)
+                    raw_dump_source = "third_party_stub"
+                    scout_stats.duration_s = time.monotonic() - t0
+                    phase_stats.append(scout_stats)
+                    _canonical_raw_dump_path(pack_dir).write_text(raw_dump, encoding="utf-8")
+                    logger.warning(
+                        "[Pipeline] Scout model %r is third-party - using stub dump", scout_model
+                    )
+                    await emit(
+                        {
+                            "type": "phase_finished",
+                            "phase": "scout",
+                            "elapsed_s": scout_stats.duration_s,
+                            "skipped": True,
+                            "source": raw_dump_source,
+                        }
+                    )
                 else:
                     raw_dump = await run_scout(
                         client=client,
@@ -720,18 +754,20 @@ async def generate_knowledge_pack(
                     phase_stats.append(scout_stats)
                     _canonical_raw_dump_path(pack_dir).write_text(raw_dump, encoding="utf-8")
                     logger.info("[Pipeline] Phase 1 complete · raw_research_dump.md written")
-                    await emit({
-                        "type": "phase_finished",
-                        "phase": "scout",
-                        "elapsed_s": scout_stats.duration_s,
-                    })
+                    await emit(
+                        {
+                            "type": "phase_finished",
+                            "phase": "scout",
+                            "elapsed_s": scout_stats.duration_s,
+                        }
+                    )
 
-        # -------- Phase 2 — Registry --------------------------------------------
+        # -------- Phase 2 - Registry --------------------------------------------
         t0 = time.monotonic()
         await emit({"type": "phase_started", "phase": "registry"})
         registry_stats = PhaseTokenStats(phase="registry")
-        # Registry runs without the graph too — it focuses on canonical
-        # vocabulary extraction. The function→refdes bridge moves to Phase 2.5
+        # Registry runs without the graph too - it focuses on canonical
+        # vocabulary extraction. The function->refdes bridge moves to Phase 2.5
         # below. Legacy `refdes_candidates` field on RegistryComponent stays
         # in the schema for back-compat with packs already on disk.
         registry = await run_registry_builder(
@@ -748,13 +784,13 @@ async def generate_knowledge_pack(
         # downstream consumers (UI, agent prompt) read it from registry.json.
         if resolved_kind is not None:
             registry.taxonomy.device_kind = resolved_kind
-        # -------- Phase 2.6 — deterministic registry enrichment from graph -----
+        # -------- Phase 2.6 - deterministic registry enrichment from graph -----
         # Close the registry-cites-an-undefined-rail gap BEFORE persist: a
         # component description that names a real rail (PP1V2_S2) but which the
         # web-derived signals never listed leaves the drift check with no
-        # canonical entry → the auditor calls the rail fabricated. This is a
+        # canonical entry -> the auditor calls the rail fabricated. This is a
         # cheap, deterministic, no-LLM step (a cited-but-absent rail is never
-        # invented), so it emits no event — just an info log of the added signals.
+        # invented), so it emits no event - just an info log of the added signals.
         if graph_truth is not None:
             added_signals = enrich_registry_from_graph(registry, graph_truth)
             if added_signals:
@@ -763,13 +799,13 @@ async def generate_knowledge_pack(
                     len(added_signals),
                     added_signals,
                 )
-            # -------- Phase 2.7 — drop web-registry fictions ------------------
+            # -------- Phase 2.7 - drop web-registry fictions ------------------
             # When a schematic is the authority, a component the registry names
             # but the graph AND the raw vision/OCR attest NOWHERE is a web
             # fiction (e.g. U6903 on a MacBook whose 3V3 rail is really sourced
             # by R6999). Left in, the Cartographe trusts it and wires a phantom
             # `powers` edge the auditor then rejects. The triple-negative
-            # (graph ∪ vision) makes the purge safe against vision recall gaps:
+            # (graph union vision) makes the purge safe against vision recall gaps:
             # a real-but-untraced part still shows in the page vision and stays.
             seen = load_seen_refdes(pack_dir)
             fictions = set(find_registry_fictions(registry, graph_truth, seen))
@@ -789,25 +825,27 @@ async def generate_knowledge_pack(
         logger.info("[Pipeline] Phase 2 complete · registry.json written")
         # T9a: enrich the device alias registry (the "carnet") with the facets
         # Scout/Registry discovered (board#/model/EMC/marketing + family) so a
-        # later input by ANY of them resolves to this pack — the cross-facet
+        # later input by ANY of them resolves to this pack - the cross-facet
         # dedup bridge. Best-effort; never disturbs a build.
         with contextlib.suppress(Exception):
             _carnet = get_device_registry_store(pack_dir.parent)
             await register_from_registry(_carnet, pack_dir.name, registry.model_dump())
-        await emit({
-            "type": "phase_finished",
-            "phase": "registry",
-            "elapsed_s": registry_stats.duration_s,
-            "counts": {
-                "components": len(registry.components),
-                "signals": len(registry.signals),
-            },
-            "taxonomy": registry.taxonomy.model_dump(),
-        })
+        await emit(
+            {
+                "type": "phase_finished",
+                "phase": "registry",
+                "elapsed_s": registry_stats.duration_s,
+                "counts": {
+                    "components": len(registry.components),
+                    "signals": len(registry.signals),
+                },
+                "taxonomy": registry.taxonomy.model_dump(),
+            }
+        )
 
-        # -------- Phase 2.5 — Refdes Mapper (only when a graph is loaded) -------
+        # -------- Phase 2.5 - Refdes Mapper (only when a graph is loaded) -------
         # See docs/superpowers/specs/2026-04-25-refdes-mapper-agent.md.
-        # Maps registry canonical names → graph refdes via forced-tool +
+        # Maps registry canonical names -> graph refdes via forced-tool +
         # server-side validation. Failure is silent: mapper errors degrade to
         # an empty mappings file, and bench-gen falls back to its rail-overlap
         # heuristic. Skipped entirely when no graph is loaded.
@@ -837,15 +875,17 @@ async def generate_knowledge_pack(
                     "[Pipeline] Phase 2.5 complete · refdes_attributions.json written · n=%d",
                     len(mappings.attributions),
                 )
-                await emit({
-                    "type": "phase_finished",
-                    "phase": "mapper",
-                    "elapsed_s": time.monotonic() - t_map,
-                    "counts": {"attributions": len(mappings.attributions)},
-                })
-            except Exception:  # noqa: BLE001 — non-fatal: bench-gen has a heuristic fallback
+                await emit(
+                    {
+                        "type": "phase_finished",
+                        "phase": "mapper",
+                        "elapsed_s": time.monotonic() - t_map,
+                        "counts": {"attributions": len(mappings.attributions)},
+                    }
+                )
+            except Exception:  # noqa: BLE001 - non-fatal: bench-gen has a heuristic fallback
                 logger.exception(
-                    "[Pipeline] Phase 2.5 mapper failed — continuing without attributions"
+                    "[Pipeline] Phase 2.5 mapper failed - continuing without attributions"
                 )
                 # Persist an empty attributions file so downstream consumers
                 # observe "graph was present but mapper produced nothing"
@@ -856,7 +896,7 @@ async def generate_knowledge_pack(
                     encoding="utf-8",
                 )
 
-        # -------- Phase 3 — Writers (parallel) ----------------------------------
+        # -------- Phase 3 - Writers (parallel) ----------------------------------
         t0 = time.monotonic()
         await emit({"type": "phase_started", "phase": "writers"})
         w_stats = {
@@ -882,34 +922,36 @@ async def generate_knowledge_pack(
             phase_stats.append(ws)
         _write_writer_outputs(pack_dir, kg, rules, dictionary)
         logger.info("[Pipeline] Phase 3 complete · 3 writer files written")
-        await emit({
-            "type": "phase_finished",
-            "phase": "writers",
-            "elapsed_s": writers_elapsed,
-            "counts": {
-                "nodes": len(kg.nodes),
-                "edges": len(kg.edges),
-                "rules": len(rules.rules),
-                "entries": len(dictionary.entries),
-            },
-        })
+        await emit(
+            {
+                "type": "phase_finished",
+                "phase": "writers",
+                "elapsed_s": writers_elapsed,
+                "counts": {
+                    "nodes": len(kg.nodes),
+                    "edges": len(kg.edges),
+                    "rules": len(rules.rules),
+                    "entries": len(dictionary.entries),
+                },
+            }
+        )
 
-        # -------- Phase 4 — Audit + self-healing loop ---------------------------
+        # -------- Phase 4 - Audit + self-healing loop ---------------------------
         # CONVERGENCE POLICY (Task 10). The naive loop revised until APPROVED or
-        # max-rounds, then hard-failed — losing a ~$100 build over a near-miss the
+        # max-rounds, then hard-failed - losing a ~$100 build over a near-miss the
         # auditor had a precise brief for, and worse, sometimes shipping a rewrite
-        # that scored LOWER than an earlier round (the macbook-air-m1 0.78 → 0.42
+        # that scored LOWER than an earlier round (the macbook-air-m1 0.78 -> 0.42
         # collapse). Three rules fix that:
-        #   • EARLY-STOP on regression — a trajectory that drops below the prior
+        #   • EARLY-STOP on regression - a trajectory that drops below the prior
         #     round never recovered in practice, and each extra round costs real
         #     Opus $. The moment the score regresses we stop revising.
-        #   • BEST-OF snapshot — we track the highest-scoring round's full
+        #   • BEST-OF snapshot - we track the highest-scoring round's full
         #     (kg, rules, dictionary, verdict) and never ship something worse than
         #     one we already produced.
-        #   • ACCEPTANCE FLOOR — when we stop without an APPROVED, the best
+        #   • ACCEPTANCE FLOOR - when we stop without an APPROVED, the best
         #     snapshot is accepted WITH WARNINGS iff it clears
         #     `pipeline_accept_score` AND has empty deterministic drift (the hard
-        #     gate — a high LLM score with real refdes drift is NOT shippable).
+        #     gate - a high LLM score with real refdes drift is NOT shippable).
         #     floor=0 disables this and restores the legacy hard-fail.
         t0 = time.monotonic()
         await emit({"type": "phase_started", "phase": "audit"})
@@ -925,11 +967,13 @@ async def generate_knowledge_pack(
         while True:
             # Live sub-step: round 0 is the initial audit, round N>=1 a revision
             # pass. The landing UI renders these into the audit phase's live line.
-            await emit({"type": "phase_step", "phase": "audit", "step": "round", "index": rounds_used})
+            await emit(
+                {"type": "phase_step", "phase": "audit", "step": "round", "index": rounds_used}
+            )
             # Build the mention-scoped ground-truth report for this round's
-            # artefacts when a graph exists — it's what the auditor reads instead
+            # artefacts when a graph exists - it's what the auditor reads instead
             # of the raw graph (anti-fabrication discipline) and what grounds the
-            # revisers' fixes. None with no graph → both keep the web-only path.
+            # revisers' fixes. None with no graph -> both keep the web-only path.
             report = (
                 build_ground_truth_report(
                     graph_truth, extract_mentions(registry, kg, rules, dictionary)
@@ -951,7 +995,7 @@ async def generate_knowledge_pack(
             )
             auditor_phase_name = "auditor" if rounds_used == 0 else f"auditor_rev_{rounds_used}"
             auditor_stats = PhaseTokenStats(phase=auditor_phase_name)
-            previous_brief = verdict.revision_brief if rounds_used > 0 else ""  # noqa: F821 — verdict is bound on the prior loop iteration; rounds_used==0 short-circuits
+            previous_brief = verdict.revision_brief if rounds_used > 0 else ""  # noqa: F821 - verdict is bound on the prior loop iteration; rounds_used==0 short-circuits
             call_t0 = time.monotonic()
             verdict = await run_auditor(
                 client=client,
@@ -976,7 +1020,7 @@ async def generate_knowledge_pack(
 
             # Snapshot the best round seen so far BEFORE any terminal decision, so
             # the floor path below can fall back to it (and APPROVED naturally is
-            # its own best). Strict > keeps the EARLIEST round on a tie — fewer $.
+            # its own best). Strict > keeps the EARLIEST round on a tie - fewer $.
             if best is None or verdict.consistency_score > best[0]:
                 best = (verdict.consistency_score, kg, rules, dictionary, verdict)
 
@@ -985,19 +1029,20 @@ async def generate_knowledge_pack(
                 break
 
             if verdict.overall_status == "REJECTED":
-                logger.error("[Pipeline] Auditor REJECTED the pack — aborting")
-                await emit({
-                    "type": "pipeline_failed",
-                    "status": "REJECTED",
-                    "error": verdict.revision_brief or "auditor rejected the pack",
-                })
+                logger.error("[Pipeline] Auditor REJECTED the pack - aborting")
+                await emit(
+                    {
+                        "type": "pipeline_failed",
+                        "status": "REJECTED",
+                        "error": verdict.revision_brief or "auditor rejected the pack",
+                    }
+                )
                 raise RuntimeError(
-                    f"Pipeline failed: auditor rejected the pack. "
-                    f"brief={verdict.revision_brief!r}"
+                    f"Pipeline failed: auditor rejected the pack. brief={verdict.revision_brief!r}"
                 )
 
             # NEEDS_REVISION. A regression (score dropped vs the previous round)
-            # is a STOP signal — on real builds it never recovered and each round
+            # is a STOP signal - on real builds it never recovered and each round
             # is real Opus spend. We stop here the same way we'd stop on exhausted
             # rounds: fall back to the best snapshot (floor or hard-fail).
             regression = prev_score is not None and verdict.consistency_score < prev_score
@@ -1009,8 +1054,8 @@ async def generate_knowledge_pack(
                 # edge as drift and got its chance to re-attribute; whatever survived
                 # must be pruned DETERMINISTICALLY before the gate, or it reads as
                 # residual drift and sinks an otherwise-shippable pack to REJECTED
-                # (the macbook U7800→PP1V8_S0 class). Same discipline as the registry
-                # fiction purge — drop the false edge, never invent the right one.
+                # (the macbook U7800->PP1V8_S0 class). Same discipline as the registry
+                # fiction purge - drop the false edge, never invent the right one.
                 if graph_truth is not None:
                     b_kg, pruned_edges = prune_contradicted_edges(b_kg, graph_truth)
                     if pruned_edges:
@@ -1020,7 +1065,7 @@ async def generate_knowledge_pack(
                             len(pruned_edges),
                             [f"{c.src}->{c.rail}" for c in pruned_edges],
                         )
-                # ORPHAN BACKSTOP. The revise-loop cannot fix orphan nodes — they
+                # ORPHAN BACKSTOP. The revise-loop cannot fix orphan nodes - they
                 # require topology changes (adding edges or removing nodes), not
                 # text edits. This deterministic backstop drops them so the LLM's
                 # inability to rewire the graph doesn't block an otherwise-shippable
@@ -1035,21 +1080,25 @@ async def generate_knowledge_pack(
                     )
                 # ACCEPTANCE FLOOR. The best snapshot is shippable WITH WARNINGS
                 # iff (a) the floor is enabled (>0), (b) it clears the floor, and
-                # (c) it has ZERO deterministic drift — the registry∪graph set-diff
+                # (c) it has ZERO deterministic drift - the registryuniongraph set-diff
                 # over the SAME artefacts we'd ship. The drift check is the hard
                 # gate: a high LLM score next to a real undefined refdes is exactly
                 # the corruptible state we must not auto-publish. Re-running it on
                 # the best snapshot (not the last round) keeps the gate honest.
                 floor = settings.pipeline_accept_score
-                acceptable = floor > 0 and score >= floor and not compute_drift(
-                    registry=registry,
-                    knowledge_graph=b_kg,
-                    rules=b_rules,
-                    dictionary=b_dict,
-                    graph_truth=graph_truth,
+                acceptable = (
+                    floor > 0
+                    and score >= floor
+                    and not compute_drift(
+                        registry=registry,
+                        knowledge_graph=b_kg,
+                        rules=b_rules,
+                        dictionary=b_dict,
+                        graph_truth=graph_truth,
+                    )
                 )
                 if acceptable:
-                    # Adopt the best snapshot and persist it — we may have rewritten
+                    # Adopt the best snapshot and persist it - we may have rewritten
                     # PAST it into a worse round, so write the best back to disk so
                     # the on-disk pack matches the verdict we ship.
                     kg, rules, dictionary = b_kg, b_rules, b_dict
@@ -1059,7 +1108,7 @@ async def generate_knowledge_pack(
                     # qualité). Le brief résiduel reste lisible dans le même
                     # fichier ET dans pack_quality.audit_warnings.
                     # NOTE Literal : "APPROVED_WITH_WARNINGS" n'est PAS dans le
-                    # Literal d'AuditVerdict — c'est voulu (le schéma du tool
+                    # Literal d'AuditVerdict - c'est voulu (le schéma du tool
                     # submit_audit_verdict est généré depuis ce modèle ; élargir
                     # le Literal autoriserait l'auditor LLM à l'émettre).
                     # model_copy(update=) ne revalide pas, et le seul lecteur du
@@ -1074,19 +1123,19 @@ async def generate_knowledge_pack(
                     accepted_with_warnings = True
                     logger.warning(
                         "[Pipeline] Phase 4 accepted WITH WARNINGS · best score=%.2f "
-                        "(floor=%.2f) · reason=%s — remaining brief persisted to pack_quality",
+                        "(floor=%.2f) · reason=%s - remaining brief persisted to pack_quality",
                         score,
                         floor,
                         "regression" if regression else "rounds exhausted",
                     )
                     break
 
-                # Not acceptable → legacy hard-fail. Stamp the verdict REJECTED
+                # Not acceptable -> legacy hard-fail. Stamp the verdict REJECTED
                 # with a brief that records WHY (the score vs floor / the drift),
                 # persist it, emit pipeline_failed, and raise.
                 logger.error(
                     "[Pipeline] Phase 4 unrecoverable · best score=%.2f (floor=%.2f) · "
-                    "reason=%s — rejecting.",
+                    "reason=%s - rejecting.",
                     score,
                     floor,
                     "regression" if regression else "rounds exhausted",
@@ -1105,11 +1154,13 @@ async def generate_knowledge_pack(
                 (pack_dir / "audit_verdict.json").write_text(
                     verdict.model_dump_json(indent=2), encoding="utf-8"
                 )
-                await emit({
-                    "type": "pipeline_failed",
-                    "status": "REJECTED",
-                    "error": verdict.revision_brief,
-                })
+                await emit(
+                    {
+                        "type": "pipeline_failed",
+                        "status": "REJECTED",
+                        "error": verdict.revision_brief,
+                    }
+                )
                 raise RuntimeError(
                     f"Pipeline failed: unrecoverable after {rounds_used} revise round(s). "
                     f"brief={verdict.revision_brief!r}"
@@ -1142,10 +1193,10 @@ async def generate_knowledge_pack(
             )
             _write_writer_outputs(pack_dir, kg, rules, dictionary)
 
-        # Post-loop edge backstop — covers the APPROVED path (the floor path
+        # Post-loop edge backstop - covers the APPROVED path (the floor path
         # already pruned its snapshot before the gate). If the auditor approved a
         # pack that still carries a graph-contradicted edge, drop it now so the
-        # shipped kg never contradicts the schematic. Idempotent → a no-op when the
+        # shipped kg never contradicts the schematic. Idempotent -> a no-op when the
         # floor branch already cleaned the snapshot.
         if graph_truth is not None:
             kg, post_pruned = prune_contradicted_edges(kg, graph_truth)
@@ -1158,19 +1209,23 @@ async def generate_knowledge_pack(
                 )
                 _write_writer_outputs(pack_dir, kg, rules, dictionary)
 
-        await emit({
-            "type": "phase_finished",
-            "phase": "audit",
-            "elapsed_s": time.monotonic() - t0,
-            # APPROVED_WITH_WARNINGS surfaces the floor-rescue to the UI as a
-            # distinct, non-failure terminal state (the residual brief lives in
-            # pack_quality.audit_warnings).
-            "status": "APPROVED_WITH_WARNINGS" if accepted_with_warnings else verdict.overall_status,
-            "consistency_score": verdict.consistency_score,
-            "revise_rounds_used": rounds_used,
-        })
+        await emit(
+            {
+                "type": "phase_finished",
+                "phase": "audit",
+                "elapsed_s": time.monotonic() - t0,
+                # APPROVED_WITH_WARNINGS surfaces the floor-rescue to the UI as a
+                # distinct, non-failure terminal state (the residual brief lives in
+                # pack_quality.audit_warnings).
+                "status": "APPROVED_WITH_WARNINGS"
+                if accepted_with_warnings
+                else verdict.overall_status,
+                "consistency_score": verdict.consistency_score,
+                "revise_rounds_used": rounds_used,
+            }
+        )
 
-        # -------- Pack lint — deterministic pre-persist quality signal ----------
+        # -------- Pack lint - deterministic pre-persist quality signal ----------
         # Cheap regex checks over the final rules + registry + graph rails.
         # Findings are a SIGNAL only: they're logged + persisted to
         # `pack_quality.json` but never abort the pipeline (auto-publish
@@ -1190,7 +1245,7 @@ async def generate_knowledge_pack(
         # When the pack was accepted below APPROVED, attach the residual audit
         # state (the score + the unresolved brief + the deterministic drift) to
         # pack_quality. This is the auditable trace of what we shipped-with-known-
-        # gaps — re-servable by a quality UI so a tech sees the caveats. Clean
+        # gaps - re-servable by a quality UI so a tech sees the caveats. Clean
         # APPROVED runs pass None and the key is absent.
         _write_pack_quality(
             pack_dir,
@@ -1205,7 +1260,7 @@ async def generate_knowledge_pack(
         )
         logger.info("[Pipeline] pack_quality.json written")
 
-        # Every pack file is on disk and audited — flip the marker BEFORE the
+        # Every pack file is on disk and audited - flip the marker BEFORE the
         # pipeline_finished emit so a subscriber reacting to the event (the
         # cloud's outcome-follow, a retry POST) never reads a stale 'building'.
         build_state.mark_complete(pack_dir)
@@ -1214,26 +1269,24 @@ async def generate_knowledge_pack(
         logger.info("Pipeline end · pack=%s · rounds=%d", pack_dir, rounds_used)
         logger.info("=" * 72)
 
-        # Lot 3 — graph↔boardview QA gate. When the build produced a graph AND a
+        # Lot 3 - graph↔boardview QA gate. When the build produced a graph AND a
         # boardview was supplied, write coverage_report.json + get a PASS/WARN/FAIL
         # verdict. Best-effort (never crashes the build).
         coverage_verdict = graph_coverage.run_coverage_gate(pack_dir, uploads.boardview)
 
-        # Lot 2 + Lot 3 — a web-only managed build (no graph) OR a schematic build
+        # Lot 2 + Lot 3 - a web-only managed build (no graph) OR a schematic build
         # that FAILED coverage is relocated to the requesting tenant's PRIVATE
         # staging layer instead of the shared commons. Done after mark_complete
         # (pipeline finished reading root) and before the seed (which mounts the
-        # SHARED device store — must not mirror a private pack). Self-host /
+        # SHARED device store - must not mirror a private pack). Self-host /
         # schematic-backed builds that PASS/WARN stay shared.
-        staged_private = _stage_if_private(
-            memory_root, pack_dir, slug, owner_ref, coverage_verdict
-        )
+        staged_private = _stage_if_private(memory_root, pack_dir, slug, owner_ref, coverage_verdict)
 
         # Seed the device's Managed-Agents memory store with the freshly
         # approved pack so diagnostic sessions read canonical knowledge via
         # the /mnt/memory/ filesystem mount instead of re-loading JSON on
         # every tool call. No-op when ma_memory_store_enabled is False. SKIPPED
-        # for a private web-only pack — the device store is cross-tenant; the
+        # for a private web-only pack - the device store is cross-tenant; the
         # owning tenant's agent reads its staged pack live via load_effective_pack.
         if staged_private:
             seed_status = "skipped_web_only_private"
@@ -1244,21 +1297,23 @@ async def generate_knowledge_pack(
         logger.info("[Pipeline] Memory-store seed status=%s", seed_status)
 
         # Le verdict adopté sur le chemin accept-with-warnings est le snapshot
-        # best (NEEDS_REVISION) — le statut FINAL du build, lui, doit dire ce qui
+        # best (NEEDS_REVISION) - le statut FINAL du build, lui, doit dire ce qui
         # a été décidé, pas ce que l'auditor pensait du round. Le cloud ne lit
         # que le TYPE de l'événement, mais l'UI moteur (et tout futur abonné)
         # lit `status` : NEEDS_REVISION sur un build complet serait un mensonge.
         final_status = (
             "APPROVED_WITH_WARNINGS" if accepted_with_warnings else verdict.overall_status
         )
-        await emit({
-            "type": "pipeline_finished",
-            "device_slug": slug,
-            "status": final_status,
-            "revise_rounds_used": rounds_used,
-            "consistency_score": verdict.consistency_score,
-            "memory_store_seed": seed_status,
-        })
+        await emit(
+            {
+                "type": "pipeline_finished",
+                "device_slug": slug,
+                "status": final_status,
+                "revise_rounds_used": rounds_used,
+                "consistency_score": verdict.consistency_score,
+                "memory_store_seed": seed_status,
+            }
+        )
 
         tokens_used_total = sum(s.input_tokens + s.output_tokens for s in phase_stats)
         cache_read_tokens_total = sum(s.cache_read_input_tokens for s in phase_stats)
@@ -1274,21 +1329,21 @@ async def generate_knowledge_pack(
         )
     except RuntimeError:
         raise
-    except Exception as exc:  # pragma: no cover — defensive wrapper
+    except Exception as exc:  # pragma: no cover - defensive wrapper
         logger.exception("[Pipeline] Unexpected failure")
         await emit({"type": "pipeline_failed", "status": "ERROR", "error": str(exc)})
         raise
     finally:
         # Any exit that didn't reach mark_complete/mark_paused above (REJECTED
         # verdict, unexpected exception, task cancellation) leaves the marker on
-        # 'building' — record it as failed so the partial pack stops counting as
+        # 'building' - record it as failed so the partial pack stops counting as
         # complete. Catches ALL exits, including CancelledError, without touching
         # the except structure above.
         _in_flight_exc = sys.exc_info()[1]
         build_state.finalize_failed_if_building(
             pack_dir, error=str(_in_flight_exc) if _in_flight_exc else "pipeline did not complete"
         )
-        # Always persist telemetry — even on failure, so prior-phase tokens
+        # Always persist telemetry - even on failure, so prior-phase tokens
         # aren't lost and the failure can be diagnosed post-mortem.
         try:
             if phase_stats:
@@ -1300,7 +1355,7 @@ async def generate_knowledge_pack(
         except Exception as exc:  # noqa: BLE001
             logger.warning("[Pipeline] Failed to write token_stats.json: %s", exc)
         # T13 build metering: report the build's per-phase spend to the cloud
-        # ledger (kind='build'). In-memory stats — never re-read from disk, so a
+        # ledger (kind='build'). In-memory stats - never re-read from disk, so a
         # re-run can't double-report a previous run's file. Hard no-op when the
         # cloud target is unconfigured (self-host); best-effort otherwise.
         try:
@@ -1310,16 +1365,16 @@ async def generate_knowledge_pack(
                     engine_repair_id=engine_repair_id,
                     stats=phase_stats,
                 )
-        except Exception as exc:  # noqa: BLE001 — metering must never mask the build outcome
+        except Exception as exc:  # noqa: BLE001 - metering must never mask the build outcome
             logger.warning("[Pipeline] build metering report failed: %s", exc)
 
 
 def _wrap_on_event(on_event: OnEvent | None) -> OnEvent:
-    """将外部 on_event 包装为 emit：None → 空操作；异常 → 记录日志并吞掉。
+    """将外部 on_event 包装为 emit:None -> 空操作;异常 -> 记录日志并吞掉.
 
-    保证 progress 投递失败不会中断 knowledge pipeline 主流程。
-    repairs._run_pipeline_with_events 传入的 _on_event 经此包装后，
-    在 generate_knowledge_pack 内以 emit({type: ...}) 形式在各阶段调用。
+    保证 progress 投递失败不会中断 knowledge pipeline 主流程.
+    repairs._run_pipeline_with_events 传入的 _on_event 经此包装后,
+    在 generate_knowledge_pack 内以 emit({type: ...}) 形式在各阶段调用.
     """
     if on_event is None:
         return _noop_on_event
@@ -1327,7 +1382,7 @@ def _wrap_on_event(on_event: OnEvent | None) -> OnEvent:
     async def safe(event: dict[str, Any]) -> None:
         try:
             await on_event(event)
-        except Exception:  # noqa: BLE001 — listener failures must not abort pipeline
+        except Exception:  # noqa: BLE001 - listener failures must not abort pipeline
             logger.warning("[Pipeline] on_event listener raised; swallowing", exc_info=True)
 
     return safe
@@ -1353,14 +1408,14 @@ def _write_pack_quality(
 ) -> None:
     """Persist deterministic lint findings as the pack-quality signal.
 
-    A clean pack writes an empty `lint_findings` list — the artefact is
+    A clean pack writes an empty `lint_findings` list - the artefact is
     always present so downstream consumers can distinguish "linted, clean"
     from "never linted".
 
     `audit_warnings`, when provided, records that the pack was accepted BELOW
     APPROVED (the floor-rescue path): the consistency score, the unresolved
     revision brief, and the drift report at the moment of acceptance. It's the
-    auditable trace of what remained — re-servable by a quality UI so the caveats
+    auditable trace of what remained - re-servable by a quality UI so the caveats
     travel with the pack. Omitted (key absent) on a clean APPROVED build.
     """
     payload = {"lint_findings": [asdict(f) for f in findings]}
@@ -1392,19 +1447,19 @@ async def _apply_revisions(
 ) -> tuple[KnowledgeGraph, RulesSet, Dictionary]:
     """Re-run each writer flagged by the auditor and return the updated tuple.
 
-    RC1 of the convergence bug — two coupled fixes live HERE:
+    RC1 of the convergence bug - two coupled fixes live HERE:
 
     1. FIXED revise order `(knowledge_graph, rules, dictionary)`, NOT the auditor's
        `files_to_rewrite` order. On the real macbook-air-m1 build, revising in the
        auditor's order let rules/dictionary realign against a kg that was ITSELF
-       about to change — order-dependent, non-deterministic convergence.
+       about to change - order-dependent, non-deterministic convergence.
 
     2. THREADING the freshly-revised artefacts forward: after kg is revised, the
        rules reviser receives the NEW kg as `current_kg` (and so on). The reviser
        aligns cross-file references against the up-to-date siblings, so the three
-       files re-align on the state that ACTUALLY exists post-revision — not the
+       files re-align on the state that ACTUALLY exists post-revision - not the
        stale snapshot each reviser used to see (which collapsed consistency
-       0.78 → 0.42). `kg`/`rules`/`dictionary` below are the loop-local, always-
+       0.78 -> 0.42). `kg`/`rules`/`dictionary` below are the loop-local, always-
        current trio; we pass them as the `current_*` siblings on every call.
     """
     kg, rules, dictionary = current_kg, current_rules, current_dictionary
@@ -1433,7 +1488,7 @@ async def _apply_revisions(
         """Un PhaseTokenStats par appel réviseur, collecté dans le sink du
         caller. Sans lui, les tours query_graph du réviseur (jusqu'à
         max_query_turns appels Opus par fichier) seraient absents de
-        token_stats.json et du total facturable — le gap grandit avec
+        token_stats.json et du total facturable - le gap grandit avec
         l'outillage graphe, il n'est plus négligeable."""
         if stats_sink is None:
             return None
@@ -1441,7 +1496,7 @@ async def _apply_revisions(
         stats_sink.append(st)
         return st
 
-    # FIXED order — the auditor's order no longer matters; we always revise the
+    # FIXED order - the auditor's order no longer matters; we always revise the
     # graph first so the downstream revisers see the corrected kg as their sibling.
     for file_name in ("knowledge_graph", "rules", "dictionary"):
         if file_name not in requested:

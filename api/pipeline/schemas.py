@@ -1,8 +1,12 @@
 """Pydantic V2 schemas for the knowledge generation pipeline.
 
-Every structured output of Phases 2–4 is declared here. These classes double as:
+Every structured output of Phases 2-4 is declared here. These classes double as:
 - Runtime validators for tool outputs (via `Class.model_validate(...)`)
 - JSON Schema sources for the forced-tool definitions (via `Class.model_json_schema()`)
+
+Phase 2 - Registry Builder (registry.json)
+Phase 3 - Writers (knowledge_graph.json, rules.json, dictionary.json)
+Phase 4 - Auditor (audit_verdict.json)
 """
 
 from __future__ import annotations
@@ -14,27 +18,25 @@ from typing import Annotated, Literal, TypeVar, get_args
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # ======================================================================
-# T8 — Provenance & identifiants stricts
+# T8 - Provenance & strict identifiers
 # ======================================================================
 
-# --- Patterns regex pour les identifiants canoniques ---
-
+# --- Regex patterns for canonical identifiers ---
 _CANONICAL_NAME_PATTERN = r"^[A-Z0-9_./-]{2,64}$"
 _REFDES_PATTERN = r"^[A-Z]{1,3}[0-9]{1,5}[A-Z]?$"
 _RULE_ID_PATTERN = r"^R-[A-Z0-9_-]{1,48}$"
 _NODE_ID_PATTERN = r"^N-[A-Z0-9_-]{1,48}$"
 
-# --- Enums fermés pour les champs kind/relation ---
-
+# --- Closed enums for kind/relation fields ---
 _ComponentKind = Literal[
     "MOSFET", "IC", "PMIC", "CAPACITOR", "RESISTOR", "CONNECTOR",
     "INDUCTOR", "DIODE", "FUSE", "SWITCH", "CRYSTAL", "COIL", "OTHER",
 ]
 
-# Exporté pour les modules qui doivent discriminer composant vs signal sans
-# dupliquer la liste (cf. pack_storage._derive_fact_id).
-# Dérivé de _ComponentKind via get_args : si un kind est ajouté au Literal,
-# COMPONENT_KINDS se met à jour automatiquement — pas de rot silencieux.
+# Exported for modules that need to discriminate component vs signal without
+# duplicating the list (cf. pack_storage._derive_fact_id).
+# Derived from _ComponentKind via get_args: if a kind is added to the Literal,
+# COMPONENT_KINDS updates automatically - no silent rot.
 COMPONENT_KINDS: frozenset[str] = frozenset(get_args(_ComponentKind))
 
 _SignalKind = Literal[
@@ -50,12 +52,12 @@ DEVICE_KINDS: frozenset[str] = frozenset(get_args(_DeviceKind))
 
 
 # ======================================================================
-# PHASE 1.5 — Device-kind classifier
+# PHASE 1.5 - Device-kind classifier
 # ======================================================================
 
 
 class KindVerdict(BaseModel):
-    """Phase 1.5 classifier output — device class inferred from the graph summary."""
+    """Phase 1.5 classifier output - device class inferred from the graph summary."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -64,7 +66,7 @@ class KindVerdict(BaseModel):
     )
     confidence: float = Field(
         ge=0.0, le=1.0,
-        description="0–1 self-assessed confidence. <0.6 routes to user confirmation.",
+        description="0-1 self-assessed confidence. <0.6 routes to user confirmation.",
     )
     evidence: str = Field(
         description="One sentence citing the rails/families that decided it (no refdes)."
@@ -76,11 +78,11 @@ _EdgeRelation = Literal["powers", "drives", "senses", "grounds", "shares_net", "
 
 
 class SanitizerAction(BaseModel):
-    """Une action loguée par le sanitizer PII sur un champ libre."""
+    """A logged action by the PII sanitizer on a free-form field."""
 
     model_config = ConfigDict(extra="forbid")
 
-    field: str = Field(..., description="Nom du champ sanitisé (e.g. 'description').")
+    field: str = Field(..., description="Name of the sanitized field (e.g. 'description').")
     action: Literal[
         "redacted_email",
         "redacted_phone",
@@ -90,17 +92,17 @@ class SanitizerAction(BaseModel):
         "redacted_customer_mention",
         "dropped_invalid_identifier",
     ]
-    count: int = Field(..., ge=1, description="Nombre d'occurrences redactées dans ce champ.")
+    count: int = Field(..., ge=1, description="Number of occurrences redacted in this field.")
 
 
 class Provenance(BaseModel):
-    """Métadonnées attachées à chaque fact post-T8 (composant, règle, node, …)."""
+    """Metadata attached to each post-T8 fact (component, rule, node, ...)."""
 
     model_config = ConfigDict(extra="forbid")
 
-    expansion_id: str = Field(..., description="ID de l'expansion qui a produit ce fact, ou 'baseline-pre-T8'.")
+    expansion_id: str = Field(..., description="ID of the expansion that produced this fact, or 'baseline-pre-T8'.")
     added_at: datetime
-    added_by_tenant: str | None = Field(default=None, description="Tenant ID (null pour baseline / self-host anonyme).")
+    added_by_tenant: str | None = Field(default=None, description="Tenant ID (null for baseline / anonymous self-host).")
     confidence: float = Field(..., ge=0.0, le=1.0)
     source_kind: Literal["baseline", "agent_expansion", "operator_seed"]
     sanitizer_actions: list[SanitizerAction] = Field(default_factory=list)
@@ -108,14 +110,14 @@ class Provenance(BaseModel):
 
 
 class WithProvenance(BaseModel):
-    """Mixin Pydantic : ajoute un champ provenance optionnel aux schémas existants.
+    """Pydantic mixin: adds an optional provenance field to existing schemas.
 
-    Optionnel pour rétro-compat lecture des packs pré-T8 (la migration attachera
-    une provenance synthétique 'baseline-pre-T8', cf. pack_migrate.py — Task 4).
+    Optional for backward-compatible reading of pre-T8 packs (migration will
+    attach a synthetic 'baseline-pre-T8' provenance, cf. pack_migrate.py - Task 4).
 
-    Toutes les sous-classes héritent de `populate_by_name=True` dans leur
-    model_config : ce réglage permet d'utiliser `provenance=` en plus de l'alias
-    `_provenance=` lors de la construction Python (les deux formes sont acceptées).
+    All subclasses inherit `populate_by_name=True` in their model_config: this
+    setting allows using `provenance=` in addition to the alias `_provenance=`
+    during Python construction (both forms are accepted).
     """
 
     provenance: Provenance | None = Field(default=None, alias="_provenance")
@@ -125,23 +127,21 @@ _T = TypeVar("_T", bound=BaseModel)
 
 
 def load_with_tolerant_baseline(model_cls: type[_T], raw: dict) -> _T:
-    """Charge un fact en mode tolérant si sa provenance dit source_kind=='baseline'.
+    """Load a fact in tolerant mode if its provenance says source_kind=='baseline'.
 
-    Le but : on a durci les patterns d'identifiants en T8, mais les packs
-    legacy migrés contiennent des facts qui ne matchent pas. On ne veut pas
-    les rejeter en lecture.
+    Goal: we tightened identifier patterns in T8, but migrated legacy packs
+    contain facts that don't match. We don't want to reject them on read.
 
-    ⚠ CAVEAT IMPORTANT : `model_construct` bypass TOUTE la validation Pydantic
-    (patterns regex, appartenance aux Literal, coercion de type, présence des
-    champs requis). L'objet retourné peut donc avoir des valeurs qui violent
-    le schéma — y compris des types incorrects ou des champs manquants. Le
-    caller (typiquement la migration Task 4 ou le loader de baseline) NE DOIT
-    PAS supposer la correctness de type/format de l'objet retourné.
+    CAVEAT: `model_construct` bypasses ALL Pydantic validation (regex patterns,
+    Literal membership, type coercion, required fields). The returned object
+    may therefore have values that violate the schema - including incorrect
+    types or missing fields. The caller (typically migration Task 4 or the
+    baseline loader) MUST NOT assume type/format correctness of the returned
+    object.
 
-    Cette fonction est conçue spécifiquement pour la lecture défensive d'une
-    baseline pré-T8 dont on assume que les données sont historiquement saines
-    même si elles ne matchent pas les patterns durcis. NE PAS l'utiliser pour
-    valider du contenu agent ou tenant.
+    This function is designed specifically for defensive reading of a pre-T8
+    baseline whose data is assumed historically sound even if it doesn't match
+    the tightened patterns. DO NOT use it to validate agent or tenant content.
     """
     prov_raw = raw.get("_provenance") or raw.get("provenance")
     if prov_raw and prov_raw.get("source_kind") == "baseline":
@@ -153,14 +153,14 @@ def load_with_tolerant_baseline(model_cls: type[_T], raw: dict) -> _T:
     return model_cls.model_validate(raw)
 
 # ======================================================================
-# PHASE 2.5 — Device taxonomy (brand > model > version hierarchy)
+# PHASE 2.5 - Device taxonomy (brand > model > version hierarchy)
 # ======================================================================
 
 
 class DeviceTaxonomy(BaseModel):
     """Hierarchical classification extracted from the raw dump by the taxonomist.
 
-    Every field is nullable — the extractor MUST output null rather than
+    Every field is nullable - the extractor MUST output null rather than
     invent when a source doesn't state the fact (hard rule #4). Populated
     after the Registry Builder so the writers see the final taxonomy, and
     used by the UI to group devices by brand > model > version.
@@ -171,14 +171,14 @@ class DeviceTaxonomy(BaseModel):
     brand: str | None = Field(
         default=None,
         description=(
-            "Manufacturer name as spelled in the sources — 'Apple', 'MNT', "
+            "Manufacturer name as spelled in the sources - 'Apple', 'MNT', "
             "'Raspberry Pi', 'Samsung'. Null when the sources don't name one."
         ),
     )
     model: str | None = Field(
         default=None,
         description=(
-            "Product line / model name — 'iPhone X', 'Reform', 'Model B', "
+            "Product line / model name - 'iPhone X', 'Reform', 'Model B', "
             "'Galaxy S21'. Null when genuinely unspecified."
         ),
     )
@@ -192,7 +192,7 @@ class DeviceTaxonomy(BaseModel):
     form_factor: str | None = Field(
         default=None,
         description=(
-            "The physical board being worked on — 'motherboard', 'logic board', "
+            "The physical board being worked on - 'motherboard', 'logic board', "
             "'mainboard', 'daughterboard', 'charging board'. Use the term the "
             "community uses most often in the dump."
         ),
