@@ -178,6 +178,7 @@ async def test_qwen_compat_uses_create_and_disables_thinking():
     assert len(calls) == 1
     # qwen compat 模式完全省略 thinking 参数（tinno 中继不支持）
     assert "thinking" not in calls[0]
-    assert calls[0]["max_tokens"] == 8192
+    # 第三方模型 max_tokens 限制为 128k
+    assert calls[0]["max_tokens"] == min(16000, 128000)
     assert calls[0]["tool_choice"] == {"type": "tool", "name": "emit_rules"}
     assert "CRITICAL: You MUST call the emit_rules tool now." in calls[0]["system"]

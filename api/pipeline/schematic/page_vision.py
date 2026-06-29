@@ -34,7 +34,7 @@ SUBMIT_PAGE_TOOL_NAME = "submit_schematic_page"
 # build: 14 pages pegged out=64000). On a diagnostic graph, truncation is
 # worse than the extra tokens — the cost is data we actually need. (V2:
 # also trim the SchematicPageGraph schema to cut redundant verbosity.)
-PAGE_MAX_TOKENS = 32768
+PAGE_MAX_TOKENS = 128000
 
 # Extended thinking: the model reasons before emitting the structured tool
 # call. Opus 4.7/4.8 only accept `adaptive` (the deprecated `enabled` type

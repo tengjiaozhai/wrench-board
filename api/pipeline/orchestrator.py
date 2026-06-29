@@ -321,37 +321,109 @@ def _slugify(label: str) -> str:
 
 
 def _get_client() -> AsyncAnthropic:
-    """创建 Anthropic 客户端实例(从 settings 读取配置)."""
+    """创建 Anthropic 客户端实例(从 settings 读取配置).
+
+    超时配置:
+    - connect: 10 秒 (连接超时)
+    - read: 20 分钟 (读取超时,第三方中继可能较慢)
+    - write: 10 分钟 (写入超时)
+    - pool: 10 分钟 (连接池超时)
+    """
     settings = get_settings()
     if not settings.anthropic_api_key:
         raise RuntimeError(
             "ANTHROPIC_API_KEY is not set. Copy .env.example to .env and set your key."
         )
+    from anthropic import Timeout
+
+    timeout = Timeout(
+        connect=10.0,
+        read=1200.0,  # 20 分钟
+        write=600.0,
+        pool=600.0,
+    )
     return AsyncAnthropic(
         api_key=settings.anthropic_api_key,
         max_retries=settings.anthropic_max_retries,
         base_url=settings.anthropic_base_url or None,
+        timeout=timeout,
     )
 
 
 async def generate_knowledge_pack(
-    device_label: str,
+    # ──────────────────────────────────────────────────────────────────
+    # 必填参数
+    # ──────────────────────────────────────────────────────────────────
+    device_label: str,                      # 设备名称,如 "iPhone 11",用于日志和上下文
+
+    # ──────────────────────────────────────────────────────────────────
+    # 可选参数 - 路径与客户端
+    # ──────────────────────────────────────────────────────────────────
     *,
-    device_slug: str | None = None,
-    client: AsyncAnthropic | None = None,
-    memory_root: Path | None = None,
-    max_revise_rounds: int | None = None,
-    on_event: OnEvent | None = None,
-    uploaded_documents_dir: Path | None = None,
-    focus_symptom: str | None = None,
-    raw_dump_override: str | None = None,
-    user_device_kind: str | None = None,
-    confirmed_device_kind: str | None = None,
-    expect_schematic: bool = False,
-    # T13 构建计量:租户 + 维修标识,用于 kind='build' 用量报告
-    # (None = self-host / 未追踪 -> 报告为空或匿名)
-    owner_ref: str | None = None,
-    engine_repair_id: str | None = None,
+    device_slug: str | None = None,         # 固定的 pack 目录 slug (如 "iphone-11").
+                                            # 不传则从 device_label 自动 slugify.
+                                            # 传入时与 uploads 目录保持一致,避免在
+                                            # 已有 pack 旁另建目录.
+
+    client: AsyncAnthropic | None = None,   # Anthropic 客户端实例.
+                                            # 不传则从 settings 创建新实例.
+
+    memory_root: Path | None = None,        # 知识包存储根目录.
+                                            # 默认: settings.memory_root (通常是 memory/)
+
+    # ──────────────────────────────────────────────────────────────────
+    # 可选参数 - Pipeline 行为控制
+    # ──────────────────────────────────────────────────────────────────
+    max_revise_rounds: int | None = None,   # Writers 修订循环最大轮数.
+                                            # 默认: settings.pipeline_max_revise_rounds.
+                                            # NEEDS_REVISION 时重跑 Writers,超过此数仍
+                                            # 未通过则降级为 APPROVED_WITH_WARNINGS.
+
+    on_event: OnEvent | None = None,        # 进度事件回调函数.
+                                            # 每个阶段边界 emit({type, phase, ...}).
+                                            # 典型链路: emit -> events.publish -> progress_ws.
+                                            # 抛错会被吞掉,不会拖垮 pipeline.
+
+    uploaded_documents_dir: Path | None = None,  # 技师上传文档目录.
+                                                  # 默认: memory/{slug}/uploads/.
+                                                  # 测试时可指向其他目录.
+
+    # ──────────────────────────────────────────────────────────────────
+    # 可选参数 - 输入数据
+    # ──────────────────────────────────────────────────────────────────
+    focus_symptom: str | None = None,       # 焦点症状 (如 "不开机").
+                                            # Scout 会分配 3-4 个搜索查询专门
+                                            # 覆盖此症状,确保首次 pack 就包含
+                                            # 维修原因相关的知识.
+
+    raw_dump_override: str | None = None,   # 跳过 Scout,直接使用此文本作为
+                                            # Phase 1 的原始调研报告.
+                                            # 用于外部已提供调研数据的场景.
+
+    user_device_kind: str | None = None,    # 技师声明的设备类别
+                                            # (如 "laptop_logic_board").
+                                            # 用于 Phase 1.5 设备分类的用户侧输入.
+
+    confirmed_device_kind: str | None = None,  # 已确认的设备类别.
+                                                # 跳过分类推理,直接使用此值.
+                                                # 用于设备类型确认后的重新构建.
+
+    expect_schematic: bool = False,         # 是否期望原理图正在带外摄取.
+                                            # True 时 pipeline 会等待
+                                            # electrical_graph.json 落盘
+                                            # (最长 _SCHEMATIC_WAIT_TIMEOUT_S 秒).
+
+    # ──────────────────────────────────────────────────────────────────
+    # 可选参数 - 多租户与计量
+    # ──────────────────────────────────────────────────────────────────
+    owner_ref: str | None = None,           # 租户标识.
+                                            # None = self-host (共享存储).
+                                            # 非空 = 托管环境 (按租户隔离).
+                                            # 影响: build_metering 用量报告.
+
+    engine_repair_id: str | None = None,    # 维修会话 ID.
+                                            # 用于 build_metering 关联维修与构建.
+                                            # None = 无关联维修 (直接调用).
 ) -> PipelineResult:
     """运行完整的 pipeline(单设备).
 
@@ -437,7 +509,15 @@ async def generate_knowledge_pack(
         try:
             from api.pipeline.schematic.orchestrator import ingest_schematic
 
-            t_ing = time.monotonic()
+            t_ing = time.monotonic()  # 记录原理图摄取开始时间,用于计算耗时
+            """
+            特点：
+
+            返回单调递增的时钟值（只增不减）
+            不受系统时间调整影响（如 NTP 校时、手动改时间）
+            精度通常为微秒级
+            返回值单位是秒（float）
+            """
             await emit({"type": "phase_started", "phase": "schematic_ingest"})
             await ingest_schematic(
                 device_slug=slug,
@@ -464,17 +544,22 @@ async def generate_knowledge_pack(
                 "[Pipeline] Inline schematic ingestion failed - continuing without graph"
             )
 
-    # A technician-attached schematic does NOT land in uploads/: it rides the
-    # dedicated /packs/{slug}/documents endpoint (encrypted, tenant-scoped) and
-    # is ingested out-of-band, writing electrical_graph.json when done. When the
-    # caller signalled one is coming (`expect_schematic`), wait for that graph
-    # before Phase 1.5 so device-kind classification + the Mapper run grounded
-    # on the real topology instead of blind. We poll by LOADING (not stat): the
-    # ingest rewrites the file several times (compile -> boot -> passives) without
-    # atomic renames, so a present-but-half-written file parses to None and we
-    # simply keep waiting. The first parseable graph is complete enough for
-    # Phase 1.5 (it only reads rail names + component families) and is held in
-    # memory, so later enrichment rewrites can't race the downstream load.
+    # 技师上传的原理图不会落入 uploads/ 目录,而是通过专用的
+    # /packs/{slug}/documents 端点(加密,租户隔离)带外摄取,
+    # 完成后写入 electrical_graph.json.
+    #
+    # 当调用者信号表示原理图即将到来时(expect_schematic=True),
+    # 在 Phase 1.5 之前等待该 graph,使设备类别分类 + Mapper 基于
+    # 真实拓扑运行,而非盲猜.
+    #
+    # 轮询方式:通过 LOADING(不是 stat)判断文件是否就绪.
+    # 原因:摄取过程会多次重写文件(compile -> boot -> passives),
+    # 且不使用原子重命名,因此一个存在但写入一半的文件会解析为 None,
+    # 我们继续等待即可.
+    #
+    # 第一个可解析的 graph 对 Phase 1.5 来说已经足够
+    # (它只读取 rail 名称和组件族),且保留在内存中,
+    # 后续的丰富化重写不会与下游加载产生竞争.
     graph: ElectricalGraph | None = None
     if (
         expect_schematic

@@ -32,9 +32,9 @@ logger = logging.getLogger("wrench_board.pipeline.tool_call")
 # 会冒出原始 httpx 错误（2026-06-10 线上观测：一次 RemoteProtocolError
 # 杀死整次 92 页摄取）。这些有独立的小额就地重试预算：属基础设施噪音，
 # 非模型质量失败，故不消耗 validation 尝试，且永不改动 prompt
-#（改动也会 bust prompt cache）。
+# （改动也会 bust prompt cache）。
 _TRANSPORT_ERRORS = (httpx.TransportError, APIConnectionError)
-_TRANSPORT_TRIES = 3        # 最多重试 3 次
+_TRANSPORT_TRIES = 3  # 最多重试 3 次
 _TRANSPORT_BACKOFF_S = (2.0, 5.0)  # 退避策略：第 1 次等 2 秒，第 2 次等 5 秒
 
 # ── 第三方模型关键字 ──
@@ -49,8 +49,8 @@ def _needs_third_party_forced_tool_compat(model: str) -> bool:
 
 
 def _append_critical_tool_instruction(
-    system: str | list[dict],
-    instruction: str,
+        system: str | list[dict],
+        instruction: str,
 ) -> str | list[dict]:
     """在 system prompt 末尾追加强制 tool 调用指令，不扰动调用方结构。"""
     suffix = f"\n\nCRITICAL: {instruction}"
@@ -60,10 +60,10 @@ def _append_critical_tool_instruction(
 
 
 async def _create_with_transport_retry(
-    *,
-    client: AsyncAnthropic,
-    stream_kwargs: dict,
-    log_label: str,
+        *,
+        client: AsyncAnthropic,
+        stream_kwargs: dict,
+        log_label: str,
 ):
     """发起一次 Messages API 流式请求，带就地 transport 重试预算。
 
@@ -99,10 +99,10 @@ async def _create_with_transport_retry(
 
 
 async def _create_nonstream_with_transport_retry(
-    *,
-    client: AsyncAnthropic,
-    request_kwargs: dict,
-    log_label: str,
+        *,
+        client: AsyncAnthropic,
+        request_kwargs: dict,
+        log_label: str,
 ):
     """创建一次非流式 Messages 响应，带相同的 transport 重试预算。"""
     for transport_try in range(1, _TRANSPORT_TRIES + 1):
@@ -134,19 +134,19 @@ def effort_for_model(model: str) -> str:
 
 
 async def call_with_forced_tool(
-    *,
-    client: AsyncAnthropic,
-    model: str,
-    system: str | list[dict],
-    messages: list[dict],
-    tools: list[dict],
-    forced_tool_name: str,
-    output_schema: type[T],
-    max_attempts: int = 2,
-    max_tokens: int = 16000,
-    log_label: str = "tool_call",
-    stats: PhaseTokenStats | None = None,
-    thinking_budget: int | None = None,
+        *,
+        client: AsyncAnthropic,
+        model: str,
+        system: str | list[dict],
+        messages: list[dict],
+        tools: list[dict],
+        forced_tool_name: str,
+        output_schema: type[T],
+        max_attempts: int = 2,
+        max_tokens: int = 16000,
+        log_label: str = "tool_call",
+        stats: PhaseTokenStats | None = None,
+        thinking_budget: int | None = None,
 ) -> T:
     """以 `tool_choice` 强制为 `forced_tool_name` 调用 Messages API 并校验。
 
@@ -182,16 +182,22 @@ async def call_with_forced_tool(
     # thinking 强制 tool_choice="auto"（API 拒绝 thinking + forced tool），
     # 模型可能只返回 thinking、无 tool call。该 miss 时重试去掉 thinking
     # → forced tool_choice → tool 有保证（且不再在已超页的页上烧 thinking 预算）。
-    thinking_active = thinking_budget is not None
+    # 第三方模型（mimo）即使不请求 thinking 也会返回 thinking block，
+    # 且常把全部 token 预算烧在 thinking 上导致 tool_use 被截断。
+    # 直接跳过 thinking 首次尝试，避免浪费一轮 32k token。
+    thinking_active = thinking_budget is not None and not third_party_compat
+    # 跟踪是否已降低 max_tokens（第三方模型 thinking 烧光 token 时触发）
+    max_tokens_reduced = False
+    _REDUCED_MAX_TOKENS = 16000  # 降低后的 max_tokens 上限
 
     # ── 重试循环 ──
     for attempt in range(1, max_attempts + 1):
         # 第二次尝试：附加上次错误信息到 system prompt，告诉模型错在哪
         if attempt > 1 and last_error:
             retry_suffix = (
-                "\n\n---\nPREVIOUS ATTEMPT FAILED VALIDATION:\n"
-                + last_error
-                + f"\n\nRetry — emit a valid {forced_tool_name} payload."
+                    "\n\n---\nPREVIOUS ATTEMPT FAILED VALIDATION:\n"
+                    + last_error
+                    + f"\n\nRetry — emit a valid {forced_tool_name} payload."
             )
             # 后缀追加而不扰动上游 cache 条目（Anthropic cache 按前缀键 —
             #  prepend 或改首块会在每次重试 bust cache）。
@@ -235,9 +241,19 @@ async def call_with_forced_tool(
         #     `output_config.effort="high"` 以引导更深推理。
         #
         # max_tokens >= ~16k 须流式（否则 SDK 以「可能超 10 分钟」拒绝非流）。
-        if thinking_active:
-            tool_choice_param: dict = {"type": "auto"}
+        #
+        # 第三方模型特殊处理：
+        #   - 第三方模型不支持 thinking，所以 thinking_active 应该被忽略
+        #   - 第三方模型使用 tool_choice="tool"（强制工具）确保调用
+        #   - 第三方模型使用非流式 API + max_tokens=8192
+        if third_party_compat:
+            # 第三方模型：强制工具调用，不使用 thinking
+            tool_choice_param: dict = {"type": "tool", "name": forced_tool_name}
+        elif thinking_active:
+            # 原生 Anthropic 模型 + thinking 开启：使用 auto
+            tool_choice_param = {"type": "auto"}
         else:
+            # 原生 Anthropic 模型 + thinking 关闭：强制工具调用
             tool_choice_param = {"type": "tool", "name": forced_tool_name}
 
         # 构建 API 请求参数
@@ -251,7 +267,8 @@ async def call_with_forced_tool(
         )
         if third_party_compat:
             # 第三方中继：限制 max_tokens、剥离 tools 中的 cache_control
-            stream_kwargs["max_tokens"] = min(max_tokens, 8192)
+            # 使用 128k 限制,匹配 Anthropic 最大输出
+            stream_kwargs["max_tokens"] = min(max_tokens, 128000)
             # 第三方中继（如 tinno qwen）不支持 thinking 参数，完全省略
             # 而不是发送 {"type": "disabled"}（会触发 "Unexpected item type" 错误）
             # 同时剥离 tools 定义中的 cache_control 字段
@@ -269,7 +286,18 @@ async def call_with_forced_tool(
             )
 
         # 发起 API 请求（流式或非流式）
-        if third_party_compat:
+        # SDK 限制：max_tokens > ~21333 时非流式请求会因预计超时被拒绝，
+        # 第三方模型在 max_tokens 较大时也必须走流式。
+        """
+        maximum_time = 60 * 60       # 1 小时
+default_time = 60 * 10       # 10 分钟（非流式超时上限）
+
+expected_time = maximum_time * max_tokens / 128_000
+#                ↑ 假设模型生成 128k token 需要 1 小时
+#                  即 ~35.6 tokens/s
+        """
+        _NONSTREAM_MAX_TOKENS = 21000
+        if third_party_compat and stream_kwargs.get("max_tokens", 0) <= _NONSTREAM_MAX_TOKENS:
             response = await _create_nonstream_with_transport_retry(
                 client=client, request_kwargs=stream_kwargs, log_label=log_label,
             )
@@ -321,14 +349,48 @@ async def call_with_forced_tool(
                 return fallback
             last_error = f"Expected a tool_use block named '{forced_tool_name}', got blocks: {got}"
             logger.warning("[%s] %s", log_label, last_error)
-            if thinking_active:
-                # 模型思考了但未调 tool。去掉 thinking 使下次尝试强制 tool
-                #（确定性）而非再赌一次仅 thinking 的超跑。
+            # 模型返回了 thinking 但没有 tool_use：
+            # - 原生模型：关闭 thinking，下次用 forced tool_choice
+            # - 第三方模型（mimo）：即使没请求 thinking 也会返回 thinking block，
+            #   且常把 token 预算烧光。重试时追加 system 提示禁止 thinking。
+            stop_reason = getattr(response, "stop_reason", None)
+            thinking_only = "thinking" in got and "tool_use" not in got
+            if thinking_active or (third_party_compat and thinking_only):
                 thinking_active = False
                 logger.warning("[%s] disabling thinking → forced tool_choice on retry", log_label)
+            # 第三方模型 + thinking 烧光 token（stop_reason=max_tokens + 只有 thinking）：
+            # 降低 max_tokens 防止再次浪费，并追加 system 提示禁止 thinking。
+            # 只降低一次，避免反复降低导致有效响应也被截断。
+            if third_party_compat and thinking_only and stop_reason == "max_tokens" and not max_tokens_reduced:
+                max_tokens = _REDUCED_MAX_TOKENS
+                max_tokens_reduced = True
+                logger.warning(
+                    "[%s] thinking exhausted tokens (stop_reason=max_tokens, out=%d) "
+                    "→ reducing max_tokens to %d for retry",
+                    log_label, response.usage.output_tokens, max_tokens,
+                )
+                # 追加禁止 thinking 的提示
+                effective_system = _append_critical_tool_instruction(
+                    effective_system,
+                    "Do NOT output thinking blocks. Call the tool immediately with structured output.",
+                )
             continue
 
         # ── 校验 tool_use payload ──
+        # 快速检测空 payload（第三方模型常见：烧完 token 后吐 {} 应付 forced tool）
+        # 跳过 Pydantic 校验直接重试，附带明确的错误信息。
+        if not tool_use.input or (isinstance(tool_use.input, dict) and len(tool_use.input) == 0):
+            last_error = (
+                f"{forced_tool_name} received an empty payload {{}}. "
+                "You MUST fill ALL required fields with actual extracted data. "
+                "Do NOT call the tool with an empty object."
+            )
+            logger.warning(
+                "[%s] attempt=%d empty tool_use payload — retrying immediately",
+                log_label, attempt,
+            )
+            continue
+
         try:
             validated = output_schema.model_validate(tool_use.input)
             return validated
@@ -347,9 +409,9 @@ async def call_with_forced_tool(
                 return recovered
 
             last_error = (
-                f"Validation failed for {forced_tool_name} payload:\n{exc}\n"
-                "Payload received: "
-                + json.dumps(tool_use.input, ensure_ascii=False, indent=2)[:2000]
+                    f"Validation failed for {forced_tool_name} payload:\n{exc}\n"
+                    "Payload received: "
+                    + json.dumps(tool_use.input, ensure_ascii=False, indent=2)[:2000]
             )
             logger.warning(
                 "[%s] attempt=%d validation failed: %s",
@@ -392,9 +454,9 @@ def _record_usage(response, stats: PhaseTokenStats | None, log_label: str, turn_
 
 
 def _answer_query_blocks(
-    query_uses: list,
-    query_handler: Callable[[dict], dict],
-    log_label: str,
+        query_uses: list,
+        query_handler: Callable[[dict], dict],
+        log_label: str,
 ) -> list[dict]:
     """对每个 query tool_use 块运行确定性 `query_handler`，
     返回各自 id 对应的 `tool_result` 内容块。
@@ -445,21 +507,21 @@ _POST_CAP_QUERY_REROUTE_GRACE = 3
 
 
 async def call_with_query_tools(
-    *,
-    client: AsyncAnthropic,
-    model: str,
-    system: str | list[dict],
-    messages: list[dict],
-    query_tool: dict,
-    query_handler: Callable[[dict], dict],
-    submit_tool: dict,
-    submit_tool_name: str,
-    output_schema: type[T],
-    max_query_turns: int = 6,
-    max_attempts: int = 2,
-    max_tokens: int = 16000,
-    log_label: str = "tool_call",
-    stats: PhaseTokenStats | None = None,
+        *,
+        client: AsyncAnthropic,
+        model: str,
+        system: str | list[dict],
+        messages: list[dict],
+        query_tool: dict,
+        query_handler: Callable[[dict], dict],
+        submit_tool: dict,
+        submit_tool_name: str,
+        output_schema: type[T],
+        max_query_turns: int = 6,
+        max_attempts: int = 2,
+        max_tokens: int = 16000,
+        log_label: str = "tool_call",
+        stats: PhaseTokenStats | None = None,
 ) -> T:
     """Agentic 变体：允许模型多次调用确定性 query tool 对照电气图
     校验标识符，再调用 submit tool。
@@ -519,7 +581,8 @@ async def call_with_query_tools(
                 f"You MUST call either the {query_tool['name']} tool or the {submit_tool_name} tool. "
                 f"When ready to finalize, call the {submit_tool_name} tool. Do NOT output text-only responses.",
             )
-            stream_kwargs["max_tokens"] = min(max_tokens, 8192)
+            # 使用 128k 限制,匹配 Anthropic 最大输出
+            stream_kwargs["max_tokens"] = min(max_tokens, 128000)
             stream_kwargs["thinking"] = {"type": "disabled"}
             response = await _create_nonstream_with_transport_retry(
                 client=client, request_kwargs=stream_kwargs, log_label=log_label,
@@ -555,7 +618,7 @@ async def call_with_query_tools(
             # — 在那里失败曾饿死 reviser 成 no-op。grace 有界，只会误路由的
             # 模型仍会终止。
             reroute_ok = _looks_like_query(submit_use.input, query_tool) and (
-                not cap_reached or post_cap_reroutes < _POST_CAP_QUERY_REROUTE_GRACE
+                    not cap_reached or post_cap_reroutes < _POST_CAP_QUERY_REROUTE_GRACE
             )
             if reroute_ok:
                 tool_results = _answer_query_blocks(query_uses, query_handler, log_label)
@@ -587,9 +650,9 @@ async def call_with_query_tools(
                     return recovered
 
                 last_error = (
-                    f"Validation failed for {submit_tool_name} payload:\n{exc}\n"
-                    "Payload received: "
-                    + json.dumps(submit_use.input, ensure_ascii=False, indent=2)[:2000]
+                        f"Validation failed for {submit_tool_name} payload:\n{exc}\n"
+                        "Payload received: "
+                        + json.dumps(submit_use.input, ensure_ascii=False, indent=2)[:2000]
                 )
                 logger.warning(
                     "[%s] attempt=%d submit validation failed: %s",
