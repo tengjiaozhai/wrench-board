@@ -6,7 +6,7 @@ import { currentSection, navigate, wireRouter, currentSession, leaveSession, syn
 import { getDeviceSlug, getRepairId } from './shared/context.js';
 import { mountRepairVue } from './features/repair/workspace.js';
 import { initHome, hideRepairDashboard } from './features/repair/diagnostic/dashboard.js';
-import { loadGraphFromBackend, setEmptyState, initGraphWithData } from './graph.js';
+import { loadGraphFromBackend, setEmptyState, initGraphWithData } from './graph.js?v=fix1';
 import { initMemoryBank } from './memory_bank.js';
 import { initProfileSection } from './profile.js';
 import { initStockSection } from './stock.js';
