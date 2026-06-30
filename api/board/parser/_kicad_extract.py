@@ -126,7 +126,20 @@ def main(path: str) -> None:
 
         for fp in pcb.GetFootprints():
             refdes = fp.GetReference()
+            # KiCad 10+ stores refdes in properties if GetReference() returns placeholder
+            if not refdes or refdes.startswith("${") or refdes == "":
+                # Try to get from properties
+                for prop in fp.Properties():
+                    if prop.GetKey() == "Reference":
+                        refdes = prop.GetValue()
+                        break
             value = fp.GetValue()
+            # KiCad 10+ stores value in properties if GetValue() returns placeholder
+            if not value or value.startswith("${") or value == "":
+                for prop in fp.Properties():
+                    if prop.GetKey() == "Value":
+                        value = prop.GetValue()
+                        break
             footprint_name = str(fp.GetFPID().GetLibItemName())
             lib_nickname = str(fp.GetFPID().GetLibNickname())
             footprint_ref = f"{lib_nickname}:{footprint_name}" if lib_nickname else footprint_name
