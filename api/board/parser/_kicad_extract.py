@@ -96,10 +96,50 @@ def _sanitize_zero_sized_pad_file(path: str) -> str:
     return tmp.name
 
 
+def _parse_kicad_properties(file_path: str) -> list[dict[str, str]]:
+    """Parse KiCad file to extract Reference and Value properties for each footprint.
+    
+    Returns a list of {"Reference": "...", "Value": "..."} in the order they appear in the file.
+    """
+    properties = []
+    current_props = {}
+    in_footprint = False
+    
+    with open(file_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            # Look for footprint start
+            if line.startswith('(footprint '):
+                in_footprint = True
+                current_props = {}
+            # Look for Reference property
+            elif in_footprint and line.startswith('(property "Reference"'):
+                parts = line.split('"')
+                if len(parts) >= 4:
+                    current_props["Reference"] = parts[3]
+            # Look for Value property
+            elif in_footprint and line.startswith('(property "Value"'):
+                parts = line.split('"')
+                if len(parts) >= 4:
+                    current_props["Value"] = parts[3]
+            # End of footprint block - count parentheses
+            elif in_footprint and line == ')':
+                # Simple heuristic: if we have properties, this is likely the end
+                if current_props:
+                    properties.append(current_props)
+                    current_props = {}
+                    in_footprint = False
+    
+    return properties
+
+
 def main(path: str) -> None:
     original_path = path
     path = _sanitize_zero_sized_pad_file(path)
     try:
+        # Pre-parse properties from file
+        file_properties = _parse_kicad_properties(path)
+        
         pcb = pcbnew.LoadBoard(path)
 
         # Outline: use GetBoardPolygonOutlines, take first polygon
@@ -124,22 +164,18 @@ def main(path: str) -> None:
         pins: list[dict] = []
         pin_index_counter = 0
 
-        for fp in pcb.GetFootprints():
+        for fp_idx, fp in enumerate(pcb.GetFootprints()):
             refdes = fp.GetReference()
             # KiCad 10+ stores refdes in properties if GetReference() returns placeholder
             if not refdes or refdes.startswith("${") or refdes == "":
-                # Try to get from properties
-                for prop in fp.Properties():
-                    if prop.GetKey() == "Reference":
-                        refdes = prop.GetValue()
-                        break
+                # Try to get from pre-parsed file properties (by order)
+                if fp_idx < len(file_properties):
+                    refdes = file_properties[fp_idx].get("Reference", refdes)
             value = fp.GetValue()
             # KiCad 10+ stores value in properties if GetValue() returns placeholder
             if not value or value.startswith("${") or value == "":
-                for prop in fp.Properties():
-                    if prop.GetKey() == "Value":
-                        value = prop.GetValue()
-                        break
+                if fp_idx < len(file_properties):
+                    value = file_properties[fp_idx].get("Value", value)
             footprint_name = str(fp.GetFPID().GetLibItemName())
             lib_nickname = str(fp.GetFPID().GetLibNickname())
             footprint_ref = f"{lib_nickname}:{footprint_name}" if lib_nickname else footprint_name
