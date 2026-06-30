@@ -172,6 +172,9 @@ export async function captureFrame({ deviceId, mime = 'image/jpeg', quality = 0.
     const blob = await captureFromPreview(mime, quality);
     if (blob) return blob;
   }
+  if (!navigator.mediaDevices) {
+    throw new Error('Camera not available in non-secure context');
+  }
   const stream = await navigator.mediaDevices.getUserMedia({
     video: { deviceId: { exact: deviceId } },
   });
