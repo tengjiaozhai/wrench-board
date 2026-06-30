@@ -76,6 +76,7 @@ export async function initCameraPicker(onChange) {
   const chip = document.getElementById('cameraChip');
   const popover = document.getElementById('cameraPopover');
   if (!chip || !popover) return;
+  if (!navigator.mediaDevices) return;
 
   // 触发永久提示以解锁设备标签。未经许可
   // 许可，enumerateDevicesre转空标签。
@@ -140,6 +141,7 @@ export async function initCameraPicker(onChange) {
 }
 
 async function refreshDevices() {
+  if (!navigator.mediaDevices) return;
   const all = await navigator.mediaDevices.enumerateDevices();
   _cachedDevices = all.filter((d) => d.kind === 'videoinput');
   // 如果 pre先前选择的设备刚刚消失red，则降级。

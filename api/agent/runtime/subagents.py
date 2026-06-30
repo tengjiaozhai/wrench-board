@@ -1,9 +1,8 @@
-"""Sub-agent helpers: consultation + knowledge curator.
+"""Sub-agent 辅助模块：咨询 + 知识策展。
 
-Both spawn a fresh MA session on a tier-scoped agent, await its event
-stream, and archive the session on exit. They are invoked by the main
-session-to-WS forwarder when the tech-facing agent emits the matching
-custom tool call.
+两者均在 tier 对应的 agent 上创建新的 MA session，等待事件流，
+退出时归档 session。当技师侧 agent 发出匹配的 custom tool call 时，
+由主 session-to-WS forwarder 调用。
 """
 
 from __future__ import annotations
@@ -24,24 +23,23 @@ from api.agent.runtime._aux import (
 
 async def _run_subagent_consultation(
     *,
-    client: AsyncAnthropic,
-    tier: TierLiteral,
-    query: str,
-    context: str | None,
-    environment_id: str,
-    parent_session_id: str | None,
-    timeout_s: float | None = None,
+    client: AsyncAnthropic,            # Anthropic 异步客户端
+    tier: TierLiteral,                 # 目标层级（fast/normal/deep）
+    query: str,                        # 主 agent 提出的问题
+    context: str | None,               # 主 agent 提供的诊断上下文，可为空
+    environment_id: str,               # MA 环境 ID
+    parent_session_id: str | None,     # 父会话 ID，用于日志追踪
+    timeout_s: float | None = None,    # 超时时间（秒），None 时从 settings 读取
 ) -> dict:
-    """Spawn an MA sub-agent on `tier`, ask it `query`, return its text.
+    """在指定 tier 上创建 MA sub-agent，发送 query，返回其文本回复。
 
-    The sub-agent runs in its own MA session with the tier-scoped agent
-    config. Custom tool calls from the sub-agent are refused (returned as
-    errors) so the consultation stays bounded — the prompt explicitly tells
-    it to answer from its model knowledge using the provided `context`.
+    sub-agent 在独立的 MA session 中运行，使用 tier 对应的 agent 配置。
+    sub-agent 的工具调用会被拒绝（返回错误），确保咨询过程有界 ——
+    prompt 中已明确要求它根据 context 和模型知识直接回答。
 
-    Returns a dict shaped like every other custom-tool result:
-        {"ok": True, "tier": ..., "answer": "..."} on success
-        {"ok": False, "reason": ..., "error": ...} on failure
+    返回字典：
+        成功: {"ok": True, "tier": ..., "answer": "..."}
+        失败: {"ok": False, "reason": ..., "error": ...}
     """
     if timeout_s is None:
         timeout_s = _rm.get_settings().ma_subagent_consultation_timeout_seconds
@@ -142,7 +140,7 @@ async def _run_subagent_consultation(
                                     sub_session_id, events=refusals
                                 )
                             continue
-                        # end_turn / retries_exhausted / etc — terminal
+                        # end_turn / retries_exhausted 等 —— 终止状态
                         return
                     elif etype == "session.status_terminated":
                         return

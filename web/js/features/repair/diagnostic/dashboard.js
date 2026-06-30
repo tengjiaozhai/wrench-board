@@ -171,7 +171,7 @@ export function hideRepairDashboard() {
 
 async function fetchJSON(url, fallback) {
   try {
-    const res = await fetch(url);
+    const res = await fetch(API_PREFIX + url);
     if (!res.ok) return fallback;
     return await res.json();
   } catch (err) {
@@ -847,7 +847,7 @@ async function switchSource(slug, rid, kind, version) {
 
   try {
     const res = await fetch(
-      `/pipeline/packs/${encodeURIComponent(slug)}/sources/${kind}`,
+      API_PREFIX + `/pipeline/packs/${encodeURIComponent(slug)}/sources/${kind}`,
       {
         method: "PUT",
         headers: { "content-type": "application/json" },
@@ -920,7 +920,7 @@ async function deleteVersion(slug, rid, kind, version) {
 
   try {
     const res = await fetch(
-      `/pipeline/packs/${encodeURIComponent(slug)}`
+      API_PREFIX + `/pipeline/packs/${encodeURIComponent(slug)}`
       + `/sources/${kind}/versions/${encodeURIComponent(version.filename)}`,
       { method: "DELETE" },
     );
@@ -1286,7 +1286,7 @@ async function deleteConversation(rid, convId) {
   let res;
   try {
     res = await fetch(
-      `/pipeline/repairs/${encodeURIComponent(rid)}/conversations/${encodeURIComponent(convId)}`,
+      API_PREFIX + `/pipeline/repairs/${encodeURIComponent(rid)}/conversations/${encodeURIComponent(convId)}`,
       { method: "DELETE" },
     );
   } catch (_) {

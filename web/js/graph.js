@@ -552,10 +552,3 @@ linkLabelSel.style("opacity", null);
 window.addEventListener("resize", () => {
   sim.alpha(0.3).restart();
 });
-
-  sim.alpha(1).restart();
-  for (let i=0;i<80;i++) sim.tick();
-  linkSel.attr("d", linkPath);
-  nodeSel.attr("transform", d => `translate(${d.x},${d.y})`);
-  fitToScreen();
-}

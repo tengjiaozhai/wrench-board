@@ -127,7 +127,7 @@ export const SimulationController = {
     if (!slug) return;
     try {
       const res = await fetch(
-        `/pipeline/packs/${encodeURIComponent(slug)}/schematic/simulate`,
+        API_PREFIX + `/pipeline/packs/${encodeURIComponent(slug)}/schematic/simulate`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -332,7 +332,7 @@ export const SimulationController = {
     if (!slug || !repairId) return;
     try {
       const res = await fetch(
-        `/pipeline/packs/${encodeURIComponent(slug)}/repairs/${encodeURIComponent(repairId)}/measurements`,
+        API_PREFIX + `/pipeline/packs/${encodeURIComponent(slug)}/repairs/${encodeURIComponent(repairId)}/measurements`,
       );
       if (!res.ok) return;
       const payload = await res.json();
@@ -377,7 +377,7 @@ export const SimulationController = {
     if (!slug || !repairId) return [];
     try {
       const res = await fetch(
-        `/pipeline/packs/${encodeURIComponent(slug)}/repairs/${encodeURIComponent(repairId)}/measurements?target=${encodeURIComponent(target)}`,
+        API_PREFIX + `/pipeline/packs/${encodeURIComponent(slug)}/repairs/${encodeURIComponent(repairId)}/measurements?target=${encodeURIComponent(target)}`,
       );
       if (!res.ok) return [];
       const payload = await res.json();
@@ -441,7 +441,7 @@ export const SimulationController = {
     };
     try {
       const res = await fetch(
-        `/pipeline/packs/${encodeURIComponent(slug)}/schematic/hypothesize`,
+        API_PREFIX + `/pipeline/packs/${encodeURIComponent(slug)}/schematic/hypothesize`,
         { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
       );
       if (!res.ok) {
@@ -2940,7 +2940,7 @@ function updateInspector(node) {
       if (slug && repairId) {
         try {
           await fetch(
-            `/pipeline/packs/${encodeURIComponent(slug)}/repairs/${encodeURIComponent(repairId)}/measurements`,
+            API_PREFIX + `/pipeline/packs/${encodeURIComponent(slug)}/repairs/${encodeURIComponent(repairId)}/measurements`,
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },
