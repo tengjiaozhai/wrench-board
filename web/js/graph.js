@@ -552,3 +552,5 @@ linkLabelSel.style("opacity", null);
 window.addEventListener("resize", () => {
   sim.alpha(0.3).restart();
 });
+
+}  // 闭合 initGraphWithData 函数
