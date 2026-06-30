@@ -12,7 +12,7 @@ import { getDiagnosticWS } from '../../../services/diagnosticSocket.js';
 import { store } from '../../../store.js';
 import { getDeviceSlug, getRepairId } from '../../../shared/context.js';
 import { escapeHtml, relativeTime as relativeTimeFr } from '../../../shared/dom.js';
-import { apiGet } from '../../../shared/api.js';
+import { apiGet, API_PREFIX } from '../../../shared/api.js';
 import { openInfoModal } from '../../../info_modal.js';
 import { maybeShowFirstDiagCoaching } from './coaching.js';
 import { hideUploads } from '../../../cloud_hints.js';
@@ -335,7 +335,7 @@ function renderDashboardData(slug, rid, pack, sourcesData) {
   const diagWrapEl = document.getElementById("rdCardBoardviewDiagWrap");
   if (diagWrapEl) diagWrapEl.hidden = true;
   if (pack?.has_boardview && diagWrapEl) {
-    fetch(`/api/board/render?slug=${encodeURIComponent(slug)}`)
+    fetch(API_PREFIX + `/api/board/render?slug=${encodeURIComponent(slug)}`)
       .then(r => r.ok ? r.json() : null)
       .then(payload => {
         const refs = payload?.net_diagnostics?.length || 0;
@@ -1093,7 +1093,7 @@ async function handleUpload(slug, rid, file, kind) {
   fd.append("file", file);
 
   try {
-    const res = await fetch(`/pipeline/packs/${encodeURIComponent(slug)}/documents`, {
+    const res = await fetch(API_PREFIX + `/pipeline/packs/${encodeURIComponent(slug)}/documents`, {
       method: "POST",
       body: fd,
     });

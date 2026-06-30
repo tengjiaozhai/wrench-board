@@ -34,6 +34,7 @@ _KICAD_PYTHON_PATHS = [
     "/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/3.11/bin/python3.11",
     # Linux typical paths
     "/usr/bin/kicad-cli",
+    "/usr/bin/python3",  # System Python with pcbnew (Ubuntu/Debian KiCad package)
 ]
 
 
@@ -108,9 +109,12 @@ class KicadPcbParser(BoardParser):
                 pass  # unreadable/corrupt sidecar → fall through to the extractor
 
         python3 = _find_kicad_python() or shutil.which("python3") or "/usr/bin/python3"
+        # Use xvfb-run if available (headless servers need virtual X display for pcbnew/wxWidgets)
+        use_xvfb = shutil.which("xvfb-run") is not None
+        cmd = ["xvfb-run", "-a", python3, str(_EXTRACT_SCRIPT), str(path)] if use_xvfb else [python3, str(_EXTRACT_SCRIPT), str(path)]
         try:
             result = subprocess.run(
-                [python3, str(_EXTRACT_SCRIPT), str(path)],
+                cmd,
                 capture_output=True,
                 timeout=KICAD_PARSE_TIMEOUT,
                 check=False,
@@ -126,8 +130,16 @@ class KicadPcbParser(BoardParser):
                 f"KiCad extractor failed (exit={result.returncode}): {stderr[:500]}"
             )
 
+        # KiCad 10+ emits assert warnings to stdout before the JSON payload.
+        # Strip non-JSON prefix lines (anything not starting with '{').
+        stdout_text = result.stdout.decode("utf-8", errors="replace")
+        json_start = stdout_text.find("{")
+        if json_start < 0:
+            raise KicadSubprocessError("KiCad extractor emitted no JSON payload")
+        json_text = stdout_text[json_start:]
+
         try:
-            data = json.loads(result.stdout)
+            data = json.loads(json_text)
         except json.JSONDecodeError as e:
             raise KicadSubprocessError(f"KiCad extractor emitted invalid JSON: {e}") from e
 

@@ -43,6 +43,10 @@ _subscribers: dict[str, list[asyncio.Queue[dict[str, Any]]]] = defaultdict(list)
 # slug → 最近 N 条事件的环形缓冲。无订阅者时 publish 也不丢弃 — 晚到的 WS 靠回放补全。
 # 64 条足够覆盖一次完整 pipeline（含 phase_step 子步骤）。
 _HISTORY_MAX = 64
+"""
+作用：存储每个设备最近 64 条事件的环形缓冲
+用途：解决竞态 —— 后台 pipeline 已开始 emit 事件，但前端 WebSocket 还没连上；subscribe 时先回放 history，再进入实时流，确保客户端不会错过早期事件
+"""
 _history: dict[str, deque[dict[str, Any]]] = defaultdict(lambda: deque(maxlen=_HISTORY_MAX))
 
 
@@ -55,8 +59,10 @@ def subscribe(slug: str) -> asyncio.Queue[dict[str, Any]]:
     """
     queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
     # 先回放 history，再进入实时流 — 解决 create_task 与 WS 握手之间的竞态。
+    # ① 先同步地把历史事件塞进队列
     for event in _history.get(slug, ()):
         queue.put_nowait(event)
+    # ② 最后才注册到订阅者列表
     _subscribers[slug].append(queue)
     return queue
 

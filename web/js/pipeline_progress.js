@@ -14,6 +14,7 @@
 import { escapeHtml as escHtml } from "./shared/dom.js";
 import { connectProgress, fetchPendingKind } from "./services/pipelineSocket.js";
 import { repairHash, seedSlugForRepair } from "./router.js";
+import { API_PREFIX } from "./shared/api.js";
 
 const PHASES = [
   {key: "scout",    labelKey: "pipeline.phase.scout.label",    subKey: "pipeline.phase.scout.sub"},
@@ -418,7 +419,7 @@ function renderKindConfirm(ev) {
 async function confirmKind(deviceKind) {
   let ok = false;
   try {
-    const res = await fetch(`/pipeline/packs/${encodeURIComponent(STATE.slug)}/confirm-kind`, {
+    const res = await fetch(API_PREFIX + `/pipeline/packs/${encodeURIComponent(STATE.slug)}/confirm-kind`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ device_kind: deviceKind }),
     });

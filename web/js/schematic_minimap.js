@@ -19,6 +19,7 @@
 import { ICON_WARNING } from './icons.js';
 import { getDeviceSlug, getRepairId } from './shared/context.js';
 import { repairHash } from './router.js';
+import { API_PREFIX } from './shared/api.js';
 
 let schematicCache = null;       //  { slug，数据 }
 let fetchInFlight = null;        //  {slug，承诺}
@@ -87,7 +88,7 @@ async function loadSchematic(slug) {
   if (!slug) return null;
   if (schematicCache && schematicCache.slug === slug) return schematicCache.data;
   if (fetchInFlight && fetchInFlight.slug === slug) return fetchInFlight.promise;
-  const promise = fetch(`/pipeline/packs/${encodeURIComponent(slug)}/schematic`)
+  const promise = fetch(API_PREFIX + `/pipeline/packs/${encodeURIComponent(slug)}/schematic`)
     .then(res => (res.ok ? res.json() : null))
     .then(data => {
       if (data) schematicCache = { slug, data };

@@ -13,6 +13,7 @@
 import { mountMascot, setMascotState } from './mascot.js';
 import { prettifySlug } from './router.js';
 import i18n from './i18n.js';
+import { API_PREFIX } from './shared/api.js';
 
 const STATUS_NEUTRAL = "";
 const STATUS_LOADING = "loading";
@@ -50,7 +51,7 @@ async function loadAndRenderSidebar() {
 
   let repairs = [];
   try {
-    const res = await fetch("/pipeline/repairs");
+    const res = await fetch(API_PREFIX + "/pipeline/repairs");
     if (res.ok) repairs = await res.json();
   } catch (err) {
     console.warn("[landing] loadRepairs failed", err);
@@ -128,7 +129,7 @@ async function onDeleteRepairClick(repairId, itemEl, btnEl) {
 
   btnEl.disabled = true;
   try {
-    const res = await fetch(`/pipeline/repairs/${encodeURIComponent(repairId)}`, {
+    const res = await fetch(API_PREFIX + `/pipeline/repairs/${encodeURIComponent(repairId)}`, {
       method: "DELETE",
     });
     if (!res.ok) {
@@ -300,7 +301,7 @@ async function onSubmit(ev) {
     //  正确的包——避开接近但不相同的拼写。
     const payload = { device_label: device, symptom };
     if (_selectedDeviceSlug) payload.device_slug = _selectedDeviceSlug;
-    const res = await fetch("/pipeline/repairs", {
+    const res = await fetch(API_PREFIX + "/pipeline/repairs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -376,7 +377,7 @@ function subscribeToProgress(slug, repairId) {
     try { progressWs.close(); } catch (_) {}
   }
   const proto = (location.protocol === "https:") ? "wss:" : "ws:";
-  const url = `${proto}//${location.host}/pipeline/progress/${encodeURIComponent(slug)}`;
+  const url = `${proto}//${location.host}${API_PREFIX}/pipeline/progress/${encodeURIComponent(slug)}`;
 
   progressWs = new WebSocket(url);
 
@@ -642,7 +643,7 @@ function _flattenTaxonomy(tree) {
 
 async function loadPacksForSuggest() {
   try {
-    const res = await fetch("/pipeline/taxonomy");
+    const res = await fetch(API_PREFIX + "/pipeline/taxonomy");
     if (res.ok) {
       const tree = await res.json();
       _devicesCache = _flattenTaxonomy(tree);

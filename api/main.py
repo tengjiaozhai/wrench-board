@@ -254,8 +254,15 @@ async def diagnostic_session(websocket: WebSocket, device_slug: str) -> None:
     无法绕过 cloud auth + quota 烧 credits。独立工作台（无白名单 / 无 token）
     上两者均为 no-op。见 ``api.ws_security``。
     """
+    # 安全守卫 1/2：Origin 白名单检查。CORS 中间件不覆盖 WS 握手，
+    # 无此守卫时任意跨源浏览器页可开 session 并注入 `message` 帧。
+    # 若 Origin 不在白名单，关闭连接（code 1008）并提前返回。
     if not await enforce_ws_origin(websocket):
         return
+    # 安全守卫 2/2：service-token 检查。引擎部署在 wrenchboard-cloud 后，
+    # 仅携带共享 `Authorization: Bearer` token 的 cloud 中继可开 session —
+    # 直接 websocat 引擎 URL 会被拒绝，无法绕过 cloud auth + quota 烧 credits。
+    # 若 token 缺失或不匹配，关闭连接并提前返回。
     if not await enforce_ws_service_token(websocket):
         return
 

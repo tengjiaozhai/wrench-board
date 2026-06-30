@@ -22,6 +22,7 @@ import { prettifySlug } from "./shared/dom.js";
 export { prettifySlug };
 import { setContext, getDeviceSlug, getRepairId } from "./shared/context.js";
 import { getRepair } from "./services/repairs.js";
+import { API_PREFIX } from "./shared/api.js";
 
 //  ── Phase C：2级哈希路由语法──────────────────────────────────
 //  全局路由：#home | #stock | #profile | #landing
@@ -76,7 +77,7 @@ export function seedSlugForRepair(id, slug) {
 async function loadPackSummary(slug) {
   if (!slug) return null;
   try {
-    const res = await fetch(`/pipeline/packs/${encodeURIComponent(slug)}`);
+    const res = await fetch(API_PREFIX + `/pipeline/packs/${encodeURIComponent(slug)}`);
     if (!res.ok) return null;
     return await res.json();
   } catch (err) {
@@ -98,7 +99,7 @@ async function ensureRepairMeta(repairId) {
   if (_repairCacheInFlight.has(repairId)) return _repairCacheInFlight.get(repairId);
   const p = (async () => {
     try {
-      const res = await fetch(`/pipeline/repairs/${encodeURIComponent(repairId)}`);
+      const res = await fetch(API_PREFIX + `/pipeline/repairs/${encodeURIComponent(repairId)}`);
       if (!res.ok) return null;
       const data = await res.json();
       _repairCache.set(repairId, data);

@@ -3,12 +3,12 @@
 
 import { t } from "./i18n.js";
 import { escapeHtml } from "./shared/dom.js";
-import { apiGet, notifyUnauthorized } from "./shared/api.js";
+import { apiGet, notifyUnauthorized, API_PREFIX } from "./shared/api.js";
 import { openInfoModal } from "./info_modal.js";
 
 const STOCK_INFO_FLAG = "wb_stock_info_seen";
 
-const API = "/api/stock";
+const API = API_PREFIX + "/api/stock";
 
 //  用于密集列布局的单字母类型代码。保持行可扫描
 //  一目了然 - 完整的类型名称位于工具提示中。

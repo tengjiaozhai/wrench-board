@@ -8,6 +8,8 @@
 //
 // Cloud 兼容：WS 由托管 front-door 原样中继，URL 不变 — 同源、根相对、调用时构建。
 
+import { API_PREFIX } from "../shared/api.js";
+
 let current = null;   // 当前诊断 socket，或 null
 
 // 构建诊断 WS URL。tier / repairId / conv 为可选查询参数，与抽出前 llm.js 的查询契约一致。
@@ -18,7 +20,7 @@ function buildURL(slug, { tier, repairId, conv } = {}) {
   if (repairId) params.set("repair", repairId);
   if (conv) params.set("conv", conv);
   const q = params.toString() ? `?${params.toString()}` : "";
-  return `${scheme}://${window.location.host}/ws/diagnostic/${encodeURIComponent(slug)}${q}`;
+  return `${scheme}://${window.location.host}${API_PREFIX}/ws/diagnostic/${encodeURIComponent(slug)}${q}`;
 }
 
 // 打开诊断 socket 并设为活跃连接。open/close/error 状态监听器由传入回调接线；

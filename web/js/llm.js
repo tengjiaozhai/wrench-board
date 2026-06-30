@@ -36,6 +36,7 @@ import { mountMascot, setMascotState } from './mascot.js';
 import { escapeHtml as escapeHTML } from './shared/dom.js';
 import { getDeviceSlug, getRepairId } from './shared/context.js';
 import { connectDiagnostic } from './services/diagnosticSocket.js';
+import { API_PREFIX } from './shared/api.js';
 //  相同的？v=quest4查询main.js使用-ESM通过URL键模块，所以一个裸露的
 //  './protocol.js' 将创建具有自己状态的第二个实例，但缺少
 //  应用 Protocol.init() 接线 main.js。
@@ -712,7 +713,7 @@ async function loadConversations() {
   const rid = currentRepairId();
   if (!rid) { conversationsCache = []; renderConvItems(); return; }
   try {
-    const res = await fetch(`/pipeline/repairs/${encodeURIComponent(rid)}/conversations`);
+    const res = await fetch(API_PREFIX + `/pipeline/repairs/${encodeURIComponent(rid)}/conversations`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     conversationsCache = Array.isArray(data.conversations) ? data.conversations : [];
@@ -728,7 +729,7 @@ async function deleteConvFromPanel(convId) {
   let res;
   try {
     res = await fetch(
-      `/pipeline/repairs/${encodeURIComponent(rid)}/conversations/${encodeURIComponent(convId)}`,
+      API_PREFIX + `/pipeline/repairs/${encodeURIComponent(rid)}/conversations/${encodeURIComponent(convId)}`,
       { method: "DELETE" },
     );
   } catch (_) {

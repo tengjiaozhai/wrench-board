@@ -34,6 +34,7 @@ import { mountMascot, setMascotState } from '../../../mascot.js';
 import { prettifySlug, repairHash, seedSlugForRepair } from '../../../router.js';
 import i18n from '../../../i18n.js';
 import { escapeHtml as _escapeHtml } from '../../../shared/dom.js';
+import { API_PREFIX } from '../../../shared/api.js';
 import { initProfileMenu, refreshProfileMenu } from './profile_menu.js';
 import { initCatalogue, closeCatalogue } from './catalogue.js';
 import { maybeStartOnboarding, preGateOnboarding, replayOnboarding } from './onboarding.js';
@@ -124,7 +125,7 @@ async function loadAndRenderSidebar() {
 
   let repairs = [];
   try {
-    const res = await fetch("/pipeline/repairs");
+    const res = await fetch(API_PREFIX + "/pipeline/repairs");
     if (res.ok) repairs = await res.json();
   } catch (err) {
     console.warn("[landing] loadRepairs failed", err);
@@ -258,7 +259,7 @@ async function onDeleteRepairClick(repairId, itemEl, btnEl) {
 
   btnEl.disabled = true;
   try {
-    const res = await fetch(`/pipeline/repairs/${encodeURIComponent(repairId)}`, {
+    const res = await fetch(API_PREFIX + `/pipeline/repairs/${encodeURIComponent(repairId)}`, {
       method: "DELETE",
     });
     if (!res.ok) throw await httpError(res);
@@ -482,7 +483,7 @@ async function _launchDiagnostic() {
     // 后端：repairs.py create_repair @router.post("/repairs") ~780 行
     // 【HTTP 短连接 — 建立并在此请求内结束】POST /pipeline/repairs；
     // res.json() 读完后本 HTTP 连接关闭；构建进度不走此连接。
-    const res = await fetch("/pipeline/repairs", {
+    const res = await fetch(API_PREFIX + "/pipeline/repairs", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: body.toString(),
@@ -571,7 +572,7 @@ async function _launchDiagnostic() {
 async function armNotify(repairId) {
   const tt = window.t || ((k) => k);
   try {
-    const res = await fetch(`/pipeline/repairs/${encodeURIComponent(repairId)}/notify`, { method: "POST" });
+    const res = await fetch(API_PREFIX + `/pipeline/repairs/${encodeURIComponent(repairId)}/notify`, { method: "POST" });
     if (res.ok) setStatus(tt("landing.status.notify_armed"), STATUS_NEUTRAL);
   } catch (err) {
     console.warn("[landing] notify opt-in failed", err);
@@ -908,7 +909,7 @@ async function confirmLandingKind(deviceKind) {
   const t = window.t || ((k) => k);
   let ok = false;
   try {
-    const res = await fetch(`/pipeline/packs/${encodeURIComponent(_activeSlug)}/confirm-kind`, {
+    const res = await fetch(API_PREFIX + `/pipeline/packs/${encodeURIComponent(_activeSlug)}/confirm-kind`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ device_kind: deviceKind }),
     });
@@ -1283,7 +1284,7 @@ async function uploadSchematicForSlug(slug, file) {
     const fd = new FormData();
     fd.append("kind", "schematic_pdf");
     fd.append("file", file);
-    const res = await fetch(`/pipeline/packs/${encodeURIComponent(slug)}/documents`, {
+    const res = await fetch(API_PREFIX + `/pipeline/packs/${encodeURIComponent(slug)}/documents`, {
       method: "POST",
       body: fd,
     });

@@ -518,6 +518,7 @@ async def generate_knowledge_pack(
             精度通常为微秒级
             返回值单位是秒（float）
             """
+            # Step 1: 通知前端：原理图导入阶段开始（内联摄取路径）
             await emit({"type": "phase_started", "phase": "schematic_ingest"})
             await ingest_schematic(
                 device_slug=slug,
@@ -532,6 +533,7 @@ async def generate_knowledge_pack(
                 pack_dir,
                 time.monotonic() - t_ing,
             )
+            # Step 2: 通知前端：原理图导入阶段完成，包含耗时信息
             await emit(
                 {
                     "type": "phase_finished",
@@ -566,6 +568,7 @@ async def generate_knowledge_pack(
         and uploads.schematic_pdf is None
         and not (pack_dir / "electrical_graph.json").exists()
     ):
+        # Step 3: 通知前端：等待原理图导入（带外摄取路径）
         await emit({"type": "phase_started", "phase": "schematic_ingest"})
         t_wait = time.monotonic()
         deadline = t_wait + _SCHEMATIC_WAIT_TIMEOUT_S
@@ -581,6 +584,7 @@ async def generate_knowledge_pack(
                 elapsed,
                 pack_dir,
             )
+            # Step 4: 通知前端：原理图已到达，等待结束
             await emit(
                 {
                     "type": "phase_finished",
@@ -595,6 +599,7 @@ async def generate_knowledge_pack(
                 _SCHEMATIC_WAIT_TIMEOUT_S,
                 pack_dir,
             )
+            # Step 5: 通知前端：原理图等待超时，pipeline 继续无图运行
             await emit(
                 {
                     "type": "phase_finished",
@@ -638,7 +643,7 @@ async def generate_knowledge_pack(
     )
     logger.info("=" * 72)
 
-    # 第一条 progress 事件:前端 timeline/drawer 收到后切换为"构建中"态.
+    # Step 6: 通知前端：pipeline 开始构建，前端 timeline/drawer 切换到「构建中」状态。
     # 若 WS 尚未连上,events._history 会缓冲,subscribe 时回放.
     await emit(
         {
@@ -688,6 +693,7 @@ async def generate_knowledge_pack(
             verdict_kind = None
             if graph is not None:
                 t_kind = time.monotonic()
+                # Step 7: 通知前端：设备类别分类阶段开始（Phase 1.5）
                 await emit({"type": "phase_started", "phase": "device_kind"})
                 kind_stats = PhaseTokenStats(phase="device_kind")
                 try:
@@ -706,6 +712,7 @@ async def generate_knowledge_pack(
                 finally:
                     kind_stats.duration_s = time.monotonic() - t_kind
                     phase_stats.append(kind_stats)
+                # Step 8: 通知前端：设备类别分类阶段完成
                 await emit(
                     {
                         "type": "phase_finished",
@@ -726,6 +733,7 @@ async def generate_knowledge_pack(
                     resolution.graph_inferred,
                     resolution.confidence,
                 )
+                # Step 9: 通知前端：设备类别需要人工确认，pipeline 暂停
                 await emit(
                     {
                         "type": "pipeline_paused",
@@ -764,6 +772,7 @@ async def generate_knowledge_pack(
         # forced-tool agent with deterministic post-validation. See
         # docs/superpowers/specs/2026-04-25-refdes-mapper-agent.md.
         t0 = time.monotonic()
+        # Step 10: 通知前端：Scout 网络调研阶段开始（Phase 1）
         await emit({"type": "phase_started", "phase": "scout"})
         scout_stats = PhaseTokenStats(phase="scout")
         raw_dump_source = "claude_scout"
@@ -774,6 +783,7 @@ async def generate_knowledge_pack(
             phase_stats.append(scout_stats)
             _canonical_raw_dump_path(pack_dir).write_text(raw_dump, encoding="utf-8")
             logger.info("[Pipeline] Phase 1 skipped · using raw_dump_override")
+            # Step 11: 通知前端：Scout 跳过，使用外部提供的原始调研数据
             await emit(
                 {
                     "type": "phase_finished",
@@ -791,6 +801,7 @@ async def generate_knowledge_pack(
                 scout_stats.duration_s = time.monotonic() - t0
                 phase_stats.append(scout_stats)
                 logger.info("[Pipeline] Phase 1 skipped · using existing raw_research_dump.md")
+                # Step 12: 通知前端：Scout 跳过，使用已存在的调研报告
                 await emit(
                     {
                         "type": "phase_finished",
@@ -812,6 +823,7 @@ async def generate_knowledge_pack(
                     logger.warning(
                         "[Pipeline] Scout model %r is third-party - using stub dump", scout_model
                     )
+                    # Step 13: 通知前端：Scout 跳过，第三方模型不支持 web_search，使用 stub 数据
                     await emit(
                         {
                             "type": "phase_finished",
@@ -839,6 +851,7 @@ async def generate_knowledge_pack(
                     phase_stats.append(scout_stats)
                     _canonical_raw_dump_path(pack_dir).write_text(raw_dump, encoding="utf-8")
                     logger.info("[Pipeline] Phase 1 complete · raw_research_dump.md written")
+                    # Step 14: 通知前端：Scout 网络调研完成，原始调研报告已写入
                     await emit(
                         {
                             "type": "phase_finished",
@@ -849,6 +862,7 @@ async def generate_knowledge_pack(
 
         # -------- Phase 2 - Registry --------------------------------------------
         t0 = time.monotonic()
+        # Step 15: 通知前端：Registry 注册表构建阶段开始（Phase 2）
         await emit({"type": "phase_started", "phase": "registry"})
         registry_stats = PhaseTokenStats(phase="registry")
         # Registry runs without the graph too - it focuses on canonical
@@ -915,6 +929,7 @@ async def generate_knowledge_pack(
         with contextlib.suppress(Exception):
             _carnet = get_device_registry_store(pack_dir.parent)
             await register_from_registry(_carnet, pack_dir.name, registry.model_dump())
+        # Step 16: 通知前端：Registry 注册表构建完成，包含组件数、信号数和设备分类信息
         await emit(
             {
                 "type": "phase_finished",
@@ -937,6 +952,7 @@ async def generate_knowledge_pack(
         mappings: RefdesMappings | None = None
         if graph is not None:
             t_map = time.monotonic()
+            # Step 17: 通知前端：Mapper 功能->位号映射阶段开始（Phase 2.5）
             await emit({"type": "phase_started", "phase": "mapper"})
             mapper_stats = PhaseTokenStats(phase="mapper")
             try:
@@ -960,6 +976,7 @@ async def generate_knowledge_pack(
                     "[Pipeline] Phase 2.5 complete · refdes_attributions.json written · n=%d",
                     len(mappings.attributions),
                 )
+                # Step 18: 通知前端：Mapper 完成，包含映射数量
                 await emit(
                     {
                         "type": "phase_finished",
@@ -983,6 +1000,7 @@ async def generate_knowledge_pack(
 
         # -------- Phase 3 - Writers (parallel) ----------------------------------
         t0 = time.monotonic()
+        # Step 19: 通知前端：Writers 并行写入阶段开始（Phase 3），三个 writer 同时运行
         await emit({"type": "phase_started", "phase": "writers"})
         w_stats = {
             "cartographe": PhaseTokenStats(phase="writer_cartographe"),
@@ -1007,6 +1025,7 @@ async def generate_knowledge_pack(
             phase_stats.append(ws)
         _write_writer_outputs(pack_dir, kg, rules, dictionary)
         logger.info("[Pipeline] Phase 3 complete · 3 writer files written")
+        # Step 20: 通知前端：Writers 完成，包含知识图谱节点/边数、规则数、术语条目数
         await emit(
             {
                 "type": "phase_finished",
@@ -1039,6 +1058,7 @@ async def generate_knowledge_pack(
         #     gate - a high LLM score with real refdes drift is NOT shippable).
         #     floor=0 disables this and restores the legacy hard-fail.
         t0 = time.monotonic()
+        # Step 21: 通知前端：Audit 审计阶段开始（Phase 4），包含修订循环
         await emit({"type": "phase_started", "phase": "audit"})
         rounds_used = 0
         verdict: AuditVerdict
@@ -1050,8 +1070,7 @@ async def generate_knowledge_pack(
         accepted_with_warnings = False
 
         while True:
-            # Live sub-step: round 0 is the initial audit, round N>=1 a revision
-            # pass. The landing UI renders these into the audit phase's live line.
+            # Step 22: 通知前端：审计轮次子步骤（round 0 = 初始审计，round N>=1 = 修订）
             await emit(
                 {"type": "phase_step", "phase": "audit", "step": "round", "index": rounds_used}
             )
@@ -1115,6 +1134,7 @@ async def generate_knowledge_pack(
 
             if verdict.overall_status == "REJECTED":
                 logger.error("[Pipeline] Auditor REJECTED the pack - aborting")
+                # Step 23: 通知前端：审计被拒绝，pipeline 失败终止
                 await emit(
                     {
                         "type": "pipeline_failed",
@@ -1239,6 +1259,7 @@ async def generate_knowledge_pack(
                 (pack_dir / "audit_verdict.json").write_text(
                     verdict.model_dump_json(indent=2), encoding="utf-8"
                 )
+                # Step 24: 通知前端：修订循环耗尽或分数回归后仍无法恢复，pipeline 失败
                 await emit(
                     {
                         "type": "pipeline_failed",
@@ -1294,14 +1315,13 @@ async def generate_knowledge_pack(
                 )
                 _write_writer_outputs(pack_dir, kg, rules, dictionary)
 
+        # Step 25: 通知前端：Audit 审计阶段完成，包含最终状态、一致性分数和修订轮数
         await emit(
             {
                 "type": "phase_finished",
                 "phase": "audit",
                 "elapsed_s": time.monotonic() - t0,
-                # APPROVED_WITH_WARNINGS surfaces the floor-rescue to the UI as a
-                # distinct, non-failure terminal state (the residual brief lives in
-                # pack_quality.audit_warnings).
+                # APPROVED_WITH_WARNINGS 向 UI 表明这是 floor-rescue 状态，非失败终止
                 "status": "APPROVED_WITH_WARNINGS"
                 if accepted_with_warnings
                 else verdict.overall_status,
@@ -1389,6 +1409,7 @@ async def generate_knowledge_pack(
         final_status = (
             "APPROVED_WITH_WARNINGS" if accepted_with_warnings else verdict.overall_status
         )
+        # Step 26: 通知前端：pipeline 完成，包含最终状态、修订轮数、一致性分数和 memory store seed 状态
         await emit(
             {
                 "type": "pipeline_finished",
@@ -1416,6 +1437,7 @@ async def generate_knowledge_pack(
         raise
     except Exception as exc:  # pragma: no cover - defensive wrapper
         logger.exception("[Pipeline] Unexpected failure")
+        # Step 27: 通知前端：pipeline 遇到未预期的异常，构建失败
         await emit({"type": "pipeline_failed", "status": "ERROR", "error": str(exc)})
         raise
     finally:

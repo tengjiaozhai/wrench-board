@@ -6,6 +6,7 @@
 //  ;技能点击打开证据drawer。身份模式处理程序落在任务 12 中。
 
 import { escapeHtml as escHtml } from "./shared/dom.js";
+import { API_PREFIX } from "./shared/api.js";
 
 let _state = null;    //  {概要、派生、目录}
 let _partialLoaded = false;
@@ -22,7 +23,7 @@ async function ensurePartial() {
   if (_partialLoaded) return;
   const mount = document.getElementById("profileSection");
   const url = mount.dataset.partial || "/profil.html";
-  const res = await fetch(url);
+  const res = await fetch(API_PREFIX + url);
   if (!res.ok) throw new Error(`partial ${url} → ${res.status}`);
   mount.innerHTML = await res.text();
   if (window.i18n?.ready) await window.i18n.ready;
@@ -31,7 +32,7 @@ async function ensurePartial() {
 }
 
 async function fetchJSON(url, init) {
-  const res = await fetch(url, init);
+  const res = await fetch(API_PREFIX + url, init);
   if (!res.ok) throw new Error(`${init?.method || "GET"} ${url} → ${res.status}`);
   return res.json();
 }

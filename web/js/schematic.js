@@ -14,6 +14,7 @@ import {
 } from './icons.js';
 import { escapeHtml as escHtml } from "./shared/dom.js";
 import { getDeviceSlug as ctxDeviceSlug, getRepairId as ctxRepairId } from "./shared/context.js";
+import { API_PREFIX } from "./shared/api.js";
 
 //  原理图部分 V5 — 电源诊断仪表板。
 //
@@ -522,7 +523,7 @@ function el(id) { return document.getElementById(id); }
 
 async function fetchSchematic(slug) {
   try {
-    const res = await fetch(`/pipeline/packs/${encodeURIComponent(slug)}/schematic`);
+    const res = await fetch(API_PREFIX + `/pipeline/packs/${encodeURIComponent(slug)}/schematic`);
     if (res.status === 404) return { missing: true };
     if (!res.ok) return { error: `HTTP ${res.status}` };
     return { graph: await res.json() };
@@ -2309,12 +2310,12 @@ function renderBootTimeline(model) {
     btn.disabled = true;
     btn.textContent = `↻ ${t("schematic.boot.reanalyzing")}`;
     try {
-      const res = await fetch(`/pipeline/packs/${encodeURIComponent(STATE.slug)}/schematic/analyze-boot`, { method: "POST" });
+      const res = await fetch(API_PREFIX + `/pipeline/packs/${encodeURIComponent(STATE.slug)}/schematic/analyze-boot`, { method: "POST" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       //  每 3 秒轮询一次，直到文件出现（最多 60 秒）。
       for (let i = 0; i < 20; i++) {
         await new Promise(r => setTimeout(r, 3000));
-        const check = await fetch(`/pipeline/packs/${encodeURIComponent(STATE.slug)}/schematic`);
+        const check = await fetch(API_PREFIX + `/pipeline/packs/${encodeURIComponent(STATE.slug)}/schematic`);
         const body = await check.json();
         if (body.boot_sequence_source === "analyzer") {
           STATE.graph = body;
@@ -3704,7 +3705,7 @@ async function primePdfViewer(slug) {
   }
   let data;
   try {
-    const res = await fetch(`/pipeline/packs/${encodeURIComponent(slug)}/schematic/pages`);
+    const res = await fetch(API_PREFIX + `/pipeline/packs/${encodeURIComponent(slug)}/schematic/pages`);
     if (!res.ok) {
       scroll.innerHTML = "";
       empty.classList.remove("hidden");

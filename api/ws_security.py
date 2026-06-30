@@ -1,15 +1,13 @@
-"""WebSocket-level security helpers.
+"""WebSocket 层安全守卫。
 
-The CORS middleware in ``api.main`` only fires for HTTP requests; the
-WebSocket handshake bypasses it entirely. Without an explicit Origin
-check, any web page on any host can ``new WebSocket("ws://workbench:8000/
-ws/diagnostic/iphone14")`` and silently piggy-back on the technician's
-session — read tokens, inject `message` frames, drive the boardview.
+``api.main`` 的 CORS 中间件仅覆盖 HTTP 请求；WebSocket 握手完全绕过它。
+若不显式检查 Origin，任意主机上的网页都可以 ``new WebSocket("ws://workbench:
+8000/ws/diagnostic/iphone14")``，悄悄搭便车进入技术员的 session —— 读取
+token、注入 `message` 帧、驱动 boardview。
 
-`enforce_ws_origin` runs an Origin allowlist (from
-``settings.cors_allow_origins``) *before* the handshake completes. On
-rejection it closes the socket with RFC 6455 close code 1008
-("Policy Violation") and returns ``False`` so the caller can early-exit.
+`enforce_ws_origin` 在握手完成*之前*执行 Origin 白名单检查（来源
+``settings.cors_allow_origins``）。拒绝时以 RFC 6455 关闭码 1008
+（"Policy Violation"）关闭 socket，并返回 ``False`` 让调用方提前退出。
 """
 
 from __future__ import annotations
@@ -21,37 +19,32 @@ from api.config import get_settings
 
 
 def _allowed_origins() -> list[str]:
-    """Return the list of allowed origins from settings.
-
-    Mirrors the CSV-parsing convention used elsewhere for CORS-style
-    allowlists so both the HTTP middleware and the WS guard share one
-    source of truth.
+    """从 settings 返回允许的 Origin 列表。
+    origin: https://example.com
+    与 CORS 风格白名单的 CSV 解析约定保持一致，使 HTTP 中间件和 WS 守卫
+    共享同一数据源。
     """
     raw = get_settings().cors_allow_origins
     return [o.strip() for o in raw.split(",") if o.strip()]
 
 
 async def enforce_ws_origin(websocket: WebSocket) -> bool:
-    """Validate the WebSocket Origin header against the configured allowlist.
+    """校验 WebSocket 的 Origin 头部是否在配置的白名单内。
 
-    Policy (permissive — picks security without breaking dev tooling):
+    策略（宽松 —— 在不破坏开发工具的前提下保证安全）：
 
-    1. Empty allowlist or ``"*"`` in the list → accept anything (back-compat
-       dev mode, matches the CORS middleware's wildcard semantics).
-    2. No ``Origin`` header on the request → accept. Browsers always send
-       Origin on a WebSocket handshake (the ``WebSocket`` constructor
-       sets it automatically), so a missing header indicates a non-browser
-       client (curl, websocat, Python's ``websockets``, internal test
-       harness). Cross-origin browser attacks — the actual threat model
-       here — are still blocked because the browser will always stamp
-       Origin.
-    3. Origin present and listed → accept.
-    4. Origin present and NOT listed → close with code 1008 and return
-       ``False``. The caller MUST stop processing in that case (the socket
-       is already closed; further sends raise).
+    1. 白名单为空或包含 ``"*"`` → 放行所有（向后兼容开发模式，与 CORS
+       中间件的通配语义一致）。
+    2. 请求无 ``Origin`` 头部 → 放行。浏览器在 WS 握手时总是会发送
+       Origin（``WebSocket`` 构造器自动设置），因此缺失头部意味着
+       非浏览器客户端（curl、websocat、Python ``websockets``、内部测试
+       工具）。跨源浏览器攻击 —— 此处的实际威胁模型 —— 仍被拦截，
+       因为浏览器总会带上 Origin。
+    3. Origin 存在且在白名单中 → 放行。
+    4. Origin 存在但不在白名单 → 以 1008 关闭并返回 ``False``。
+       调用方必须停止处理（socket 已关闭；继续 send 会抛异常）。
 
-    Returns ``True`` when the handshake may proceed, ``False`` when the
-    socket has been closed.
+    握手可继续时返回 ``True``；socket 已关闭时返回 ``False``。
     """
     allowed = _allowed_origins()
     if not allowed or "*" in allowed:
@@ -59,7 +52,7 @@ async def enforce_ws_origin(websocket: WebSocket) -> bool:
 
     origin = websocket.headers.get("origin")
     if not origin:
-        # Non-browser client — Origin is optional outside browsers.
+        # 非浏览器客户端 —— 浏览器之外 Origin 是可选的。
         return True
 
     if origin in allowed:
@@ -70,28 +63,26 @@ async def enforce_ws_origin(websocket: WebSocket) -> bool:
 
 
 async def enforce_ws_service_token(websocket: WebSocket) -> bool:
-    """Require the cloud gateway's service token on the WebSocket handshake.
+    """要求 WebSocket 握手携带云端网关的 service token。
 
-    The Origin check above stops cross-origin *browsers* but accepts any
-    non-browser client (no Origin header) — including ``websocat``. Once the
-    engine is deployed behind wrenchboard-cloud that's a hole: anyone who
-    learns the engine URL can open a diagnostic session directly, skipping the
-    cloud's auth + quota and spending Anthropic credits. This check closes it.
+    上面的 Origin 检查拦截了跨源*浏览器*，但放行所有无 Origin 头部的
+    非浏览器客户端 —— 包括 ``websocat``。引擎部署到 wrenchboard-cloud
+    后这就成了漏洞：任何获知引擎 URL 的人都能直接开启诊断 session，
+    绕过 cloud 的 auth + quota，消耗 Anthropic credits。此检查堵住该漏洞。
 
-    Policy (permissive by default, mirroring ``enforce_ws_origin``):
+    策略（默认宽松，与 ``enforce_ws_origin`` 一致）：
 
-    1. ``settings.engine_service_token`` empty → enforcement off (standalone
-       workbench / dev — a browser can't set the Authorization header, so the
-       direct-to-engine dev flow runs with the token unset).
-    2. Token configured and the request carries ``Authorization: Bearer
-       <token>`` matching it → accept.
-    3. Token configured and the header is missing, malformed (no ``Bearer``
-       scheme), or carries the wrong value → close with code 1008 and return
-       ``False``. The caller MUST stop processing (the socket is already
-       closed).
+    1. ``settings.engine_service_token`` 为空 → 不强制（独立工作台 / 开发
+       模式 —— 浏览器无法设置 Authorization 头部，因此直连引擎的开发
+       流程在未配置 token 时正常运行）。
+    2. 已配置 token 且请求携带 ``Authorization: Bearer <token>`` 并
+       匹配 → 放行。
+    3. 已配置 token 但头部缺失、格式错误（无 ``Bearer`` scheme）或
+       值不匹配 → 以 1008 关闭并返回 ``False``。调用方必须停止处理
+      （socket 已关闭）。
 
-    The token comparison is constant-time (``secrets.compare_digest``) so a
-    rejected attempt leaks nothing about how many leading bytes matched.
+    token 比较使用常量时间算法（``secrets.compare_digest``），拒绝时
+    不泄露任何关于前导字节匹配多少的信息。
     """
     expected = get_settings().engine_service_token
     if not expected:

@@ -1,10 +1,10 @@
 //  i18n 核心 — 普通，无构建步骤。
 //
 //  从 /i18n/_modules/{module}.{lang}.json 加载每个模块的 JSON 字典
-//  并公开一个全局“i18n”API。默认区域设置：英语。法语，简体
+//  并公开一个全局"i18n"API。默认区域设置：英语。法语，简体
 //  提供中文和印地语作为备用语言环境。新语言环境 = 删除 a
 //  `_modules/{module}.{lang}.json` 与现有的一起，将 lang 添加到
-//  支持，并在“dicts”中播种一个空桶。
+//  支持，并在"dicts"中播种一个空桶。
 //
 //  公共API：
 //      i18n.t(key, params?) → 翻译后的字符串，params 插值 {name}
@@ -14,6 +14,8 @@
 //      i18n.ready → Promise 一旦第一个字典加载就解决了
 //      i18n.onReady(fn) → 加载字典后运行 fn
 //      i18n.onChange(fn) → 通知语言环境切换（重新渲染钩子）
+
+import { API_PREFIX } from './shared/api.js';
 
 const SUPPORTED = ['en', 'fr', 'zh', 'hi'];
 const DEFAULT_LOCALE = 'en';
@@ -74,7 +76,7 @@ function pickInitialLocale() {
 
 async function loadModule(name, lang) {
   try {
-    const res = await fetch(`/i18n/_modules/${name}.${lang}.json`, { cache: 'no-cache' });
+    const res = await fetch(API_PREFIX + `/i18n/_modules/${name}.${lang}.json`, { cache: 'no-cache' });
     if (!res.ok) return {};
     return await res.json();
   } catch {

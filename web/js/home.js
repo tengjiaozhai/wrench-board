@@ -14,10 +14,11 @@ import { openPipelineProgress } from './pipeline_progress.js';
 import { leaveSession } from './router.js';
 import { openPanel, closePanelIfConv } from './llm.js';
 import { ICON_CHECK } from './icons.js';
+import { API_PREFIX } from './shared/api.js';
 
 export async function loadTaxonomy() {
   try {
-    const res = await fetch("/pipeline/taxonomy");
+    const res = await fetch(API_PREFIX + "/pipeline/taxonomy");
     if (!res.ok) return {brands: {}, uncategorized: []};
     return await res.json();
   } catch (err) {
@@ -28,7 +29,7 @@ export async function loadTaxonomy() {
 
 export async function loadRepairs() {
   try {
-    const res = await fetch("/pipeline/repairs");
+    const res = await fetch(API_PREFIX + "/pipeline/repairs");
     if (!res.ok) return [];
     return await res.json();
   } catch (err) {
@@ -456,7 +457,7 @@ function renderDashboardData(slug, rid, pack, sourcesData) {
   const diagWrapEl = document.getElementById("rdCardBoardviewDiagWrap");
   if (diagWrapEl) diagWrapEl.hidden = true;
   if (pack?.has_boardview && diagWrapEl) {
-    fetch(`/api/board/render?slug=${encodeURIComponent(slug)}`)
+    fetch(API_PREFIX + `/api/board/render?slug=${encodeURIComponent(slug)}`)
       .then(r => r.ok ? r.json() : null)
       .then(payload => {
         const refs = payload?.net_diagnostics?.length || 0;
@@ -1196,7 +1197,7 @@ async function handleUpload(slug, rid, file, kind) {
   fd.append("file", file);
 
   try {
-    const res = await fetch(`/pipeline/packs/${encodeURIComponent(slug)}/documents`, {
+    const res = await fetch(API_PREFIX + `/pipeline/packs/${encodeURIComponent(slug)}/documents`, {
       method: "POST",
       body: fd,
     });
@@ -1892,7 +1893,7 @@ async function submitNewRepair(ev) {
   setNewRepairError(null);
   setNewRepairBusy(true);
   try {
-    const res = await fetch("/pipeline/repairs", {
+    const res = await fetch(API_PREFIX + "/pipeline/repairs", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({device_label, device_slug, symptom, force_rebuild}),

@@ -9,6 +9,7 @@
 //  开关。
 
 import { getDeviceSlug } from "./shared/context.js";
+import { API_PREFIX } from "./shared/api.js";
 
 let viewer = null;
 let boardPayload = null;
@@ -35,7 +36,7 @@ function rebuildIndexes(payload) {
 }
 
 async function fetchPayload(slug) {
-  const url = `/api/board/render?slug=${encodeURIComponent(slug)}`;
+  const url = API_PREFIX + `/api/board/render?slug=${encodeURIComponent(slug)}`;
   console.log("[pcb_viewer_bridge] fetching", url);
   const res = await fetch(url, { cache: "no-store" });
   console.log("[pcb_viewer_bridge] render status", res.status);
