@@ -502,9 +502,8 @@ async def generate_knowledge_pack(
             len(uploads.other),
         )
 
-    # If a schematic PDF was uploaded and no electrical_graph yet exists,
-    # ingest the schematic INLINE before Scout. Failure logs and falls
-    # through - the pipeline still runs without a graph.
+    # 如果已上传原理图 PDF 且电气图尚未落盘，在 Scout 之前行内摄取原理图。
+    # 失败时记录日志并继续 — pipeline 仍在无图状态下运行。
     if uploads.schematic_pdf is not None and not (pack_dir / "electrical_graph.json").exists():
         try:
             from api.pipeline.schematic.orchestrator import ingest_schematic
@@ -609,19 +608,17 @@ async def generate_knowledge_pack(
                 }
             )
 
-    # Inline-ingest path (schema in uploads/) or already-on-disk graph: load it
-    # here. Skipped only when the wait-gate above already produced one.
+    # 行内摄取路径（uploads/ 中的原理图）或已在磁盘上的 graph：在此加载。
+    # 仅在上面的等待门控已产生 graph 时跳过。
     if graph is None:
         graph = _load_existing_electrical_graph(pack_dir)
 
-    # The deterministic existence ground-truth over the compiled graph. Built
-    # ONCE here (the graph is now final) and threaded through Phase 2.6 (registry
-    # enrichment), compute_drift (registry union graph universe), the auditor (report
-    # + query_graph tool), and the revisers (graph-grounded fixes). None when no
-    # graph exists -> every downstream consumer keeps its legacy web-only path.
-    # Construction is defensive: indexing the graph must never abort a build, so
-    # an unexpected/half-built graph object degrades to graph_truth=None (the
-    # web-only path) rather than crashing - same discipline as the loader above.
+    # 对编译后 graph 的确定性存在性基准事实。仅在此构建一次（graph 现已最终确定），
+    # 并在 Phase 2.6（注册表丰富）、compute_drift（注册表 ∪ graph 域）、审计器（报告
+    # + query_graph 工具）和修订器（graph 驱动的修复）中传递。无 graph 时为 None →
+    # 每个下游消费者保持其 legacy web-only 路径。
+    # 构造是防御性的：索引 graph 绝不能中止构建，因此一个意外/半构建的 graph 对象
+    # 降级为 graph_truth=None（web-only 路径）而非崩溃 — 与上述加载器相同的纪律。
     graph_truth: GraphTruth | None = None
     if graph is not None:
         try:
@@ -663,16 +660,14 @@ async def generate_knowledge_pack(
 
     try:
         # -------- Phase 1.5 - Device-kind classification + confirmation gate -----
-        # Resolve the device class BEFORE any Scout spend, so a graph/declaration
-        # disagreement pauses the pipeline instead of burning a research call on
-        # the wrong device family. Two entry modes:
-        #   • re-run after the technician confirmed a disagreement
-        #     (`confirmed_device_kind` set) - trust it, clear the pending file;
-        #   • fresh run - classify from the graph (when present) and reconcile
-        #     with the technician's declared kind. A low-confidence verdict or a
-        #     user↔graph mismatch short-circuits with NEEDS_KIND_CONFIRMATION.
-        # The resolved kind is threaded into Scout + Registry as a constraint and
-        # stamped onto the registry taxonomy. See device_kind.py.
+        # 在任何 Scout 投入之前解析设备类别，使得 graph/declaration 不一致时
+        # 暂停 pipeline，而不是在错误的设备族上消耗研究调用。两种入口模式：
+        #   • 技术员确认不一致后的重新运行（`confirmed_device_kind` 已设置）—
+        #     信任它，清除待定文件；
+        #   • 全新运行 — 从 graph（当存在时）分类并与技术员声明的类别协调。
+        #     低置信度结论或 user↔graph 不匹配以 NEEDS_KIND_CONFIRMATION 短路。
+        # 解析后的类别传入 Scout + Registry 作为约束，并盖戳到 registry 分类上。
+        # 详见 device_kind.py。
         if confirmed_device_kind is not None:
             resolved_kind: str | None = confirmed_device_kind
             device_kind.clear_pending_kind(pack_dir)
@@ -745,9 +740,8 @@ async def generate_knowledge_pack(
                         "evidence": resolution.evidence,
                     }
                 )
-                # A legitimate early exit, not a failure - keep the finally-hook
-                # from recording the parked build as failed. The pack still
-                # counts as incomplete until the confirmed re-run completes.
+                # 合法提前退出，不失败 — 不要让 finally 钩子将停放的构建记录为失败。
+                # 在确认的重新运行完成之前，pack 仍计为不完整。
                 build_state.mark_paused(pack_dir, reason="needs_kind_confirmation")
                 return PipelineResult(
                     device_slug=slug,
@@ -765,12 +759,11 @@ async def generate_knowledge_pack(
         logger.info("[Pipeline] Phase 1.5 · resolved device_kind=%r", resolved_kind)
 
         # -------- Phase 1 - Scout ------------------------------------------------
-        # Scout runs blind: no graph / board / datasheets in its prompt. The
-        # 2026-04-24 enrichment was reverted after URL-by-URL audit found 23/23
-        # fabricated refdes attributions when Scout was given the graph as
-        # context. The function->refdes bridge is now Phase 2.5 (Mapper) - a
-        # forced-tool agent with deterministic post-validation. See
-        # docs/superpowers/specs/2026-04-25-refdes-mapper-agent.md.
+        # Scout 盲跑：其 prompt 中不含 graph / board / datasheets。
+        # 2026-04-24 的丰富化因 URL 逐条审计发现 23/23 条伪造的 refdes 归因
+        # 而被回滚（当 Scout 拿到 graph 做上下文时）。功能→refdes 桥接现为
+        # Phase 2.5（Mapper）— 一个带确定性后验证的 forced-tool agent。
+        # 详见 docs/superpowers/specs/2026-04-25-refdes-mapper-agent.md。
         t0 = time.monotonic()
         # Step 10: 通知前端：Scout 网络调研阶段开始（Phase 1）
         await emit({"type": "phase_started", "phase": "scout"})
@@ -814,7 +807,7 @@ async def generate_knowledge_pack(
             else:
                 scout_model = models_by_role["scout"]
                 if _needs_third_party_forced_tool_compat(scout_model):
-                    # Third-party models don't support web_search - generate stub dump
+                    # 第三方模型不支持 web_search — 生成 stub dump
                     raw_dump = _generate_third_party_stub_dump(device_label, focus_symptom)
                     raw_dump_source = "third_party_stub"
                     scout_stats.duration_s = time.monotonic() - t0
@@ -865,10 +858,9 @@ async def generate_knowledge_pack(
         # Step 15: 通知前端：Registry 注册表构建阶段开始（Phase 2）
         await emit({"type": "phase_started", "phase": "registry"})
         registry_stats = PhaseTokenStats(phase="registry")
-        # Registry runs without the graph too - it focuses on canonical
-        # vocabulary extraction. The function->refdes bridge moves to Phase 2.5
-        # below. Legacy `refdes_candidates` field on RegistryComponent stays
-        # in the schema for back-compat with packs already on disk.
+        # Registry 也在无 graph 时运行 — 它专注于规范化词汇提取。
+        # 功能→refdes 桥接下移到 Phase 2.5。为向后兼容已落盘的 pack，
+        # RegistryComponent 上的 legacy `refdes_candidates` 字段保留在 schema 中。
         registry = await run_registry_builder(
             client=client,
             model=models_by_role["registry"],
@@ -879,17 +871,15 @@ async def generate_knowledge_pack(
         )
         registry_stats.duration_s = time.monotonic() - t0
         phase_stats.append(registry_stats)
-        # Stamp the resolved device class onto the canonical taxonomy so
-        # downstream consumers (UI, agent prompt) read it from registry.json.
+        # 将解析后的设备类别盖戳到规范化分类上，使得下游消费者（UI、agent prompt）
+        # 从 registry.json 读取它。
         if resolved_kind is not None:
             registry.taxonomy.device_kind = resolved_kind
-        # -------- Phase 2.6 - deterministic registry enrichment from graph -----
-        # Close the registry-cites-an-undefined-rail gap BEFORE persist: a
-        # component description that names a real rail (PP1V2_S2) but which the
-        # web-derived signals never listed leaves the drift check with no
-        # canonical entry -> the auditor calls the rail fabricated. This is a
-        # cheap, deterministic, no-LLM step (a cited-but-absent rail is never
-        # invented), so it emits no event - just an info log of the added signals.
+        # -------- Phase 2.6 - 从 graph 确定性丰富注册表 ------------
+        # 在持久化之前关闭"注册表引用了未定义的 rail"的缺口：一个组件描述
+        # 命名了真实 rail（PP1V2_S2），但网页派生的信号从未列出它，导致 drift 检查
+        # 没有规范条目 → 审计器称该 rail 为伪造。这是一个廉价、确定性、无 LLM 的步骤
+        #（被引用但缺失的 rail 永远不会被编造），因此它不发出事件 — 仅记录添加的信号日志。
         if graph_truth is not None:
             added_signals = enrich_registry_from_graph(registry, graph_truth)
             if added_signals:
@@ -898,14 +888,13 @@ async def generate_knowledge_pack(
                     len(added_signals),
                     added_signals,
                 )
-            # -------- Phase 2.7 - drop web-registry fictions ------------------
-            # When a schematic is the authority, a component the registry names
-            # but the graph AND the raw vision/OCR attest NOWHERE is a web
-            # fiction (e.g. U6903 on a MacBook whose 3V3 rail is really sourced
-            # by R6999). Left in, the Cartographe trusts it and wires a phantom
-            # `powers` edge the auditor then rejects. The triple-negative
-            # (graph union vision) makes the purge safe against vision recall gaps:
-            # a real-but-untraced part still shows in the page vision and stays.
+            # -------- Phase 2.7 - 删除网络注册表虚构 ------------------
+            # 当原理图是权威时，注册表命名的组件但 graph AND 原始 vision/OCR
+            # 都未证实其存在，即为网络虚构（例如 MacBook 上 3V3 rail 实际上
+            # 由 R6999 供电，但注册表引用了 U6903）。留下的话，Cartographe
+            # 信任它并连接一个幽灵 `powers` 边，审计器随后拒绝。三重否定
+            #（graph ∪ vision）使清除对 vision 召回缺口安全：
+            # 一个真实但未追踪的部件仍出现在页面 vision 中并被保留。
             seen = load_seen_refdes(pack_dir)
             fictions = set(find_registry_fictions(registry, graph_truth, seen))
             if fictions:
@@ -922,10 +911,9 @@ async def generate_knowledge_pack(
             registry.model_dump_json(indent=2), encoding="utf-8"
         )
         logger.info("[Pipeline] Phase 2 complete · registry.json written")
-        # T9a: enrich the device alias registry (the "carnet") with the facets
-        # Scout/Registry discovered (board#/model/EMC/marketing + family) so a
-        # later input by ANY of them resolves to this pack - the cross-facet
-        # dedup bridge. Best-effort; never disturbs a build.
+        # T9a: 用 Scout/Registry 发现的方面（board#/model/EMC/marketing + family）
+        # 丰富设备别名注册表（"carnet"），使得后续针对其中任何一个的输入都解析到
+        # 此 pack — 跨方面去重桥。尽力而为；绝不干扰构建。
         with contextlib.suppress(Exception):
             _carnet = get_device_registry_store(pack_dir.parent)
             await register_from_registry(_carnet, pack_dir.name, registry.model_dump())
@@ -943,12 +931,11 @@ async def generate_knowledge_pack(
             }
         )
 
-        # -------- Phase 2.5 - Refdes Mapper (only when a graph is loaded) -------
-        # See docs/superpowers/specs/2026-04-25-refdes-mapper-agent.md.
-        # Maps registry canonical names -> graph refdes via forced-tool +
-        # server-side validation. Failure is silent: mapper errors degrade to
-        # an empty mappings file, and bench-gen falls back to its rail-overlap
-        # heuristic. Skipped entirely when no graph is loaded.
+        # -------- Phase 2.5 - Refdes Mapper（仅当 graph 加载时）---------
+        # 详见 docs/superpowers/specs/2026-04-25-refdes-mapper-agent.md。
+        # 通过 forced-tool + 服务端验证将注册表规范化名称映射到 graph refdes。
+        # 失败是静默的：mapper 错误降级到空映射文件，bench-gen 回退到其 rail 重叠
+        # 启发式方法。无 graph 加载时完全跳过。
         mappings: RefdesMappings | None = None
         if graph is not None:
             t_map = time.monotonic()
@@ -989,9 +976,8 @@ async def generate_knowledge_pack(
                 logger.exception(
                     "[Pipeline] Phase 2.5 mapper failed - continuing without attributions"
                 )
-                # Persist an empty attributions file so downstream consumers
-                # observe "graph was present but mapper produced nothing"
-                # rather than "graph was absent".
+                # 持久化一个空 attributions 文件，使得下游消费者观察到
+                #"graph 存在但 mapper 未产生任何结果"而非"graph 不存在"。
                 empty = RefdesMappings(device_slug=slug, attributions=[])
                 (pack_dir / "refdes_attributions.json").write_text(
                     empty.model_dump_json(indent=2),
@@ -1040,31 +1026,27 @@ async def generate_knowledge_pack(
             }
         )
 
-        # -------- Phase 4 - Audit + self-healing loop ---------------------------
-        # CONVERGENCE POLICY (Task 10). The naive loop revised until APPROVED or
-        # max-rounds, then hard-failed - losing a ~$100 build over a near-miss the
-        # auditor had a precise brief for, and worse, sometimes shipping a rewrite
-        # that scored LOWER than an earlier round (the macbook-air-m1 0.78 -> 0.42
-        # collapse). Three rules fix that:
-        #   • EARLY-STOP on regression - a trajectory that drops below the prior
-        #     round never recovered in practice, and each extra round costs real
-        #     Opus $. The moment the score regresses we stop revising.
-        #   • BEST-OF snapshot - we track the highest-scoring round's full
-        #     (kg, rules, dictionary, verdict) and never ship something worse than
-        #     one we already produced.
-        #   • ACCEPTANCE FLOOR - when we stop without an APPROVED, the best
-        #     snapshot is accepted WITH WARNINGS iff it clears
-        #     `pipeline_accept_score` AND has empty deterministic drift (the hard
-        #     gate - a high LLM score with real refdes drift is NOT shippable).
-        #     floor=0 disables this and restores the legacy hard-fail.
+        # -------- Phase 4 - Audit + 自愈循环 ------------------------------------
+        # 收敛策略（Task 10）。朴素循环在 APPROVED 或 max-rounds 时修订，
+        # 然后硬失败 — 因审计器的精确简报而损失约 $100 的构建，更糟糕的是，
+        # 有时会交付比更早轮次评分更低的改写（macbook-air-m1 的 0.78 → 0.42
+        # 崩溃）。三条规则解决此问题：
+        #   • 回归时提前停止 — 在实践中分数下降的轨迹从未恢复，且每轮额外消耗
+        #     真实的 Opus $。一旦分数回归，我们就停止修订。
+        #   • 最佳快照 — 我们跟踪最高评分轮的完整
+        #     (kg, rules, dictionary, verdict)，绝不交付比已有产物更差的结果。
+        #   • 接受底线 — 当我们在没有 APPROVED 的情况下停止时，最佳快照
+        #     只有在满足 `pipeline_accept_score` AND 具有空的确定性 drift
+        #     （硬门控 — 具有真实 refdes drift 的高 LLM 分数不可交付）时
+        #     才以 WITH WARNINGS 接受。floor=0 禁用此功能并恢复旧式的硬失败。
         t0 = time.monotonic()
         # Step 21: 通知前端：Audit 审计阶段开始（Phase 4），包含修订循环
         await emit({"type": "phase_started", "phase": "audit"})
         rounds_used = 0
         verdict: AuditVerdict
-        # prev_score: the consistency of the PREVIOUS round, to detect regression.
-        # best: the highest-scoring (score, kg, rules, dictionary, verdict) so far.
-        # accepted_with_warnings: set when the floor path rescues a near-miss.
+        # prev_score: 前一轮的一致性，用于检测回归。
+        # best: 迄今最高分的 (score, kg, rules, dictionary, verdict)。
+        # accepted_with_warnings: 当底线路径拯救了接近失败时设置。
         prev_score: float | None = None
         best: tuple[float, KnowledgeGraph, RulesSet, Dictionary, AuditVerdict] | None = None
         accepted_with_warnings = False
@@ -1074,10 +1056,9 @@ async def generate_knowledge_pack(
             await emit(
                 {"type": "phase_step", "phase": "audit", "step": "round", "index": rounds_used}
             )
-            # Build the mention-scoped ground-truth report for this round's
-            # artefacts when a graph exists - it's what the auditor reads instead
-            # of the raw graph (anti-fabrication discipline) and what grounds the
-            # revisers' fixes. None with no graph -> both keep the web-only path.
+            # 为此轮产物构建提及限定的 ground-truth 报告（当 graph 存在时）—
+            # 审计器读取它而非原始 graph（防伪造纪律），并作为修订器修复的依据。
+            # 无 graph 时为 None → 两者都保持 web-only 路径。
             report = (
                 build_ground_truth_report(
                     graph_truth, extract_mentions(registry, kg, rules, dictionary)
@@ -1122,9 +1103,8 @@ async def generate_knowledge_pack(
                 verdict.model_dump_json(indent=2), encoding="utf-8"
             )
 
-            # Snapshot the best round seen so far BEFORE any terminal decision, so
-            # the floor path below can fall back to it (and APPROVED naturally is
-            # its own best). Strict > keeps the EARLIEST round on a tie - fewer $.
+            # 快照迄今所见的最佳轮次，在任何终端决定之前，使得下面的底线路径可以
+            # 回退到它（APPROVED 自然就是它自己的最佳）。严格 > 在平局时保留最早轮次 — 花费更少。
             if best is None or verdict.consistency_score > best[0]:
                 best = (verdict.consistency_score, kg, rules, dictionary, verdict)
 
@@ -1146,21 +1126,19 @@ async def generate_knowledge_pack(
                     f"Pipeline failed: auditor rejected the pack. brief={verdict.revision_brief!r}"
                 )
 
-            # NEEDS_REVISION. A regression (score dropped vs the previous round)
-            # is a STOP signal - on real builds it never recovered and each round
-            # is real Opus spend. We stop here the same way we'd stop on exhausted
-            # rounds: fall back to the best snapshot (floor or hard-fail).
+            # NEEDS_REVISION。分数回归（相对于前一轮下降）是停止信号 —
+            # 在实际构建中从未恢复，且每轮都是真实的 Opus 花费。
+            # 我们在此停止的方式与在轮数耗尽时相同：回退到最佳快照（floor 或硬失败）。
             regression = prev_score is not None and verdict.consistency_score < prev_score
             prev_score = verdict.consistency_score
 
             if rounds_used >= max_revise_rounds or regression:
                 score, b_kg, b_rules, b_dict, b_verdict = best
-                # EDGE BACKSTOP. The revise-loop saw every graph-contradicted power
-                # edge as drift and got its chance to re-attribute; whatever survived
-                # must be pruned DETERMINISTICALLY before the gate, or it reads as
-                # residual drift and sinks an otherwise-shippable pack to REJECTED
-                # (the macbook U7800->PP1V8_S0 class). Same discipline as the registry
-                # fiction purge - drop the false edge, never invent the right one.
+                # EDGE BACKSTOP。修订循环将每一条与 graph 矛盾的供电边视为 drift
+                # 并有机会重新归因；任何在门控前仍然存在的必须被确定性修剪，否则它
+                # 会被解读为残留 drift 并将一个原本可交付的 pack 沉入 REJECTED
+                #（macbook U7800→PP1V8_S0 类）。与注册表虚构清除相同的纪律 —
+                # 删除假边，绝不编造正确的边。
                 if graph_truth is not None:
                     b_kg, pruned_edges = prune_contradicted_edges(b_kg, graph_truth)
                     if pruned_edges:
@@ -1170,11 +1148,10 @@ async def generate_knowledge_pack(
                             len(pruned_edges),
                             [f"{c.src}->{c.rail}" for c in pruned_edges],
                         )
-                # ORPHAN BACKSTOP. The revise-loop cannot fix orphan nodes - they
-                # require topology changes (adding edges or removing nodes), not
-                # text edits. This deterministic backstop drops them so the LLM's
-                # inability to rewire the graph doesn't block an otherwise-shippable
-                # pack. Runs unconditionally (no graph_truth needed).
+                # ORPHAN BACKSTOP。修订循环无法修复孤立节点 — 它们需要拓扑变更
+                #（添加边或删除节点），而非文本编辑。此确定性 backstop 删除它们，
+                # 使得 LLM 不能重新连线 graph 的缺陷不会阻塞原本可交付的 pack。
+                # 无条件运行（无需 graph_truth）。
                 b_kg, pruned_orphans = prune_orphan_nodes(b_kg)
                 if pruned_orphans:
                     logger.warning(
@@ -1183,13 +1160,11 @@ async def generate_knowledge_pack(
                         len(pruned_orphans),
                         pruned_orphans,
                     )
-                # ACCEPTANCE FLOOR. The best snapshot is shippable WITH WARNINGS
-                # iff (a) the floor is enabled (>0), (b) it clears the floor, and
-                # (c) it has ZERO deterministic drift - the registryuniongraph set-diff
-                # over the SAME artefacts we'd ship. The drift check is the hard
-                # gate: a high LLM score next to a real undefined refdes is exactly
-                # the corruptible state we must not auto-publish. Re-running it on
-                # the best snapshot (not the last round) keeps the gate honest.
+                # ACCEPTANCE FLOOR。最佳快照仅在满足以下条件时以 WITH WARNINGS 可交付：
+                # (a) floor 已启用（>0），(b) 它超过 floor，且 (c) 它具有零确定性 drift —
+                # 对我们要交付的相同产物进行 registry∪graph 集合差分的 drift 检查。
+                # drift 检查是硬门控：高 LLM 分数旁有真实的未定义 refdes 正是我们绝不能
+                # 自动发布的腐败状态。在最佳快照（而非最后一轮）上重新运行它使门控保持诚实。
                 floor = settings.pipeline_accept_score
                 acceptable = (
                     floor > 0
@@ -1203,9 +1178,8 @@ async def generate_knowledge_pack(
                     )
                 )
                 if acceptable:
-                    # Adopt the best snapshot and persist it - we may have rewritten
-                    # PAST it into a worse round, so write the best back to disk so
-                    # the on-disk pack matches the verdict we ship.
+                    # 采用最佳快照并持久化它 — 我们可能已经重写了它变得更差，
+                    # 因此将最佳版本写回磁盘，使落盘 pack 匹配我们交付的结论。
                     kg, rules, dictionary = b_kg, b_rules, b_dict
                     # Le verdict PERSISTÉ doit dire ce qui a été décidé : un
                     # audit_verdict.json en NEEDS_REVISION sur un pack shippé
@@ -1235,9 +1209,8 @@ async def generate_knowledge_pack(
                     )
                     break
 
-                # Not acceptable -> legacy hard-fail. Stamp the verdict REJECTED
-                # with a brief that records WHY (the score vs floor / the drift),
-                # persist it, emit pipeline_failed, and raise.
+                # 不可接受 → 旧式硬失败。用说明原因（分数 vs floor / drift）的简报
+                # 将结论盖戳为 REJECTED，持久化它，发出 pipeline_failed，并抛出。
                 logger.error(
                     "[Pipeline] Phase 4 unrecoverable · best score=%.2f (floor=%.2f) · "
                     "reason=%s - rejecting.",
@@ -1299,11 +1272,9 @@ async def generate_knowledge_pack(
             )
             _write_writer_outputs(pack_dir, kg, rules, dictionary)
 
-        # Post-loop edge backstop - covers the APPROVED path (the floor path
-        # already pruned its snapshot before the gate). If the auditor approved a
-        # pack that still carries a graph-contradicted edge, drop it now so the
-        # shipped kg never contradicts the schematic. Idempotent -> a no-op when the
-        # floor branch already cleaned the snapshot.
+        # 循环后边 backstop — 覆盖 APPROVED 路径（floor 路径已在门控前修剪了其快照）。
+        # 如果审计器批准了一个仍然携带与 graph 矛盾边的 pack，现在删除它，使得交付的
+        # kg 永不与原理图矛盾。幂等 → 当 floor 分支已清理快照时为空操作。
         if graph_truth is not None:
             kg, post_pruned = prune_contradicted_edges(kg, graph_truth)
             if post_pruned:
@@ -1330,11 +1301,10 @@ async def generate_knowledge_pack(
             }
         )
 
-        # -------- Pack lint - deterministic pre-persist quality signal ----------
-        # Cheap regex checks over the final rules + registry + graph rails.
-        # Findings are a SIGNAL only: they're logged + persisted to
-        # `pack_quality.json` but never abort the pipeline (auto-publish
-        # blocking on `reject` severity is deferred to sub-project B).
+        # -------- Pack lint - 确定性预持久化质量信号 ----------
+        # 对最终 rules + registry + graph rails 的廉价正则检查。
+        # 发现仅为 SIGNAL：记录到日志并持久化到 `pack_quality.json`，但绝不中止
+        # pipeline（在 `reject` 严重级别上阻止自动发布已推迟到子项目 B）。
         graph_rails = set(graph.power_rails.keys()) if graph is not None else None
         lint_findings = lint_pack(
             registry=registry,
@@ -1347,11 +1317,10 @@ async def generate_knowledge_pack(
                 len(lint_findings),
                 [f"{f.code}/{f.severity}" for f in lint_findings],
             )
-        # When the pack was accepted below APPROVED, attach the residual audit
-        # state (the score + the unresolved brief + the deterministic drift) to
-        # pack_quality. This is the auditable trace of what we shipped-with-known-
-        # gaps - re-servable by a quality UI so a tech sees the caveats. Clean
-        # APPROVED runs pass None and the key is absent.
+        # 当 pack 在低于 APPROVED 的情况下被接受时，将残留的审计状态
+        #（分数 + 未解决的简报 + 确定性 drift）附加到 pack_quality。
+        # 这是我们所知道的已交付 gap 的可审计跟踪 — 质量 UI 可以重新服务，
+        # 使技术员看到警告。干净的 APPROVED 运行传递 None，该键不存在。
         _write_pack_quality(
             pack_dir,
             lint_findings,
@@ -1365,34 +1334,29 @@ async def generate_knowledge_pack(
         )
         logger.info("[Pipeline] pack_quality.json written")
 
-        # Every pack file is on disk and audited - flip the marker BEFORE the
-        # pipeline_finished emit so a subscriber reacting to the event (the
-        # cloud's outcome-follow, a retry POST) never reads a stale 'building'.
+        # 每个 pack 文件都在磁盘上并通过审计 — 在 pipeline_finished 事件发出前
+        # 翻转标记，使得响应该事件的订阅者（cloud 的结果跟踪、重试 POST）永远
+        # 不会读到陈旧的 'building' 状态。
         build_state.mark_complete(pack_dir)
 
         # -------- Done ----------------------------------------------------------
         logger.info("Pipeline end · pack=%s · rounds=%d", pack_dir, rounds_used)
         logger.info("=" * 72)
 
-        # Lot 3 - graph↔boardview QA gate. When the build produced a graph AND a
-        # boardview was supplied, write coverage_report.json + get a PASS/WARN/FAIL
-        # verdict. Best-effort (never crashes the build).
+        # Lot 3 - graph↔boardview QA 门控。当构建产生了 graph 并且提供了 boardview 时，
+        # 写入 coverage_report.json + 获取 PASS/WARN/FAIL 结论。尽力而为（绝不崩溃构建）。
         coverage_verdict = graph_coverage.run_coverage_gate(pack_dir, uploads.boardview)
 
-        # Lot 2 + Lot 3 - a web-only managed build (no graph) OR a schematic build
-        # that FAILED coverage is relocated to the requesting tenant's PRIVATE
-        # staging layer instead of the shared commons. Done after mark_complete
-        # (pipeline finished reading root) and before the seed (which mounts the
-        # SHARED device store - must not mirror a private pack). Self-host /
-        # schematic-backed builds that PASS/WARN stay shared.
+        # Lot 2 + Lot 3 - web-only 托管构建（无 graph）或覆盖 FAILED 的 schematic 构建
+        # 被迁移到请求租户的 PRIVATE 暂存层，而非共享公共层。在 mark_complete 之后完成
+        #（pipeline 已完成读取根目录）且在 seed 之前（seed 挂载 SHARED 设备存储 —
+        # 绝不能镜像私有 pack）。Self-host / 通过 PASS/WARN 的 schematic 构建保持共享。
         staged_private = _stage_if_private(memory_root, pack_dir, slug, owner_ref, coverage_verdict)
 
-        # Seed the device's Managed-Agents memory store with the freshly
-        # approved pack so diagnostic sessions read canonical knowledge via
-        # the /mnt/memory/ filesystem mount instead of re-loading JSON on
-        # every tool call. No-op when ma_memory_store_enabled is False. SKIPPED
-        # for a private web-only pack - the device store is cross-tenant; the
-        # owning tenant's agent reads its staged pack live via load_effective_pack.
+        # 将设备的 Managed-Agents 存储与刚批准的 pack 做 seed，使得诊断会话通过
+        # /mnt/memory/ 文件系统挂载读取规范知识，而非每次工具调用都重新加载 JSON。
+        # 当 ma_memory_store_enabled 为 False 时为空操作。对于私有 web-only pack SKIPPED —
+        # 设备存储是跨租户的；拥有租户的 agent 通过 load_effective_pack 实时读取其暂存 pack。
         if staged_private:
             seed_status = "skipped_web_only_private"
         else:
@@ -1401,11 +1365,10 @@ async def generate_knowledge_pack(
             )
         logger.info("[Pipeline] Memory-store seed status=%s", seed_status)
 
-        # Le verdict adopté sur le chemin accept-with-warnings est le snapshot
-        # best (NEEDS_REVISION) - le statut FINAL du build, lui, doit dire ce qui
-        # a été décidé, pas ce que l'auditor pensait du round. Le cloud ne lit
-        # que le TYPE de l'événement, mais l'UI moteur (et tout futur abonné)
-        # lit `status` : NEEDS_REVISION sur un build complet serait un mensonge.
+        # 在 accept-with-warnings 路径上采用的结论是 best 快照（NEEDS_REVISION）—
+        # 而构建的最终状态必须说明被采纳的决定，而非审计器对该轮的想法。
+        # cloud 只读事件 TYPE，但引擎 UI（和任何未来的订阅者）读 `status`：
+        # 一个完成的构建上的 NEEDS_REVISION 会是假象。
         final_status = (
             "APPROVED_WITH_WARNINGS" if accepted_with_warnings else verdict.overall_status
         )
@@ -1441,17 +1404,15 @@ async def generate_knowledge_pack(
         await emit({"type": "pipeline_failed", "status": "ERROR", "error": str(exc)})
         raise
     finally:
-        # Any exit that didn't reach mark_complete/mark_paused above (REJECTED
-        # verdict, unexpected exception, task cancellation) leaves the marker on
-        # 'building' - record it as failed so the partial pack stops counting as
-        # complete. Catches ALL exits, including CancelledError, without touching
-        # the except structure above.
+        # 任何未到达 mark_complete/mark_paused 的退出（REJECTED 结论、未预期异常、
+        # 任务取消）都将标记保留在 'building' 状态 — 将其记录为失败，使得部分 pack
+        # 不再计为完整。捕获 ALL 退出，包括 CancelledError，不触及上述 except 结构。
         _in_flight_exc = sys.exc_info()[1]
         build_state.finalize_failed_if_building(
             pack_dir, error=str(_in_flight_exc) if _in_flight_exc else "pipeline did not complete"
         )
-        # Always persist telemetry - even on failure, so prior-phase tokens
-        # aren't lost and the failure can be diagnosed post-mortem.
+        # 始终持久化遥测 — 即使在失败时也如此，使得前期阶段的 token
+        # 不丢失且失败可以在事后诊断。
         try:
             if phase_stats:
                 write_token_stats(pack_dir / "token_stats.json", phase_stats)
@@ -1461,10 +1422,9 @@ async def generate_knowledge_pack(
                 )
         except Exception as exc:  # noqa: BLE001
             logger.warning("[Pipeline] Failed to write token_stats.json: %s", exc)
-        # T13 build metering: report the build's per-phase spend to the cloud
-        # ledger (kind='build'). In-memory stats - never re-read from disk, so a
-        # re-run can't double-report a previous run's file. Hard no-op when the
-        # cloud target is unconfigured (self-host); best-effort otherwise.
+        # T13 build metering: 将构建的每阶段花费报告给 cloud 账本（kind='build'）。
+        # 内存中统计 — 绝不从磁盘重新读取，因此重新运行不会重复报告先前运行的文件。
+        # cloud 目标未配置时硬空操作（self-host）；否则尽力而为。
         try:
             if phase_stats:
                 report_build_phases(
@@ -1513,18 +1473,15 @@ def _write_pack_quality(
     findings: list[LintFinding],
     audit_warnings: dict | None = None,
 ) -> None:
-    """Persist deterministic lint findings as the pack-quality signal.
+    """持久化确定性 lint 发现作为 pack 质量信号。
 
-    A clean pack writes an empty `lint_findings` list - the artefact is
-    always present so downstream consumers can distinguish "linted, clean"
-    from "never linted".
+    干净的 pack 写入空的 `lint_findings` 列表 — 产物始终存在，
+    使得下游消费者可以区分"已 lint，干净"与"从未 lint"。
 
-    `audit_warnings`, when provided, records that the pack was accepted BELOW
-    APPROVED (the floor-rescue path): the consistency score, the unresolved
-    revision brief, and the drift report at the moment of acceptance. It's the
-    auditable trace of what remained - re-servable by a quality UI so the caveats
-    travel with the pack. Omitted (key absent) on a clean APPROVED build.
-    """
+    当提供 `audit_warnings` 时，记录 pack 在低于 APPROVED 的情况下被接受
+    （floor-rescue 路径）：接受时的 consistency 分数、未解决的修订简报和 drift 报告。
+    它是残留问题的可审计跟踪 — 质量 UI 可重新服务，使警告随 pack 传递。
+    在干净的 APPROVED 构建上省略（键不存在）。"""
     payload = {"lint_findings": [asdict(f) for f in findings]}
     if audit_warnings is not None:
         payload["audit_warnings"] = audit_warnings
@@ -1552,23 +1509,21 @@ async def _apply_revisions(
     stats_sink: list[PhaseTokenStats] | None = None,
     round_index: int = 0,
 ) -> tuple[KnowledgeGraph, RulesSet, Dictionary]:
-    """Re-run each writer flagged by the auditor and return the updated tuple.
+    """重新运行审计器标记的每个 writer 并返回更新后的元组。
 
-    RC1 of the convergence bug - two coupled fixes live HERE:
+    收敛 bug 的 RC1 — 两个耦合修复在此处：
 
-    1. FIXED revise order `(knowledge_graph, rules, dictionary)`, NOT the auditor's
-       `files_to_rewrite` order. On the real macbook-air-m1 build, revising in the
-       auditor's order let rules/dictionary realign against a kg that was ITSELF
-       about to change - order-dependent, non-deterministic convergence.
+    1. 固定修订顺序 `(knowledge_graph, rules, dictionary)`，而非审计器的
+       `files_to_rewrite` 顺序。在真实的 macbook-air-m1 构建上，按审计器顺序修订
+       使得 rules/dictionary 针对一个本身即将变更的 kg 重新对齐 — 顺序依赖、
+       非确定性收敛。
 
-    2. THREADING the freshly-revised artefacts forward: after kg is revised, the
-       rules reviser receives the NEW kg as `current_kg` (and so on). The reviser
-       aligns cross-file references against the up-to-date siblings, so the three
-       files re-align on the state that ACTUALLY exists post-revision - not the
-       stale snapshot each reviser used to see (which collapsed consistency
-       0.78 -> 0.42). `kg`/`rules`/`dictionary` below are the loop-local, always-
-       current trio; we pass them as the `current_*` siblings on every call.
-    """
+    2. 向前传递新修订的产物：kg 修订后，rules 修订器接收新的 kg 作为 `current_kg`
+       （以此类推）。修订器针对实际存在的后修订状态对齐跨文件引用，使得三个文件
+       在修订后*实际*存在的状态上重新对齐 — 而非每个修订器过去看到的陈旧快照
+      （这导致了一致性从 0.78 崩溃到 0.42）。下面的 `kg`/`rules`/`dictionary`
+       是循环本地的、始终当前的 trio；我们在每次调用上将它们作为 `current_*`
+       兄弟参数传递。"""
     kg, rules, dictionary = current_kg, current_rules, current_dictionary
 
     common_kwargs = {
@@ -1586,25 +1541,24 @@ async def _apply_revisions(
     }
 
     requested = set(verdict.files_to_rewrite)
-    # Warn on any name the auditor asked for that isn't one of the known three,
-    # preserving the legacy skip behaviour (we just no longer iterate its order).
+    # 对审计器要求的任何不在已知三者中的名称发出警告，
+    # 保留旧的跳过行为（我们只是不再迭代其顺序）。
     for unknown in requested - {"knowledge_graph", "rules", "dictionary"}:
         logger.warning("[Pipeline] Skipping unknown file_name in revise: %r", unknown)
 
     def _reviser_stats(file_name: str) -> PhaseTokenStats | None:
-        """Un PhaseTokenStats par appel réviseur, collecté dans le sink du
-        caller. Sans lui, les tours query_graph du réviseur (jusqu'à
-        max_query_turns appels Opus par fichier) seraient absents de
-        token_stats.json et du total facturable - le gap grandit avec
-        l'outillage graphe, il n'est plus négligeable."""
+        """每个修订器调用一个 PhaseTokenStats，收集到调用方的 sink 中。
+        没有它，修订器的 query_graph 轮次（每个文件最多 max_query_turns 次 Opus 调用）
+        将缺失于 token_stats.json 和可计费总额中 — 随 graph 工具的增长，
+        此缺口不再可忽略。"""
         if stats_sink is None:
             return None
         st = PhaseTokenStats(phase=f"reviser_{file_name}_round_{round_index}")
         stats_sink.append(st)
         return st
 
-    # FIXED order - the auditor's order no longer matters; we always revise the
-    # graph first so the downstream revisers see the corrected kg as their sibling.
+    # 固定顺序 — 审计器的顺序不再重要；我们始终先修订 graph，
+    # 使得下游修订器看到修正后的 kg 作为其兄弟。
     for file_name in ("knowledge_graph", "rules", "dictionary"):
         if file_name not in requested:
             continue
@@ -1622,7 +1576,7 @@ async def _apply_revisions(
             rules = await run_single_writer_revision(
                 file_name=file_name,
                 previous_output_json=rules.model_dump_json(indent=2),
-                current_kg=kg,  # the FRESHLY revised kg, not the original
+                current_kg=kg,  # 刚修订的 kg，非原始版本
                 current_rules=rules,
                 current_dictionary=dictionary,
                 stats=_reviser_stats(file_name),
@@ -1632,7 +1586,7 @@ async def _apply_revisions(
             dictionary = await run_single_writer_revision(
                 file_name=file_name,
                 previous_output_json=dictionary.model_dump_json(indent=2),
-                current_kg=kg,  # freshly revised kg + rules thread forward
+                current_kg=kg,  # 刚修订的 kg + rules 向前传递
                 current_rules=rules,
                 current_dictionary=dictionary,
                 stats=_reviser_stats(file_name),

@@ -185,7 +185,7 @@ class GraphTruth:
     def who_powers(self, net: str) -> list[str]:
         """Refdes that produce this net: the `powers`-edge sources PLUS the
         rail's declared source_refdes, deduped (the two often agree). Capped."""
-        sources = list(self._powers_by_dst.get(net, []))
+        sources = list(self._powers_by_dst.get(net, [])) #hash map
         rail = self._rails.get(net)
         if rail is not None and rail.source_refdes:
             sources.append(rail.source_refdes)

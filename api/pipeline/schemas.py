@@ -334,6 +334,15 @@ EvidenceKind = Literal[
 ]
 
 
+# JSON 格式参考：
+# {
+#   "canonical_name": "LM2677 降压稳压器",
+#   "refdes": "U7",
+#   "confidence": 0.95,
+#   "evidence_kind": "literal_refdes_in_quote",
+#   "evidence_quote": "The LM2677 buck converter at U7 provides the 5V rail...",
+#   "reasoning": "研究文本直接提及 U7 为 LM2677 降压稳压器"
+# }
 class RefdesAttribution(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -386,6 +395,21 @@ class RefdesAttribution(BaseModel):
     )
 
 
+# JSON 格式参考：
+# {
+#   "schema_version": "1.0",
+#   "device_slug": "iphone-12-pro",
+#   "attributions": [
+#     {
+#       "canonical_name": "LM2677 降压稳压器",
+#       "refdes": "U7",
+#       "confidence": 0.95,
+#       "evidence_kind": "literal_refdes_in_quote",
+#       "evidence_quote": "The LM2677 buck converter at U7...",
+#       "reasoning": "研究文本直接提及 U7 为 LM2677"
+#     }
+#   ]
+# }
 class RefdesMappings(BaseModel):
     """Phase 2.5 output — typed canonical→refdes attributions, persisted as
     `memory/{slug}/refdes_attributions.json`."""
@@ -480,6 +504,48 @@ class KnowledgeEdge(WithProvenance):
     relation: _EdgeRelation
 
 
+# JSON 格式参考：
+# {
+#   "schema_version": "1.0",
+#   "nodes": [
+#     {
+#       "id": "N-U7",
+#       "kind": "component",
+#       "label": "LM2677 降压稳压器",
+#       "properties": {"mpn": "LM2677SX-5", "package": "SOT-223"},
+#       "_provenance": {"source_kind": "scout", "confidence": 0.9}
+#     },
+#     {
+#       "id": "N-5V-RAIL",
+#       "kind": "net",
+#       "label": "5V 电源轨",
+#       "properties": {"voltage": "5V"},
+#       "_provenance": null
+#     }
+#   ],
+#   "edges": [
+#     {
+#       "source_id": "N-U7",
+#       "target_id": "N-5V-RAIL",
+#       "relation": "powers",
+#       "_provenance": {"source_kind": "scout", "confidence": 0.9}
+#     }
+#   ]
+# }
+"""
+已在 `KnowledgeGraph` 类上方添加 JSON 格式参考注释。
+
+**关键字段说明：**
+
+| 字段 | 说明 |
+|------|------|
+| `nodes[].id` | 节点 ID，格式 `N-[A-Z0-9_-]{1,48}`（如 `N-U7`、`N-5V-RAIL`） |
+| `nodes[].kind` | 节点类型：`component` / `symptom` / `net` / `test_point` |
+| `nodes[].label` | 节点显示标签 |
+| `nodes[].properties` | 自由键值对，值必须是字符串 |
+| `edges[].relation` | 边类型：`powers` / `drives` / `senses` / `grounds` / `shares_net` / `caused_by` / `indicates` |
+| `_provenance` | 可选，来源追踪（`source_kind` + `confidence`） |
+"""
 class KnowledgeGraph(BaseModel):
     """Phase 3 Writer 1 (Cartographe) output — typed graph of the device domain."""
 

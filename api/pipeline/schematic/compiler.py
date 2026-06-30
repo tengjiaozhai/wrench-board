@@ -42,17 +42,17 @@ def compile_electrical_graph(
     *,
     page_confidences: dict[int, float] | None = None,
 ) -> ElectricalGraph:
-    """Compile SchematicGraph into ElectricalGraph.
+    """将 SchematicGraph 编译为 ElectricalGraph。
 
-    Steps:
-    1. Mark untraced components (no pin-level connectivity)
-    2. Derive power rails from nets and typed edges
-    3. Rewrite pin nets through rail aliases
-    4. Synthesize pins for edge-only consumers
-    5. Derive depends_on edges (component -> component)
-    6. Compute boot sequence via topological sort
-    7. Classify passive components (heuristic)
-    8. Build quality report
+    步骤：
+    1. 标记未追踪的组件（无引脚级连接）
+    2. 从 net 和类型化边推导电源轨
+    3. 通过轨别名重写引脚 net
+    4. 为仅存在于边关系的消费者合成引脚
+    5. 推导 depends_on 边（组件 → 组件）
+    6. 通过拓扑排序计算启动顺序
+    7. 启发式分类无源器件
+    8. 构建质量报告
     """
     graph = _mark_untraced_components(graph)
     power_rails, rail_alias_map = _derive_power_rails(graph)

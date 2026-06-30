@@ -1,18 +1,16 @@
-"""Phase 3 - 3 Writers running in parallel with a shared, cached prefix.
+"""Phase 3 — 3 个 Writer 并行运行，共享带缓存控制的前缀。
 
-The 3 writers (Cartographe / Clinicien / Lexicographe) share:
-- Identical `tools` array (all 3 submit_* tools declared)
-- Identical `system` prompt (`WRITER_SYSTEM`)
-- Identical user-message prefix containing the raw dump + registry, with a
-  `cache_control: ephemeral` breakpoint
+3 个 writer（Cartographe / Clinicien / Lexicographe）共享：
+- 相同的 `tools` 数组（3 个 submit_* 工具全部声明）
+- 相同的 `system` 提示词（`WRITER_SYSTEM`）
+- 相同的 user message 前缀（raw dump + registry），带 `cache_control: ephemeral` 断点
 
-They differ only in:
-- The user-message suffix (per-writer task instructions)
-- `tool_choice` - each forced to its specific submit_* tool
+区别仅在于：
+- user message 后缀（每个 writer 各自的任务指令）
+- `tool_choice` — 各自强制指向其专属的 submit_* 工具
 
-We launch writer 1 first and `asyncio.sleep(CACHE_WARMUP_SECONDS)` before dispatching
-writers 2 and 3, so Anthropic has time to materialize the cache entry from writer 1's
-request and serve it to the others.
+先启动 writer 1，然后 `asyncio.sleep(CACHE_WARMUP_SECONDS)` 再派发 writer 2 和 3，
+让 Anthropic 有时间基于 writer 1 的请求物化缓存条目，供后续 writer 命中。
 """
 
 from __future__ import annotations
@@ -62,14 +60,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger("wrench_board.pipeline.writers")
 
 
-# Tool names - must match the forced tool_choice calls below.
+# 工具名称 - 必须与下方的 forced tool_choice 调用一致。
 SUBMIT_KG_TOOL_NAME = "submit_knowledge_graph"
 SUBMIT_RULES_TOOL_NAME = "submit_rules"
 SUBMIT_DICT_TOOL_NAME = "submit_dictionary"
 
 
 def _submit_kg_tool() -> dict:
-    """Cartographe tool definition - typed knowledge graph."""
+    """Cartographe 工具定义 - 类型化知识图谱。"""
     return {
         "name": SUBMIT_KG_TOOL_NAME,
         "description": "Cartographe output - typed knowledge graph.",
@@ -78,7 +76,7 @@ def _submit_kg_tool() -> dict:
 
 
 def _submit_rules_tool() -> dict:
-    """Clinicien tool definition - diagnostic rules."""
+    """Clinicien 工具定义 - 诊断规则。"""
     return {
         "name": SUBMIT_RULES_TOOL_NAME,
         "description": "Clinicien output - diagnostic rules.",
@@ -87,7 +85,7 @@ def _submit_rules_tool() -> dict:
 
 
 def _submit_dict_tool() -> dict:
-    """Lexicographe tool definition - component sheets."""
+    """Lexicographe 工具定义 - 组件手册。"""
     return {
         "name": SUBMIT_DICT_TOOL_NAME,
         "description": "Lexicographe output - component sheets.",
@@ -96,13 +94,13 @@ def _submit_dict_tool() -> dict:
 
 
 def _all_writer_tools() -> list[dict]:
-    """Every writer receives the full set of 3 tools so the tools-layer cache is shared."""
+    """每个 writer 都接收完整的 3 个工具，以便 tools 层缓存共享。"""
     return [_submit_kg_tool(), _submit_rules_tool(), _submit_dict_tool()]
 
 
-# Reviser patch tools - the revise path forces ONE of these (per file_name)
-# instead of the full submit_* tool, so the reviser emits a surgical delta the
-# `api.pipeline.patch` applicator applies to the current artefact.
+# Reviser 补丁工具 - 修订路径强制使用其中一个（按 file_name），
+# 而非完整的 submit_* 工具，让 reviser 发出一个外科手术式的增量，
+# 由 `api.pipeline.patch` 应用器应用到当前产物上。
 SUBMIT_KG_PATCH_TOOL_NAME = "submit_knowledge_graph_patch"
 SUBMIT_RULES_PATCH_TOOL_NAME = "submit_rules_patch"
 SUBMIT_DICT_PATCH_TOOL_NAME = "submit_dictionary_patch"
@@ -140,8 +138,8 @@ def _build_shared_user_messages(
     task_suffix: str,
     enable_cache: bool = True,
 ) -> list[dict]:
-    """Build the per-writer message list. The first content block carries the
-    `cache_control: ephemeral` marker so the prefix caches across the 3 writers.
+    """构建每个 writer 的 message 列表。第一个 content block 带有
+    `cache_control: ephemeral` 标记，使前缀在 3 个 writer 之间缓存。
     """
     shared_prefix = WRITER_SHARED_USER_PREFIX_TEMPLATE.format(
         device_label=device_label,
@@ -216,20 +214,18 @@ async def run_writers_parallel(
     writer_stats: dict[str, PhaseTokenStats] | None = None,
     on_event: Callable[[dict], Awaitable[None]] | None = None,
 ) -> tuple[KnowledgeGraph, RulesSet, Dictionary]:
-    """Launch the 3 writers with a staggered start for cache warming.
+    """交错启动 3 个 writer，带缓存预热延迟。
 
-    Writer 1 (Cartographe) goes first — it writes the cache. We sleep briefly, then
-    fire writers 2 (Clinicien) and 3 (Lexicographe) concurrently.
+    Writer 1（Cartographe）先发 — 它写入缓存。短暂等待后，
+    并发启动 writer 2（Clinicien）和 3（Lexicographe）。
 
-    Prompt cache is model-scoped, so Cartographe + Clinicien (same model) share a
-    cache entry, while Lexicographe — typically a cheaper model — writes its own.
-    That split costs one extra cache_creation per run but saves far more on the
-    per-component extraction tokens.
+    Prompt 缓存是按 model 作用域的，所以 Cartographe + Clinicien（同 model）共享
+    一个缓存条目，而 Lexicographe — 通常是更便宜的 model — 写入自己的缓存。
+    这种拆分每次运行多花一次 cache_creation，但在每个组件提取 token 上节省更多。
 
-    `cache_warmup_seconds` falls back to `Settings.pipeline_cache_warmup_seconds`
-    when None — that setting is the single source of truth for the empirically
-    tuned warmup window (3.0s, see `api/config.py`); the param exists only so
-    tests can drop it to 0 without monkeypatching settings.
+    `cache_warmup_seconds` 为 None 时回退到 `Settings.pipeline_cache_warmup_seconds`
+    — 该设置是经验调优的预热窗口（3.0s，见 `api/config.py`）的唯一权威来源；
+    该参数仅用于测试时将其降为 0 而无需 monkeypatch settings。
     """
     if cache_warmup_seconds is None:
         cache_warmup_seconds = get_settings().pipeline_cache_warmup_seconds
@@ -244,11 +240,11 @@ async def run_writers_parallel(
     )
 
     async def _emit_done(coro, writer: str, count_fn):
-        """Await one writer, then emit a live `phase_step` as it completes.
+        """等待一个 writer 完成，然后在完成时发出 `phase_step` 实时事件。
 
-        Wrapping each writer (rather than emitting after the gather) is what
-        makes the landing line tick "graphe ✓ … règles ✓ … dico ✓" as the 3
-        finish at their own pace, not all at once.
+        包装每个 writer（而非在 gather 后统一发出），使得落地行
+        "graphe ✓ … règles ✓ … dico ✓" 按各自完成节奏逐个点亮，
+        而非同时出现。
         """
         result = await coro
         if on_event is not None:
@@ -334,12 +330,10 @@ async def run_writers_parallel(
     return kg, rules, dictionary
 
 
-# The reviser mapping. Each entry is the SURGICAL-PATCH surface for one writer
-# role: the patch tool name, the patch schema the reviser emits, and the
-# deterministic applicator that turns that patch into the new artefact. Keyed by
-# the canonical file_name (knowledge_graph / rules / dictionary). The reviser
-# emits a delta — not the whole artefact — so unflagged records are preserved
-# verbatim (no collateral-regression surface).
+# Reviser 映射表。每个条目对应一个 writer 角色的外科手术式补丁接口：
+# 补丁工具名称、reviser 发出的补丁 schema、以及将该补丁转换为新产物的
+# 确定性应用函数。以规范 file_name（knowledge_graph / rules / dictionary）为键。
+# reviser 发出增量 — 而非整个产物 — 因此未标记的记录原样保留（无附带回归面）。
 _REVISE_MAPPING = {
     "knowledge_graph": (
         SUBMIT_KG_PATCH_TOOL_NAME, KnowledgeGraphPatch, apply_kg_patch, "Cartographe-Revise"
@@ -354,7 +348,7 @@ _REVISE_MAPPING = {
 
 
 def _submit_patch_tool_for(file_name: str) -> dict:
-    """The single patch-submit tool object for one writer role (by file_name)."""
+    """按 file_name 返回单个 writer 角色的补丁提交工具对象。"""
     return {
         "knowledge_graph": _submit_kg_patch_tool,
         "rules": _submit_rules_patch_tool,
@@ -369,15 +363,14 @@ def _build_siblings_block(
     current_rules: RulesSet,
     current_dictionary: Dictionary,
 ) -> str:
-    """Render the TWO files that are NOT `file_name` as `## <name> (current)`
-    JSON sections — the up-to-date cross-file context the reviser must align with.
+    """将 NOT `file_name` 的**两个**文件渲染为 `## <name> (current)` JSON 区块
+    — reviser 必须对齐的最新跨文件上下文。
 
-    RC1 (the convergence bug): when a reviser only ever saw its OWN previous
-    output, revise-round-1 re-aligned each of kg/rules/dictionary against the
-    STALE versions of the other two, collapsing a state that no longer existed.
-    Handing the reviser the CURRENT siblings (read-only) is the fix — it aligns
-    cross-file references against reality, not memory. The reviser's own file is
-    excluded (it's the BASELINE in `previous_output_json`, not a sibling)."""
+    RC1（收敛 bug）：当 reviser 只看到**自己**的上一次输出时，
+    revise-round-1 会让 kg/rules/dictionary 各自与**过时的**另外两个版本
+    重新对齐，导致一个已不存在的状态坍塌。将当前兄弟文件（只读）交给
+    reviser 是修复方案 — 它基于现实而非记忆对齐跨文件引用。reviser 自己的
+    文件被排除（它是 `previous_output_json` 中的 BASELINE，不是兄弟）。"""
     artefacts = {
         "knowledge_graph": current_kg,
         "rules": current_rules,
@@ -386,7 +379,7 @@ def _build_siblings_block(
     sections: list[str] = []
     for name, artefact in artefacts.items():
         if name == file_name:
-            continue  # the reviser edits this one — it's the baseline, not a sibling
+            continue  # reviser 编辑的是这个 — 它是 baseline，不是兄弟
         sections.append(
             f"## {name} (current)\n```json\n{artefact.model_dump_json(indent=2)}\n```"
         )
@@ -413,28 +406,25 @@ async def run_single_writer_revision(
     max_query_turns: int = 4,
     stats: PhaseTokenStats | None = None,
 ) -> KnowledgeGraph | RulesSet | Dictionary:
-    """Re-run one writer with a revision brief from the Auditor.
+    """使用 Auditor 的修订简报重新运行一个 writer。
 
-    Must use the same model that produced the original output, so the revised
-    artefact stays coherent with the first pass (same taste, same shape).
+    必须使用与原始输出相同的 model，使修订后的产物保持连贯性（同一品味，同一形状）。
 
-    The reviser emits a SURGICAL PATCH (a typed delta), not the whole artefact:
-    it forces the role's `submit_*_patch` tool, and `apply_fn` applies that delta
-    to the current artefact. Records the reviser does not name are preserved
-    verbatim — that removes the full re-emit's collateral-regression surface.
+    reviser 发出**外科手术式补丁**（类型化增量），而非整个产物：
+    它强制使用角色的 `submit_*_patch` 工具，`apply_fn` 将该增量应用到当前产物。
+    reviser 未命名的记录原样保留 — 这消除了完整重新发出的附带回归面。
 
-    The reviser sees, as READ-ONLY context, the CURRENT versions of the two
-    sibling files (`current_kg`/`current_rules`/`current_dictionary` minus its
-    own) so it aligns cross-file references against reality — the RC1 fix (see
-    `_build_siblings_block`). When a `graph_truth` is supplied it ALSO gets the
-    mention-scoped ground-truth report + the `query_graph` tool to verify
-    existence/voltage/source against the real schematic before writing.
+    reviser 以**只读**方式看到当前两个兄弟文件的版本
+    （`current_kg`/`current_rules`/`current_dictionary` 减去它自己的），
+    使其基于现实而非记忆对齐跨文件引用 — RC1 修复（见 `_build_siblings_block`）。
+    当提供 `graph_truth` 时，它还获得 mention 作用域的 ground-truth 报告
+    和 `query_graph` 工具，用于在写入前验证存在性/电压/来源。
 
-    A well-formed-but-inapplicable patch (`PatchApplyError`) degrades to a
-    no-op: the current artefact is returned unchanged and the re-audit re-flags.
-    Nothing corrupts — a previously-silent regression becomes a visible no-op.
+    格式良好但不可应用的补丁（`PatchApplyError`）降级为 no-op：
+    返回当前产物不变，让重新审计重新标记。没有任何东西会损坏 —
+    先前静默的回归变成了可见的 no-op。
     """
-    # Import here to avoid circular import if orchestrator ever imports this module.
+    # 在此处导入以避免循环导入（如果 orchestrator 将来导入本模块）。
     from api.pipeline.graph_truth import QUERY_GRAPH_TOOL, handle_query_graph
     from api.pipeline.prompts import REVISER_OPS_HELP, REVISER_USER_TEMPLATE
 
@@ -455,9 +445,9 @@ async def run_single_writer_revision(
     model = model_for[file_name]
     current_artefact = current_for[file_name]
 
-    # Read-only sibling context (the up-to-date OTHER two files) + optional
-    # deterministic ground-truth. Both ride the revision SUFFIX — the shared
-    # cached prefix message structure stays IDENTICAL so the writer cache serves.
+    # 只读兄弟上下文（最新的另外两个文件）+ 可选的确定性 ground-truth。
+    # 两者都挂在修订 SUFFIX 上 — 共享的缓存前缀 message 结构保持**完全相同**，
+    # 使 writer 缓存仍可命中。
     siblings_block = _build_siblings_block(
         file_name=file_name,
         current_kg=current_kg,
@@ -471,7 +461,7 @@ async def run_single_writer_revision(
         else ""
     )
 
-    # Keep the shared cached prefix identical so the cache still serves.
+    # 保持共享缓存前缀完全相同，使缓存仍可命中。
     shared_prefix = WRITER_SHARED_USER_PREFIX_TEMPLATE.format(
         device_label=device_label,
         raw_dump=raw_dump,
@@ -507,16 +497,14 @@ async def run_single_writer_revision(
 
     logger.info("[Revise] Patching file=%r (graph=%s)", file_name, graph_truth is not None)
 
-    # Dispatch on the presence of a graph — mirrors the auditor. No graph → the
-    # single forced-tool call (tools = ONLY this role's patch tool, so the reviser
-    # can't accidentally emit a sibling's shape). A graph → the capped agentic
-    # loop where the reviser may verify identifiers against the real schematic
-    # before it submits. Either way the model returns a PATCH, not the artefact.
-    # A reviser that can't produce a valid patch must NEVER crash the whole
-    # build: keep the current artefact (no-op) and let the re-audit re-flag,
-    # exactly like an inapplicable patch below. The 5-attempt budget gives the
-    # model room to recover (a misrouted query is already absorbed upstream by
-    # the loop's re-route, so these attempts count only genuine submit misses).
+    # 按 graph 存在性分派 — 与 auditor 一致。无 graph → 单次 forced-tool 调用
+    # （tools = 仅该角色的补丁工具，使 reviser 不会意外发出兄弟的形状）。
+    # 有 graph → 有上限的 agentic 循环，reviser 可在提交前针对真实原理图
+    # 验证标识符。无论哪种情况，model 都返回 PATCH，而非产物。
+    # 无法产出有效补丁的 reviser **绝不能**让整个构建崩溃：保留当前产物
+    # （no-op），让重新审计重新标记，与下方不可应用补丁的处理一致。
+    # 5 次尝试预算给 model 恢复空间（错误路由的 query 已被上游循环的
+    # 重路由吸收，因此这些尝试只计数真正的 submit 失败）。
     try:
         if graph_truth is None:
             patch = await call_with_forced_tool(
@@ -538,8 +526,8 @@ async def run_single_writer_revision(
                 system=WRITER_SYSTEM,
                 messages=messages,
                 query_tool=QUERY_GRAPH_TOOL,
-                # Closure binds the deterministic handler to this pack's graph —
-                # the loop hands us only the raw tool input, never the graph.
+                # 闭包将确定性 handler 绑定到此 pack 的 graph —
+                # 循环只给我们原始 tool input，而非 graph 本身。
                 query_handler=lambda i: handle_query_graph(graph_truth, i),
                 submit_tool=_submit_patch_tool_for(file_name),
                 submit_tool_name=tool_name,
@@ -558,10 +546,9 @@ async def run_single_writer_revision(
         )
         return current_artefact
 
-    # Apply the delta deterministically. A well-formed-but-inapplicable patch
-    # (`PatchApplyError`) degrades to a no-op: keep the current artefact, log it,
-    # let the re-audit re-flag. This converts what used to be a silent re-emit
-    # regression into a visible, safe no-op.
+    # 确定性地应用增量。格式良好但不可应用的补丁（`PatchApplyError`）
+    # 降级为 no-op：保留当前产物，记录日志，让重新审计重新标记。
+    # 这将先前静默的重新发出回归转化为可见、安全的 no-op。
     try:
         return apply_fn(current_artefact, patch)
     except PatchApplyError as exc:
