@@ -188,7 +188,15 @@ for (const b of bubbles) {
   }
 }
 //  同步 D3 节点力 sim。
-DATA.nodes.forEach(n => { n.x = n._tx; n.y = n._ty; });
+DATA.nodes.forEach(n => {
+  //  为不在任何 bubble 中的节点设置默认位置（避免 NaN）
+  if (n._tx === undefined || n._ty === undefined) {
+    n._tx = W_fn() / 2;
+    n._ty = H_fn() / 2;
+  }
+  n.x = n._tx;
+  n.y = n._ty;
+});
 
 /*  ---------- 气泡背景 ----------  */
 const bandLayer = d3.select("#layerBands");
@@ -290,10 +298,11 @@ function linkPath(d){
 
 sim.on("tick", () => {
   linkSel.attr("d", linkPath);
-  nodeSel.attr("transform", d => `translate(${d.x},${d.y})`);
+  //  防护：跳过位置无效的节点（避免 SVG transform NaN 错误）
+  nodeSel.attr("transform", d => (isFinite(d.x) && isFinite(d.y)) ? `translate(${d.x},${d.y})` : null);
   linkLabelSel
-    .attr("x", d => (d.source.x + d.target.x)/2)
-    .attr("y", d => (d.source.y + d.target.y)/2 - 6);
+    .attr("x", d => (isFinite(d.source.x) && isFinite(d.target.x)) ? (d.source.x + d.target.x)/2 : null)
+    .attr("y", d => (isFinite(d.source.y) && isFinite(d.target.y)) ? (d.source.y + d.target.y)/2 - 6 : null);
 });
 
 /*  ---------- 缩放 ----------  */

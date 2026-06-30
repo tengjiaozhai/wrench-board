@@ -12,8 +12,9 @@ export class ApiError extends Error {
   }
 }
 
-// 公共前缀：所有 API 请求自动拼接。nginx 反向代理时设为 "/wrench"。
-export const API_PREFIX = "/wrench";
+// 公共前缀：自动检测部署环境。
+// 服务器 nginx 反代路径为 /wrench/，本地开发直接访问根路径。
+export const API_PREFIX = window.location.pathname.startsWith("/wrench") ? "/wrench" : "";
 
 // 统一 fetch 封装。供各模块替代原生 fetch 使用，自动拼接前缀。
 export function apiFetch(path, init = {}) {
